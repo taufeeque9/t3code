@@ -22,7 +22,6 @@ jobs:
         with:
           ref: custom
           fetch-depth: 0
-          persist-credentials: false
 
       - name: Merge upstream
         id: merge
@@ -31,7 +30,6 @@ jobs:
           UPSTREAM_REPOSITORY: pingdotgg/t3code
         run: |
           set -euo pipefail
-          gh auth setup-git
           git config user.name "t3code-upstream-sync[bot]"
           git config user.email "t3code-upstream-sync[bot]@users.noreply.github.com"
           git remote add upstream "https://github.com/${UPSTREAM_REPOSITORY}.git"
@@ -126,3 +124,9 @@ jobs:
           else
             gh issue create --title "Repair failed weekly T3 validation" --label upstream-sync-failed --body "$body"
           fi
+
+      - name: Prepare checkout cleanup
+        if: always()
+        run: |
+          git config -f .gitmodules submodule.alchemy-reference.path .repos/alchemy-effect/.vendor/alchemy
+          git config -f .gitmodules submodule.alchemy-reference.url https://github.com/alchemy-run/alchemy.git
