@@ -124,3 +124,9 @@ jobs:
           else
             gh issue create --title "Repair failed weekly T3 validation" --label upstream-sync-failed --body "$body"
           fi
+
+      - name: Prepare checkout cleanup
+        if: always()
+        run: |
+          git config -f .gitmodules submodule.alchemy-reference.path .repos/alchemy-effect/.vendor/alchemy
+          git config -f .gitmodules submodule.alchemy-reference.url https://github.com/alchemy-run/alchemy.git

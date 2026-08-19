@@ -37,3 +37,9 @@ jobs:
 
       - name: Build desktop pipeline
         run: vp run build:desktop
+
+      - name: Prepare checkout cleanup
+        if: always()
+        run: |
+          git config -f .gitmodules submodule.alchemy-reference.path .repos/alchemy-effect/.vendor/alchemy
+          git config -f .gitmodules submodule.alchemy-reference.url https://github.com/alchemy-run/alchemy.git
