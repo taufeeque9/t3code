@@ -35,6 +35,9 @@ jobs:
           vp test run apps/web/src/components/chat/MessagesTimeline.logic.test.ts
           vp test run scripts/build-desktop-artifact.test.ts
 
+      - name: Validate local updater
+        run: zsh -n scripts/custom/update-installed-app.sh
+
       - name: Build desktop pipeline
         run: vp run build:desktop
 

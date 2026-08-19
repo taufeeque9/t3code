@@ -105,6 +105,7 @@ if [[ "$built_commit" != "$desired_commit" || ! -d "$staged_app" ]]; then
   log "Building T3 Code Custom at ${desired_commit[1,12]}."
   (
     cd "$repo_dir"
+    "$vp_bin" install --frozen-lockfile
     env -u GITHUB_REPOSITORY \
       T3CODE_DESKTOP_UPDATE_REPOSITORY="" \
       "$vp_bin" run dist:desktop:dmg:arm64 -- --output-dir "$attempt_dir"
