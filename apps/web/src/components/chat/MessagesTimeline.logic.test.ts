@@ -553,6 +553,81 @@ describe("deriveMessagesTimelineRows", () => {
     ).toBeDefined();
   });
 
+  it("keeps turns with a stop-hook self-check fully expanded", () => {
+    const timelineEntries = [
+      {
+        id: "user-entry",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:00:00Z",
+        message: {
+          id: "user-1" as never,
+          role: "user" as const,
+          text: "Build it",
+          turnId: null,
+          createdAt: "2026-01-01T00:00:00Z",
+          updatedAt: "2026-01-01T00:00:00Z",
+          streaming: false,
+        },
+      },
+      {
+        id: "work-entry",
+        kind: "work" as const,
+        createdAt: "2026-01-01T00:00:05Z",
+        entry: {
+          id: "work-1",
+          createdAt: "2026-01-01T00:00:05Z",
+          turnId: "turn-1" as never,
+          label: "Ran command",
+          tone: "tool" as const,
+        },
+      },
+      {
+        id: "assistant-final-entry",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:00:20Z",
+        message: {
+          id: "assistant-final" as never,
+          role: "assistant" as const,
+          text: "Done",
+          turnId: "turn-1" as never,
+          createdAt: "2026-01-01T00:00:20Z",
+          updatedAt: "2026-01-01T00:00:22Z",
+          streaming: false,
+        },
+      },
+      {
+        id: "self-check-entry",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:00:23Z",
+        message: {
+          id: "self-check" as never,
+          role: "assistant" as const,
+          text: "Self-check: verified the result.",
+          turnId: "turn-1" as never,
+          createdAt: "2026-01-01T00:00:23Z",
+          updatedAt: "2026-01-01T00:00:24Z",
+          streaming: false,
+        },
+      },
+    ];
+
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries,
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(rows.some((row) => row.kind === "turn-fold")).toBe(false);
+    expect(rows.map((row) => row.id)).toEqual([
+      "user-entry",
+      "work-entry",
+      "assistant-final-entry",
+      "self-check-entry",
+    ]);
+  });
+
   it("derives a sane duration for a steer-superseded turn with one instant commentary message", () => {
     // A steer ends the previous turn early: its only message completes the
     // instant it is created, and trailing work entries land after it. The

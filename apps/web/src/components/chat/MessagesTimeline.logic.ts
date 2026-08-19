@@ -292,6 +292,16 @@ interface TurnFold {
   label: string;
 }
 
+const SELF_CHECK_MESSAGE_PATTERN = /^\s*Self-check(?: answers)?:/iu;
+
+function isSelfCheckMessage(entry: TimelineEntry): boolean {
+  return (
+    entry.kind === "message" &&
+    entry.message.role === "assistant" &&
+    SELF_CHECK_MESSAGE_PATTERN.test(entry.message.text ?? "")
+  );
+}
+
 /**
  * The session's running turn is authoritative when latestTurn briefly lags or
  * regresses behind it. Otherwise, the latest turn counts as unsettled while it
@@ -328,6 +338,7 @@ function deriveTurnFolds(input: {
   interface TurnGroup {
     entries: Array<TimelineEntry>;
     terminalEntry: Extract<TimelineEntry, { kind: "message" }> | null;
+    hasSelfCheckMessage: boolean;
     hasStreamingMessage: boolean;
     /**
      * The user message that kicked the turn off. Entry timestamps alone
@@ -359,6 +370,7 @@ function deriveTurnFolds(input: {
       group = {
         entries: [],
         terminalEntry: null,
+        hasSelfCheckMessage: false,
         hasStreamingMessage: false,
         // Each user boundary starts at most one turn; a second turn after the
         // same user message (e.g. a steer-superseded continuation) falls back
@@ -370,6 +382,9 @@ function deriveTurnFolds(input: {
     }
     group.entries.push(entry);
     if (entry.kind === "message") {
+      if (isSelfCheckMessage(entry)) {
+        group.hasSelfCheckMessage = true;
+      }
       if (input.terminalAssistantMessageIds.has(entry.message.id)) {
         group.terminalEntry = entry;
       }
@@ -385,6 +400,12 @@ function deriveTurnFolds(input: {
       continue;
     }
     if (group.hasStreamingMessage) {
+      continue;
+    }
+    // A Claude stop hook can append a self-check after the actual final
+    // response. Treating only the last assistant message as terminal would
+    // hide that final response inside the work fold.
+    if (group.hasSelfCheckMessage) {
       continue;
     }
     const hiddenEntryIds = new Set<string>();

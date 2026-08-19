@@ -1,0 +1,126 @@
+name: Sync upstream
+
+on:
+  schedule:
+    - cron: "17 9 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  statuses: write
+
+jobs:
+  sync:
+    name: Prepare upstream merge
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout custom branch
+        uses: actions/checkout@v6
+        with:
+          ref: custom
+          fetch-depth: 0
+
+      - name: Merge upstream
+        id: merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM_REPOSITORY: pingdotgg/t3code
+        run: |
+          set -euo pipefail
+          git config user.name "t3code-upstream-sync[bot]"
+          git config user.email "t3code-upstream-sync[bot]@users.noreply.github.com"
+          git remote add upstream "https://github.com/${UPSTREAM_REPOSITORY}.git"
+          git fetch upstream main
+
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          sync_branch="automation/upstream-sync-${GITHUB_RUN_ID}"
+          git switch -c "$sync_branch"
+          if ! git merge --no-ff upstream/main -m "chore: merge upstream main"; then
+            conflicts="$(git diff --name-only --diff-filter=U | sed -n '1,40p')"
+            git merge --abort
+            gh label create upstream-sync-conflict \
+              --color D93F0B \
+              --description "Weekly upstream merge needs manual conflict resolution" \
+              --force
+            existing_issue="$(gh issue list --state open --label upstream-sync-conflict --json number --jq '.[0].number // empty')"
+            body="Written by you.\n\nUpstream \`main\` could not be merged into \`custom\` automatically.\n\nConflicting files:\n\n\`\`\`\n${conflicts}\n\`\`\`"
+            if [ -n "$existing_issue" ]; then
+              gh issue comment "$existing_issue" --body "$body"
+            else
+              gh issue create --title "Resolve weekly upstream sync conflict" --label upstream-sync-conflict --body "$body"
+            fi
+            exit 1
+          fi
+
+          git push origin "$sync_branch"
+          {
+            echo "changed=true"
+            echo "sync_branch=$sync_branch"
+            echo "sync_sha=$(git rev-parse HEAD)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Setup Vite+
+        if: steps.merge.outputs.changed == 'true'
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Validate merged source
+        if: steps.merge.outputs.changed == 'true'
+        run: |
+          vp test run apps/web/src/components/chat/MessagesTimeline.logic.test.ts
+          vp test run scripts/build-desktop-artifact.test.ts
+          vp run build:desktop
+
+      - name: Open and auto-merge sync PR
+        if: steps.merge.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SYNC_BRANCH: ${{ steps.merge.outputs.sync_branch }}
+          SYNC_SHA: ${{ steps.merge.outputs.sync_sha }}
+        run: |
+          pr_url="$(gh pr create \
+            --base custom \
+            --head "$SYNC_BRANCH" \
+            --title "chore: merge upstream main" \
+            --body $'Written by you.\n\nWeekly merge of `pingdotgg/t3code@main` into the custom build. Auto-merge is enabled after required checks pass.')"
+          gh api \
+            --method POST \
+            "repos/${GITHUB_REPOSITORY}/statuses/${SYNC_SHA}" \
+            -f state=success \
+            -f context='Validate custom fork' \
+            -f description='Custom tests and desktop build passed'
+          gh pr merge --auto --merge "$pr_url"
+
+      - name: Report validation failure
+        if: failure() && steps.merge.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SYNC_SHA: ${{ steps.merge.outputs.sync_sha }}
+        run: |
+          gh api \
+            --method POST \
+            "repos/${GITHUB_REPOSITORY}/statuses/${SYNC_SHA}" \
+            -f state=failure \
+            -f context='Validate custom fork' \
+            -f description='Custom tests or desktop build failed'
+          gh label create upstream-sync-failed \
+            --color B60205 \
+            --description "Weekly upstream merge failed validation" \
+            --force
+          existing_issue="$(gh issue list --state open --label upstream-sync-failed --json number --jq '.[0].number // empty')"
+          body=$'Written by you.\n\nThe upstream merge was conflict-free, but custom tests or the desktop build failed. Inspect the latest **Sync upstream** workflow run before merging.'
+          if [ -n "$existing_issue" ]; then
+            gh issue comment "$existing_issue" --body "$body"
+          else
+            gh issue create --title "Repair failed weekly T3 validation" --label upstream-sync-failed --body "$body"
+          fi

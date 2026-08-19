@@ -1,0 +1,39 @@
+name: Custom CI
+
+on:
+  pull_request:
+    branches:
+      - custom
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate custom fork
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Test custom behavior
+        run: |
+          vp test run apps/web/src/components/chat/MessagesTimeline.logic.test.ts
+          vp test run scripts/build-desktop-artifact.test.ts
+
+      - name: Build desktop pipeline
+        run: vp run build:desktop
