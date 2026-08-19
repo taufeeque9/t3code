@@ -1,4 +1,4 @@
-#!/bin/zsh
+#!/bin/bash
 
 set -euo pipefail
 
@@ -14,7 +14,7 @@ mode="${1:---update}"
 mkdir -p "$state_dir" "$state_dir/builds" "$state_dir/backups"
 
 log() {
-  print -r -- "$(date -u +%Y-%m-%dT%H:%M:%SZ) $*"
+  printf '%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ) $*"
 }
 
 read_state() {
@@ -26,7 +26,7 @@ read_state() {
 
 active_session_count() {
   if [[ ! -f "$database" ]]; then
-    print 0
+    printf '0\n'
     return
   fi
   sqlite3 -readonly "$database" \
@@ -35,7 +35,7 @@ active_session_count() {
 
 application_is_running() {
   local bundle_id="$1"
-  [[ "$(osascript -e "application id \"$bundle_id\" is running" 2>/dev/null || print false)" == "true" ]]
+  [[ "$(osascript -e "application id \"$bundle_id\" is running" 2>/dev/null || printf 'false\n')" == "true" ]]
 }
 
 desired_commit="$(git -C "$repo_dir" ls-remote origin refs/heads/custom | awk '{print $1}')"
@@ -53,11 +53,11 @@ if [[ "$mode" == "--status" ]]; then
   if [[ -d "$destination" ]]; then
     app_installed=true
   fi
-  print -r -- "desired_commit=$desired_commit"
-  print -r -- "built_commit=${built_commit:-none}"
-  print -r -- "installed_commit=${installed_commit:-none}"
-  print -r -- "active_sessions=$active_sessions"
-  print -r -- "app_installed=$app_installed"
+  printf '%s\n' "desired_commit=$desired_commit"
+  printf '%s\n' "built_commit=${built_commit:-none}"
+  printf '%s\n' "installed_commit=${installed_commit:-none}"
+  printf '%s\n' "active_sessions=$active_sessions"
+  printf '%s\n' "app_installed=$app_installed"
   exit 0
 fi
 
@@ -69,7 +69,7 @@ fi
 trap 'rmdir "$lock_dir" 2>/dev/null || true' EXIT
 
 if [[ "$installed_commit" == "$desired_commit" && -d "$destination" ]]; then
-  log "T3 Code Custom is already current at ${desired_commit[1,12]}."
+  log "T3 Code Custom is already current at ${desired_commit:0:12}."
   exit 0
 fi
 
@@ -102,7 +102,7 @@ if [[ "$built_commit" != "$desired_commit" || ! -d "$staged_app" ]]; then
   }
   trap 'cleanup_attempt; rmdir "$lock_dir" 2>/dev/null || true' EXIT
 
-  log "Building T3 Code Custom at ${desired_commit[1,12]}."
+  log "Building T3 Code Custom at ${desired_commit:0:12}."
   (
     cd "$repo_dir"
     "$vp_bin" install --frozen-lockfile
@@ -194,7 +194,7 @@ fi
 codesign --verify --deep --strict "$destination"
 print -r -- "$desired_commit" > "$state_dir/installed-commit"
 rm -f "$state_dir/idle-since"
-log "Installed T3 Code Custom at ${desired_commit[1,12]}."
+log "Installed T3 Code Custom at ${desired_commit:0:12}."
 
 if [[ "$restart_after_install" == "true" ]]; then
   open -b "$custom_bundle_id"

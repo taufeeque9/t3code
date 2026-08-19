@@ -36,7 +36,7 @@ jobs:
           vp test run scripts/build-desktop-artifact.test.ts
 
       - name: Validate local updater
-        run: zsh -n scripts/custom/update-installed-app.sh
+        run: bash -n scripts/custom/update-installed-app.sh
 
       - name: Build desktop pipeline
         run: vp run build:desktop
