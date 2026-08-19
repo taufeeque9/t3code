@@ -133,7 +133,7 @@ if [[ "$built_commit" != "$desired_commit" || ! -d "$staged_app" ]]; then
     log "Unexpected bundle id: $actual_bundle_id"
     exit 1
   fi
-  print -r -- "$desired_commit" > "$state_dir/built-commit"
+  printf '%s\n' "$desired_commit" > "$state_dir/built-commit"
   built_commit="$desired_commit"
   cleanup_attempt
   trap 'rmdir "$lock_dir" 2>/dev/null || true' EXIT
@@ -149,7 +149,7 @@ fi
 now_epoch="$(date +%s)"
 idle_since="$(read_state "$state_dir/idle-since")"
 if [[ -z "$idle_since" ]]; then
-  print -r -- "$now_epoch" > "$state_dir/idle-since"
+  printf '%s\n' "$now_epoch" > "$state_dir/idle-since"
   log "No sessions are active. Installation will proceed on the next check after the idle grace period."
   exit 0
 fi
@@ -192,7 +192,7 @@ if ! ditto "$staged_app" "$destination"; then
   exit 1
 fi
 codesign --verify --deep --strict "$destination"
-print -r -- "$desired_commit" > "$state_dir/installed-commit"
+printf '%s\n' "$desired_commit" > "$state_dir/installed-commit"
 rm -f "$state_dir/idle-since"
 log "Installed T3 Code Custom at ${desired_commit:0:12}."
 
