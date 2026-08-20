@@ -46,15 +46,16 @@ jobs:
             conflicts="$(git diff --name-only --diff-filter=U | sed -n '1,40p')"
             git merge --abort
             gh label create upstream-sync-conflict \
+              --repo "$GITHUB_REPOSITORY" \
               --color D93F0B \
               --description "Weekly upstream merge needs manual conflict resolution" \
               --force
-            existing_issue="$(gh issue list --state open --label upstream-sync-conflict --json number --jq '.[0].number // empty')"
+            existing_issue="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --label upstream-sync-conflict --json number --jq '.[0].number // empty')"
             body="Written by you.\n\nUpstream \`main\` could not be merged into \`custom\` automatically.\n\nConflicting files:\n\n\`\`\`\n${conflicts}\n\`\`\`"
             if [ -n "$existing_issue" ]; then
-              gh issue comment "$existing_issue" --body "$body"
+              gh issue comment "$existing_issue" --repo "$GITHUB_REPOSITORY" --body "$body"
             else
-              gh issue create --title "Resolve weekly upstream sync conflict" --label upstream-sync-conflict --body "$body"
+              gh issue create --repo "$GITHUB_REPOSITORY" --title "Resolve weekly upstream sync conflict" --label upstream-sync-conflict --body "$body"
             fi
             exit 1
           fi
@@ -89,6 +90,7 @@ jobs:
           SYNC_SHA: ${{ steps.merge.outputs.sync_sha }}
         run: |
           pr_url="$(gh pr create \
+            --repo "$GITHUB_REPOSITORY" \
             --base custom \
             --head "$SYNC_BRANCH" \
             --title "chore: merge upstream main" \
@@ -99,7 +101,7 @@ jobs:
             -f state=success \
             -f context='Validate custom fork' \
             -f description='Custom tests and desktop build passed'
-          gh pr merge --auto --merge "$pr_url"
+          gh pr merge --repo "$GITHUB_REPOSITORY" --auto --merge "$pr_url"
 
       - name: Report validation failure
         if: failure() && steps.merge.outputs.changed == 'true'
@@ -114,15 +116,16 @@ jobs:
             -f context='Validate custom fork' \
             -f description='Custom tests or desktop build failed'
           gh label create upstream-sync-failed \
+            --repo "$GITHUB_REPOSITORY" \
             --color B60205 \
             --description "Weekly upstream merge failed validation" \
             --force
-          existing_issue="$(gh issue list --state open --label upstream-sync-failed --json number --jq '.[0].number // empty')"
+          existing_issue="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --label upstream-sync-failed --json number --jq '.[0].number // empty')"
           body=$'Written by you.\n\nThe upstream merge was conflict-free, but custom tests or the desktop build failed. Inspect the latest **Sync upstream** workflow run before merging.'
           if [ -n "$existing_issue" ]; then
-            gh issue comment "$existing_issue" --body "$body"
+            gh issue comment "$existing_issue" --repo "$GITHUB_REPOSITORY" --body "$body"
           else
-            gh issue create --title "Repair failed weekly T3 validation" --label upstream-sync-failed --body "$body"
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "Repair failed weekly T3 validation" --label upstream-sync-failed --body "$body"
           fi
 
       - name: Prepare checkout cleanup
