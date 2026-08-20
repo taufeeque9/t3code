@@ -108,7 +108,8 @@ if [[ "$built_commit" != "$desired_commit" || ! -d "$staged_app" ]]; then
     "$vp_bin" install --frozen-lockfile
     env -u GITHUB_REPOSITORY \
       T3CODE_DESKTOP_UPDATE_REPOSITORY="" \
-      "$vp_bin" run dist:desktop:dmg:arm64 -- --output-dir "$attempt_dir"
+      T3CODE_DESKTOP_OUTPUT_DIR="$attempt_dir" \
+      "$vp_bin" run dist:desktop:dmg:arm64
   )
 
   dmg_path="$(find "$attempt_dir" -maxdepth 1 -type f -name 'T3-Code-Custom-*.dmg' -print -quit)"

@@ -39,6 +39,10 @@ jobs:
         run: |
           bash -n scripts/custom/update-installed-app.sh
           shellcheck -s bash scripts/custom/update-installed-app.sh
+          T3CODE_CUSTOM_REPO="$GITHUB_WORKSPACE" \
+            T3CODE_CUSTOM_UPDATER_HOME="$RUNNER_TEMP/t3-custom-updater" \
+            T3CODE_CUSTOM_DATABASE="$RUNNER_TEMP/missing.sqlite" \
+            bash scripts/custom/update-installed-app.sh --status | grep '^desired_commit='
 
       - name: Build desktop pipeline
         run: vp run build:desktop
