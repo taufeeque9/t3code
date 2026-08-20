@@ -39,10 +39,12 @@ jobs:
         run: |
           bash -n scripts/custom/update-installed-app.sh
           shellcheck -s bash scripts/custom/update-installed-app.sh
+          sqlite3 "$RUNNER_TEMP/state.sqlite" \
+            "CREATE TABLE projection_thread_sessions (status TEXT); INSERT INTO projection_thread_sessions VALUES ('ready'), ('running');"
           T3CODE_CUSTOM_REPO="$GITHUB_WORKSPACE" \
             T3CODE_CUSTOM_UPDATER_HOME="$RUNNER_TEMP/t3-custom-updater" \
-            T3CODE_CUSTOM_DATABASE="$RUNNER_TEMP/missing.sqlite" \
-            bash scripts/custom/update-installed-app.sh --status | grep '^desired_commit='
+            T3CODE_CUSTOM_DATABASE="$RUNNER_TEMP/state.sqlite" \
+            bash scripts/custom/update-installed-app.sh --status | grep '^active_sessions=1$'
 
       - name: Build desktop pipeline
         run: vp run build:desktop
