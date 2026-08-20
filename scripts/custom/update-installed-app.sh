@@ -30,7 +30,7 @@ active_session_count() {
     return
   fi
   sqlite3 -readonly "$database" \
-    "SELECT COUNT(*) FROM provider_session_runtime WHERE status IN ('starting', 'running');"
+    "SELECT COUNT(*) FROM projection_thread_sessions WHERE status IN ('starting', 'running');"
 }
 
 application_is_running() {
