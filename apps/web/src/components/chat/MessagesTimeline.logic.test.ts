@@ -597,13 +597,26 @@ describe("deriveMessagesTimelineRows", () => {
         },
       },
       {
+        id: "stop-hook-entry",
+        kind: "work" as const,
+        createdAt: "2026-01-01T00:00:22Z",
+        entry: {
+          id: "stop-hook-warning",
+          createdAt: "2026-01-01T00:00:22Z",
+          turnId: "turn-1" as never,
+          label: "Stop hook error occurred · ctrl+o to see",
+          tone: "error" as const,
+          sourceActivityKind: "runtime.warning" as const,
+        },
+      },
+      {
         id: "self-check-entry",
         kind: "message" as const,
         createdAt: "2026-01-01T00:00:23Z",
         message: {
           id: "self-check" as never,
           role: "assistant" as const,
-          text: "Self-check: verified the result.",
+          text: "Both checks done.",
           turnId: "turn-1" as never,
           createdAt: "2026-01-01T00:00:23Z",
           updatedAt: "2026-01-01T00:00:24Z",
@@ -625,6 +638,7 @@ describe("deriveMessagesTimelineRows", () => {
       "user-entry",
       "work-toggle:work-entry",
       "assistant-final-entry",
+      "stop-hook-entry",
       "self-check-entry",
     ]);
   });
