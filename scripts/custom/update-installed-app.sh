@@ -6,6 +6,7 @@ repo_dir="${T3CODE_CUSTOM_REPO:-/Users/tf-work/Desktop/t3code-custom}"
 state_dir="${T3CODE_CUSTOM_UPDATER_HOME:-/Users/tf-work/.t3/custom-updater}"
 vp_bin="${T3CODE_CUSTOM_VP_BIN:-/Users/tf-work/.vite-plus/bin/vp}"
 database="${T3CODE_CUSTOM_DATABASE:-/Users/tf-work/.t3/userdata/state.sqlite}"
+runtime_state="${T3CODE_CUSTOM_RUNTIME_STATE:-/Users/tf-work/.t3/userdata/server-runtime.json}"
 destination="/Applications/T3 Code Custom.app"
 custom_bundle_id="com.taufeeque.t3code-custom"
 official_bundle_id="com.t3tools.t3code"
@@ -147,19 +148,29 @@ if (( active_sessions > 0 )); then
   exit 0
 fi
 
-now_epoch="$(date +%s)"
-idle_since="$(read_state "$state_dir/idle-since")"
-if [[ -z "$idle_since" ]]; then
-  printf '%s\n' "$now_epoch" > "$state_dir/idle-since"
-  log "No sessions are active. Installation will proceed on the next check after the idle grace period."
-  exit 0
-fi
-if (( now_epoch - idle_since < 600 )); then
-  log "Waiting for the 10-minute idle grace period before restarting T3 Code."
-  exit 0
+install_after_app_exit=false
+if [[ "$mode" == "--after-app-exit" ]]; then
+  if [[ -f "$runtime_state" ]] || application_is_running "$custom_bundle_id" || application_is_running "$official_bundle_id"; then
+    log "The quit trigger fired while T3 is still running; installation deferred."
+    exit 0
+  fi
+  install_after_app_exit=true
+  rm -f "$state_dir/idle-since"
+else
+  now_epoch="$(date +%s)"
+  idle_since="$(read_state "$state_dir/idle-since")"
+  if [[ -z "$idle_since" ]]; then
+    printf '%s\n' "$now_epoch" > "$state_dir/idle-since"
+    log "No sessions are active. Installation will proceed on the next check after the idle grace period."
+    exit 0
+  fi
+  if (( now_epoch - idle_since < 600 )); then
+    log "Waiting for the 10-minute idle grace period before restarting T3 Code."
+    exit 0
+  fi
 fi
 
-restart_after_install=false
+restart_after_install="$install_after_app_exit"
 if application_is_running "$custom_bundle_id"; then
   restart_after_install=true
   osascript -e "tell application id \"$custom_bundle_id\" to quit"
