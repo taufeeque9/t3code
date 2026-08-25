@@ -163,7 +163,7 @@ restart_after_install=false
 if application_is_running "$custom_bundle_id"; then
   restart_after_install=true
   osascript -e "tell application id \"$custom_bundle_id\" to quit"
-elif [[ ! -d "$destination" ]] && application_is_running "$official_bundle_id"; then
+elif application_is_running "$official_bundle_id"; then
   restart_after_install=true
   osascript -e "tell application id \"$official_bundle_id\" to quit"
 fi
