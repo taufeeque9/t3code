@@ -2,6 +2,7 @@ import {
   ArrowLeftIcon,
   ChartNoAxesColumnIcon,
   GitPullRequestIcon,
+  GaugeIcon,
   SettingsIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -148,14 +149,13 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const canGoBack = useCanGoBack();
   const { isMobile, setOpenMobile } = useSidebar();
   const currentFooterPage = useLocation({
-    select: (location) =>
-      /^\/settings(?:\/|$)/.test(location.pathname)
-        ? "settings"
-        : location.pathname === "/usage"
-          ? "usage"
-          : location.pathname === "/pull-requests"
-            ? "pull-requests"
-            : null,
+    select: (location) => {
+      if (/^\/settings(?:\/|$)/.test(location.pathname)) return "settings";
+      if (location.pathname === "/usage") return "usage";
+      if (location.pathname === "/limits") return "limits";
+      if (location.pathname === "/pull-requests") return "pull-requests";
+      return null;
+    },
   });
   const { environments } = useEnvironments();
   // The page reads every connected server, so one of them offering pull requests is enough for
@@ -178,11 +178,14 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   }, [closeMobileSidebar, navigate]);
 
   const handleUsageClick = useCallback(() => {
-    if (isMobile) {
-      setOpenMobile(false);
-    }
+    closeMobileSidebar();
     void navigate({ to: "/usage" });
-  }, [isMobile, navigate, setOpenMobile]);
+  }, [closeMobileSidebar, navigate]);
+
+  const handleLimitsClick = useCallback(() => {
+    closeMobileSidebar();
+    void navigate({ to: "/limits" });
+  }, [closeMobileSidebar, navigate]);
 
   const handleBackClick = useCallback(() => {
     closeMobileSidebar();
@@ -221,6 +224,7 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
             label="Usage"
             onClick={handleUsageClick}
           />
+          <SidebarUtilityItem icon={<GaugeIcon />} label="Limits" onClick={handleLimitsClick} />
         </>
       )}
       <SidebarUpdatePill />
