@@ -130,6 +130,39 @@ describe("derivePendingApprovals", () => {
     ]);
   });
 
+  it("keeps app access approvals and persistence choices from remote activities", () => {
+    const options = [
+      { decision: "decline", label: "Decline" },
+      { decision: "acceptAlways", label: "Always allow Safari" },
+      { decision: "accept", label: "Approve" },
+    ];
+    const activities = [
+      makeActivity({
+        kind: "approval.requested",
+        summary: "App access approval requested",
+        tone: "approval",
+        payload: {
+          requestId: "req-safari",
+          requestType: "mcp_elicitation_approval",
+          detail: "Allow ChatGPT to use Safari?",
+          appName: "Safari",
+          options,
+        },
+      }),
+    ];
+
+    expect(derivePendingApprovals(activities)).toEqual([
+      {
+        requestId: "req-safari",
+        requestKind: "mcp-elicitation",
+        createdAt: "2026-02-23T00:00:00.000Z",
+        detail: "Allow ChatGPT to use Safari?",
+        appName: "Safari",
+        options,
+      },
+    ]);
+  });
+
   it("derives dynamic tool requests as actionable generic approvals", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -1184,6 +1217,108 @@ describe("deriveWorkLogEntries", () => {
 
     const [entry] = deriveWorkLogEntries(activities);
     expect(entry?.toolData).toEqual(item);
+    expect(entry?.toolCallId).toBe("call-1");
+  });
+
+  it("collapses interleaved lifecycle updates by tool call id", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "tool-a-progress",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        turnId: "turn-1",
+        kind: "tool.updated",
+        summary: "Tool A",
+        payload: {
+          itemType: "command_execution",
+          toolCallId: "call-a",
+          status: "inProgress",
+          data: { command: "vp test run" },
+        },
+      }),
+      makeActivity({
+        id: "tool-b-progress",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        turnId: "turn-1",
+        kind: "tool.updated",
+        summary: "Tool B",
+        payload: {
+          itemType: "command_execution",
+          toolCallId: "call-b",
+          status: "inProgress",
+          data: { command: "vp lint" },
+        },
+      }),
+      makeActivity({
+        id: "tool-a-complete",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        turnId: "turn-1",
+        kind: "tool.completed",
+        summary: "Tool A completed",
+        payload: {
+          itemType: "command_execution",
+          toolCallId: "call-a",
+          status: "completed",
+        },
+      }),
+      makeActivity({
+        id: "tool-b-complete",
+        createdAt: "2026-02-23T00:00:04.000Z",
+        turnId: "turn-1",
+        kind: "tool.completed",
+        summary: "Tool B completed",
+        payload: {
+          itemType: "command_execution",
+          toolCallId: "call-b",
+          status: "completed",
+        },
+      }),
+    ];
+
+    expect(deriveWorkLogEntries(activities)).toMatchObject([
+      {
+        id: "tool-a-complete",
+        command: "vp test run",
+        toolCallId: "call-a",
+        toolLifecycleStatus: "completed",
+      },
+      {
+        id: "tool-b-complete",
+        command: "vp lint",
+        toolCallId: "call-b",
+        toolLifecycleStatus: "completed",
+      },
+    ]);
+  });
+
+  it("does not merge reused tool call ids across turns", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "turn-1-tool",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        turnId: "turn-1",
+        kind: "tool.updated",
+        summary: "Tool",
+        payload: {
+          itemType: "command_execution",
+          toolCallId: "reused-call",
+          status: "inProgress",
+        },
+      }),
+      makeActivity({
+        id: "turn-2-tool",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        turnId: "turn-2",
+        kind: "tool.completed",
+        summary: "Tool completed",
+        payload: {
+          itemType: "command_execution",
+          toolCallId: "reused-call",
+          status: "completed",
+        },
+      }),
+    ];
+
+    expect(deriveWorkLogEntries(activities)).toHaveLength(2);
   });
 
   it("unwraps PowerShell command wrappers for displayed command text", () => {
@@ -1850,6 +1985,20 @@ describe("deriveActiveWorkStartedAt", () => {
     ).toBe("2026-02-27T21:11:00.000Z");
   });
 
+  it("falls back to the latest user message while a running turn is being acknowledged", () => {
+    expect(
+      deriveActiveWorkStartedAt(
+        latestTurn,
+        {
+          status: "running",
+          activeTurnId: TurnId.make("turn-2"),
+        },
+        null,
+        "2026-02-27T21:11:00.000Z",
+      ),
+    ).toBe("2026-02-27T21:11:00.000Z");
+  });
+
   it("falls back to sendStartedAt once the latest turn is settled", () => {
     expect(
       deriveActiveWorkStartedAt(
@@ -2087,5 +2236,66 @@ describe("rerun workflows", () => {
     const spawnRows = entries.filter((entry) => entry.agentSpawn !== undefined);
     expect(spawnRows.map((row) => row.agentSpawn!.workflowId)).toEqual(["wf-run1", "wf-run2"]);
     expect(spawnRows.map((row) => row.turnId)).toEqual(["turn-1", "turn-2"]);
+  });
+});
+
+describe("session activity performance", () => {
+  it("reuses entries for unchanged activities", () => {
+    const activities = ["status", "diff", "log"].map((command, index) =>
+      makeActivity({
+        id: `stable-tool-${index}`,
+        kind: "tool.completed",
+        sequence: index,
+        payload: {
+          itemType: "command_execution",
+          data: { toolCallId: `stable-tool-${index}`, item: { command: ["git", command] } },
+        },
+      }),
+    );
+
+    const initialEntries = deriveWorkLogEntries(activities.slice(0, 2));
+    const appendedEntries = deriveWorkLogEntries(activities);
+    expect(appendedEntries[0]).toBe(initialEntries[0]);
+    expect(appendedEntries[1]).toBe(initialEntries[1]);
+  });
+
+  it("updates 20,000 ordered tool activities within 100 ms", () => {
+    const activities = Array.from({ length: 20_000 }, (_, index) =>
+      makeActivity({
+        id: `benchmark-tool-${index}`,
+        createdAt: new Date(1_700_000_000_000 + index).toISOString(),
+        kind: "tool.completed",
+        summary: "Ran command",
+        sequence: index,
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            toolCallId: `benchmark-tool-${index}`,
+            item: { command: ["git", "status"] },
+          },
+        },
+      }),
+    );
+    deriveWorkLogEntries(activities);
+    const updatedActivities = [
+      ...activities,
+      makeActivity({
+        id: "benchmark-tool-appended",
+        createdAt: new Date(1_700_000_000_000 + activities.length).toISOString(),
+        kind: "tool.completed",
+        summary: "Ran command",
+        sequence: activities.length,
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: { toolCallId: "benchmark-tool-appended", item: { command: ["git", "diff"] } },
+        },
+      }),
+    ];
+
+    const startedAt = performance.now();
+    expect(deriveWorkLogEntries(updatedActivities)).toHaveLength(20_001);
+    expect(performance.now() - startedAt).toBeLessThan(100);
   });
 });
