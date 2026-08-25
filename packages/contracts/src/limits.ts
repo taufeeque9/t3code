@@ -10,6 +10,15 @@ export const ProviderLimitBucket = Schema.Struct({
 });
 export type ProviderLimitBucket = typeof ProviderLimitBucket.Type;
 
+export const ProviderExtraUsage = Schema.Struct({
+  usedCredits: Schema.NullOr(Schema.Number),
+  monthlyLimit: Schema.NullOr(Schema.Number),
+  usedPercent: Schema.NullOr(Schema.Number),
+  currency: Schema.NullOr(Schema.String),
+  decimalPlaces: Schema.Number,
+});
+export type ProviderExtraUsage = typeof ProviderExtraUsage.Type;
+
 export const ProviderLimitsStatus = Schema.Literals(["ready", "unavailable", "error"]);
 export type ProviderLimitsStatus = typeof ProviderLimitsStatus.Type;
 
@@ -22,6 +31,7 @@ export const ProviderLimitsAccount = Schema.Struct({
   status: ProviderLimitsStatus,
   observedAt: Schema.String,
   buckets: Schema.Array(ProviderLimitBucket),
+  extraUsage: Schema.optionalKey(ProviderExtraUsage),
   detail: Schema.NullOr(Schema.String),
 });
 export type ProviderLimitsAccount = typeof ProviderLimitsAccount.Type;
