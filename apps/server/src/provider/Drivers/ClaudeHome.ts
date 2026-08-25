@@ -2,6 +2,8 @@ import * as NodeOS from "node:os";
 
 import type { ClaudeSettings } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import { expandHomePath } from "../../pathExpansion.ts";
@@ -35,9 +37,36 @@ export const makeClaudeEnvironment = Effect.fn("makeClaudeEnvironment")(function
 });
 
 export const makeClaudeContinuationGroupKey = Effect.fn("makeClaudeContinuationGroupKey")(
-  function* (config: Pick<ClaudeSettings, "homePath">): Effect.fn.Return<string, never, Path.Path> {
+  function* (
+    config: Pick<ClaudeSettings, "homePath">,
+  ): Effect.fn.Return<string, never, FileSystem.FileSystem | Path.Path> {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     const resolvedHomePath = yield* resolveClaudeHomePath(config);
-    return `claude:home:${resolvedHomePath}`;
+    const projectsPath = path.join(resolvedHomePath, "projects");
+    const targetProjectsPath = yield* fileSystem.readLink(projectsPath).pipe(
+      Effect.map((target) => path.resolve(path.dirname(projectsPath), target)),
+      Effect.orElseSucceed(() => projectsPath),
+    );
+    // realPath rejects dangling links, so canonicalize their nearest existing ancestor.
+    let candidatePath = targetProjectsPath;
+    const missingSegments: string[] = [];
+    while (true) {
+      const canonicalPath = yield* Effect.option(fileSystem.realPath(candidatePath));
+      if (Option.isSome(canonicalPath)) {
+        const canonicalProjectsPath = path.join(
+          canonicalPath.value,
+          ...missingSegments.toReversed(),
+        );
+        return `claude:projects:${canonicalProjectsPath}`;
+      }
+      const parentPath = path.dirname(candidatePath);
+      if (parentPath === candidatePath) {
+        return `claude:projects:${targetProjectsPath}`;
+      }
+      missingSegments.push(path.basename(candidatePath));
+      candidatePath = parentPath;
+    }
   },
 );
 
