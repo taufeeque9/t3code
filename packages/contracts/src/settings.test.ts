@@ -51,6 +51,22 @@ describe("ClientSettings glass opacity", () => {
   });
 });
 
+describe("ClientSettings appearance contrast", () => {
+  it("defaults to the theme's original contrast", () => {
+    expect(decodeClientSettings({}).appearanceContrast).toBe(100);
+  });
+
+  it.each([49, 201, 92.5])("rejects an invalid appearance contrast: %s", (value) => {
+    expect(() => decodeClientSettings({ appearanceContrast: value })).toThrow();
+    expect(() => decodeClientSettingsPatch({ appearanceContrast: value })).toThrow();
+  });
+
+  it.each([50, 100, 150, 200])("accepts an appearance contrast in range: %s", (value) => {
+    expect(decodeClientSettings({ appearanceContrast: value }).appearanceContrast).toBe(value);
+    expect(decodeClientSettingsPatch({ appearanceContrast: value }).appearanceContrast).toBe(value);
+  });
+});
+
 describe("ClientSettings environment identification", () => {
   it("defaults to artwork and accepts each presentation mode", () => {
     expect(decodeClientSettings({}).environmentIdentificationMode).toBe("artwork");
@@ -191,9 +207,24 @@ describe("provider enabled defaults", () => {
 
   it("derives per-driver defaults from the settings schemas", () => {
     expect(defaultEnabledForDriver(ProviderDriverKind.make("codex"))).toBe(true);
+    expect(defaultEnabledForDriver(ProviderDriverKind.make("cursor"))).toBe(false);
     expect(defaultEnabledForDriver(ProviderDriverKind.make("grok"))).toBe(false);
     // Unknown fork drivers stay enabled; their own build decides otherwise.
     expect(defaultEnabledForDriver(ProviderDriverKind.make("ollama"))).toBe(true);
+  });
+
+  it("keeps Cursor enabled when an existing user explicitly opted in", () => {
+    const cursor = ProviderDriverKind.make("cursor");
+    const cursorId = ProviderInstanceId.make("cursor");
+    const decoded = decodeServerSettings({
+      providers: { cursor: { enabled: true } },
+      providerInstances: {
+        [cursorId]: { driver: cursor, enabled: true, config: {} },
+      },
+    });
+
+    expect(decoded.providers.cursor.enabled).toBe(true);
+    expect(resolveProviderInstanceEnabled(decoded.providerInstances[cursorId]!)).toBe(true);
   });
 
   it("resolves instance enabled state with explicit false winning", () => {
