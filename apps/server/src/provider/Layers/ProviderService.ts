@@ -175,6 +175,20 @@ function readPersistedCwd(
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+function providerStartInputSource(input: {
+  readonly provided: boolean;
+  readonly reusedPersistedValue: boolean;
+  readonly changedInstance: boolean;
+}): "request" | "persisted" | "persisted-compatible-instance" | "none" {
+  if (input.provided) {
+    return "request";
+  }
+  if (!input.reusedPersistedValue) {
+    return "none";
+  }
+  return input.changedInstance ? "persisted-compatible-instance" : "persisted";
+}
+
 const dieOnMissingBindingInstanceId = (
   operation: string,
   payload: {
@@ -619,33 +633,57 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           );
         }
         const persistedBinding = Option.getOrUndefined(yield* directory.getBinding(threadId));
+        const persistedInstanceId = persistedBinding?.providerInstanceId;
+        const changedInstanceWithinProvider =
+          persistedBinding !== undefined &&
+          persistedInstanceId !== undefined &&
+          persistedBinding.provider === resolvedProvider &&
+          persistedInstanceId !== resolvedInstanceId;
+        if (changedInstanceWithinProvider) {
+          const persistedInstanceInfo = yield* Effect.option(
+            registry.getInstanceInfo(persistedInstanceId),
+          );
+          const continuationIdentityMatches =
+            Option.isSome(persistedInstanceInfo) &&
+            persistedInstanceInfo.value.driverKind === resolvedProvider &&
+            persistedInstanceInfo.value.continuationIdentity.continuationKey ===
+              instanceInfo.continuationIdentity.continuationKey;
+          if (!continuationIdentityMatches) {
+            return yield* toValidationError(
+              "ProviderService.startSession",
+              `Thread '${threadId}' cannot switch from instance '${persistedInstanceId}' to '${resolvedInstanceId}' because their provider resume state is incompatible.`,
+            );
+          }
+          if (input.resumeCursor === undefined && persistedBinding.resumeCursor == null) {
+            return yield* toValidationError(
+              "ProviderService.startSession",
+              `Thread '${threadId}' cannot switch from instance '${persistedInstanceId}' to '${resolvedInstanceId}' because no persisted resume cursor is available.`,
+            );
+          }
+        }
+        const reusePersistedState =
+          persistedInstanceId === resolvedInstanceId || changedInstanceWithinProvider;
         const effectiveResumeCursor =
-          input.resumeCursor ??
-          (persistedBinding?.providerInstanceId === resolvedInstanceId
-            ? persistedBinding.resumeCursor
-            : undefined);
+          input.resumeCursor ?? (reusePersistedState ? persistedBinding?.resumeCursor : undefined);
         const effectiveCwd =
           input.cwd ??
-          (persistedBinding?.providerInstanceId === resolvedInstanceId
-            ? readPersistedCwd(persistedBinding.runtimePayload)
-            : undefined);
+          (reusePersistedState ? readPersistedCwd(persistedBinding?.runtimePayload) : undefined);
+        const persistedResumeCursorUsed =
+          input.resumeCursor === undefined && effectiveResumeCursor !== undefined;
+        const persistedCwdUsed = input.cwd === undefined && effectiveCwd !== undefined;
         yield* Effect.annotateCurrentSpan({
           "provider.kind": resolvedProvider,
-          "provider.resume_cursor.source":
-            input.resumeCursor !== undefined
-              ? "request"
-              : effectiveResumeCursor !== undefined &&
-                  persistedBinding?.providerInstanceId === resolvedInstanceId
-                ? "persisted"
-                : "none",
+          "provider.resume_cursor.source": providerStartInputSource({
+            provided: input.resumeCursor !== undefined,
+            reusedPersistedValue: persistedResumeCursorUsed,
+            changedInstance: changedInstanceWithinProvider,
+          }),
           "provider.resume_cursor.present": effectiveResumeCursor !== undefined,
-          "provider.cwd.source":
-            input.cwd !== undefined
-              ? "request"
-              : effectiveCwd !== undefined &&
-                  persistedBinding?.providerInstanceId === resolvedInstanceId
-                ? "persisted"
-                : "none",
+          "provider.cwd.source": providerStartInputSource({
+            provided: input.cwd !== undefined,
+            reusedPersistedValue: persistedCwdUsed,
+            changedInstance: changedInstanceWithinProvider,
+          }),
           "provider.cwd.effective": effectiveCwd ?? "",
         });
         const adapter = yield* registry.getByInstance(resolvedInstanceId);
