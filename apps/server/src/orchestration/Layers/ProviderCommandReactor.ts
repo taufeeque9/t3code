@@ -98,6 +98,14 @@ const MAX_THREAD_TITLE_CONTEXT_CHARS = 8_000;
 const MAX_FIRST_USER_TITLE_CONTEXT_CHARS = 2_000;
 const THREAD_TITLE_CONTEXT_TRUNCATION_MARKER = "[Earlier content truncated]\n\n";
 const FIRST_USER_CONTEXT_TRUNCATION_MARKER = "\n[First user message truncated]";
+const FORKED_SESSION_FIRST_TURN_CONTEXT =
+  "The session got forked here. You don't need to continue the previous pending things as the original session will do that. Focus on the new user message in this fork.";
+
+export function withForkContext(message: string, hasForkContext: boolean): string {
+  return hasForkContext
+    ? `<t3_fork_context>${FORKED_SESSION_FIRST_TURN_CONTEXT}</t3_fork_context>\n\n${message}`
+    : message;
+}
 
 type ThreadTitleMessage = {
   readonly role: "user" | "assistant" | "system";
@@ -1207,7 +1215,7 @@ const make = Effect.gen(function* () {
 
     const sendTurnRequest = yield* buildSendTurnRequestForThread({
       threadId: event.payload.threadId,
-      messageText: message.text,
+      messageText: withForkContext(message.text, event.payload.forkContext !== undefined),
       ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
       ...(event.payload.modelSelection !== undefined
         ? { modelSelection: event.payload.modelSelection }

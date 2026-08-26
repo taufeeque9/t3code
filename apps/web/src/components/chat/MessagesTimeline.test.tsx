@@ -884,6 +884,18 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-user-message-footer="true"');
   });
 
+  it("shows a fork action beside a user message when native forking is available", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        onForkUserMessage={() => undefined}
+        timelineEntries={[buildUserTimelineEntry("try another direction")]}
+      />,
+    );
+
+    expect(markup).toContain('aria-label="Fork from here"');
+  });
+
   it("renders context compaction entries in the normal work log", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline

@@ -19,6 +19,7 @@ import {
   CommandId,
   type DiscoveredLocalServerList,
   EventId,
+  type MessageId,
   type OrchestrationClientOrigin,
   type OrchestrationCommand,
   type GitActionProgressEvent,
@@ -32,6 +33,7 @@ import {
   OrchestrationGetSnapshotError,
   OrchestrationSearchThreadsError,
   OrchestrationGetTurnDiffError,
+  ThreadForkError,
   ORCHESTRATION_WS_METHODS,
   type ProjectId,
   type ProjectEntriesFailure,
@@ -100,6 +102,7 @@ import * as PortScanner from "./preview/PortScanner.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import { readWorkflowScript } from "./orchestration/workflowScriptQuery.ts";
+import { resolveThreadForkPlan } from "./orchestration/threadFork.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
@@ -135,6 +138,7 @@ import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
+const isThreadForkError = Schema.is(ThreadForkError);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const EDITOR_DISCOVERY_TIMEOUT = Duration.seconds(5);
@@ -846,6 +850,119 @@ const makeWsRpcLayer = (
           Stream.mapEffect(coalesceShellLiveInputs),
           Stream.flatMap((items) => Stream.fromIterable(items)),
         );
+
+      const forkThread = Effect.fn("forkThread")(function* (input: {
+        readonly sourceThreadId: ThreadId;
+        readonly beforeMessageId: MessageId | undefined;
+      }) {
+        const source = Option.getOrUndefined(
+          yield* projectionSnapshotQuery.getThreadDetailById(input.sourceThreadId).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ThreadForkError({
+                  reason: "fork-failed",
+                  message: "Failed to read the source thread.",
+                  cause,
+                }),
+            ),
+          ),
+        );
+        if (!source) {
+          return yield* new ThreadForkError({
+            reason: "source-not-found",
+            message: `Thread '${input.sourceThreadId}' was not found.`,
+          });
+        }
+
+        const forkPlan = resolveThreadForkPlan(source, input.beforeMessageId);
+        if (isThreadForkError(forkPlan)) {
+          return yield* forkPlan;
+        }
+        const { copiedMessages, cutoffMessageId, forkPoint, draftText } = forkPlan;
+        const targetThreadId = ThreadId.make(
+          yield* randomUUID.pipe(
+            Effect.mapError(
+              (cause) =>
+                new ThreadForkError({
+                  reason: "fork-failed",
+                  message: "Failed to generate the forked thread identifier.",
+                  cause,
+                }),
+            ),
+          ),
+        );
+
+        const forkCommandId = yield* serverCommandId("thread-fork").pipe(
+          Effect.mapError(
+            (cause) =>
+              new ThreadForkError({
+                reason: "fork-failed",
+                message: "Failed to generate the fork command identifier.",
+                cause,
+              }),
+          ),
+        );
+        yield* dispatchFromClient({
+          type: "thread.fork",
+          commandId: forkCommandId,
+          threadId: targetThreadId,
+          sourceThreadId: source.id,
+          ...(cutoffMessageId ? { beforeMessageId: cutoffMessageId } : {}),
+          createdAt: yield* nowIso,
+        }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ThreadForkError({
+                reason: "fork-failed",
+                message: "Failed to create the forked thread.",
+                cause,
+              }),
+          ),
+        );
+
+        if (copiedMessages.length > 0) {
+          const prepareSessionFork = providerService.prepareSessionFork;
+          const cleanupForkThread = serverCommandId("failed-thread-fork-delete").pipe(
+            Effect.flatMap((commandId) =>
+              dispatchFromClient({
+                type: "thread.delete",
+                commandId,
+                threadId: targetThreadId,
+              }),
+            ),
+            Effect.ignore,
+          );
+          if (!prepareSessionFork) {
+            yield* cleanupForkThread;
+            return yield* new ThreadForkError({
+              reason: "unsupported-provider",
+              message: "This server does not support native provider session forks.",
+            });
+          }
+          yield* prepareSessionFork({
+            sourceThreadId: source.id,
+            targetThreadId,
+            forkPoint,
+          }).pipe(
+            Effect.mapError((cause) => {
+              const message = cause instanceof Error ? cause.message : String(cause);
+              return new ThreadForkError({
+                reason: message.includes("does not support session forking")
+                  ? "unsupported-provider"
+                  : "provider-state-unavailable",
+                message,
+                cause,
+              });
+            }),
+            Effect.catch((error) => cleanupForkThread.pipe(Effect.andThen(Effect.fail(error)))),
+          );
+        }
+
+        return {
+          threadId: targetThreadId,
+          draftText,
+        };
+      });
 
       const dispatchBootstrapTurnStart = (
         command: Extract<OrchestrationCommand, { type: "thread.turn.start" }>,
@@ -1706,6 +1823,15 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.serverGetProviderLimits, providerLimits.read, {
             "rpc.aggregate": "server",
           }),
+        [WS_METHODS.serverForkThread]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverForkThread,
+            forkThread({
+              sourceThreadId: input.sourceThreadId,
+              beforeMessageId: input.beforeMessageId,
+            }),
+            { "rpc.aggregate": "server" },
+          ),
         [WS_METHODS.serverRetryResourceTelemetry]: (_input) =>
           observeRpcEffect(WS_METHODS.serverRetryResourceTelemetry, resourceTelemetry.retry, {
             "rpc.aggregate": "server",

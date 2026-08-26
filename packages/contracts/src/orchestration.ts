@@ -1060,7 +1060,17 @@ const ThreadTitleRegenerationCompleteCommand = Schema.Struct({
   title: Schema.optional(TrimmedNonEmptyString),
 });
 
+const ThreadForkCommand = Schema.Struct({
+  type: Schema.Literal("thread.fork"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  sourceThreadId: ThreadId,
+  beforeMessageId: Schema.optional(MessageId),
+  createdAt: IsoDateTime,
+});
+
 const InternalOrchestrationCommand = Schema.Union([
+  ThreadForkCommand,
   ThreadSessionSetCommand,
   ThreadMessageAssistantDeltaCommand,
   ThreadMessageAssistantCompleteCommand,
@@ -1278,6 +1288,12 @@ export const ThreadTurnStartRequestedPayload = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_INTERACTION_MODE)),
   ),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
+  forkContext: Schema.optional(
+    Schema.Struct({
+      sourceThreadId: ThreadId,
+      beforeMessageId: Schema.optional(MessageId),
+    }),
+  ),
   createdAt: IsoDateTime,
 });
 
@@ -1699,6 +1715,30 @@ export class OrchestrationGetWorkflowScriptError extends Schema.TaggedErrorClass
     return WORKFLOW_SCRIPT_ERROR_MESSAGES[this.reason];
   }
 }
+
+export const ThreadForkInput = Schema.Struct({
+  sourceThreadId: ThreadId,
+  beforeMessageId: Schema.optional(MessageId),
+});
+export type ThreadForkInput = typeof ThreadForkInput.Type;
+
+export const ThreadForkResult = Schema.Struct({
+  threadId: ThreadId,
+  draftText: Schema.NullOr(Schema.String),
+});
+export type ThreadForkResult = typeof ThreadForkResult.Type;
+
+export class ThreadForkError extends Schema.TaggedErrorClass<ThreadForkError>()("ThreadForkError", {
+  reason: Schema.Literals([
+    "source-not-found",
+    "message-not-found",
+    "unsupported-provider",
+    "provider-state-unavailable",
+    "fork-failed",
+  ]),
+  message: TrimmedNonEmptyString,
+  cause: Schema.optional(Schema.Defect()),
+}) {}
 
 export const OrchestrationRpcSchemas = {
   dispatchCommand: {

@@ -68,6 +68,8 @@ export function hasConfiguredMcpServer(appServerArgs: ReadonlyArray<string> | un
 
 export const CodexResumeCursorSchema = Schema.Struct({
   threadId: Schema.String,
+  forkSession: Schema.optionalKey(Schema.Boolean),
+  lastTurnId: Schema.optionalKey(Schema.String),
 });
 const CodexUserInputAnswerObject = Schema.Struct({
   answers: Schema.Array(Schema.String),
@@ -671,7 +673,8 @@ export function isRecoverableThreadResumeError(error: unknown): boolean {
 
 type CodexThreadOpenResponse =
   | CodexRpc.ClientRequestResponsesByMethod["thread/start"]
-  | CodexRpc.ClientRequestResponsesByMethod["thread/resume"];
+  | CodexRpc.ClientRequestResponsesByMethod["thread/resume"]
+  | CodexRpc.ClientRequestResponsesByMethod["thread/fork"];
 
 type CodexThreadOpenMethod = "thread/start" | "thread/resume";
 
@@ -689,9 +692,16 @@ export const openCodexThread = (input: {
   readonly cwd: string;
   readonly requestedModel: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
-  readonly resumeThreadId: string | undefined;
+  readonly resumeCursor?: CodexResumeCursor | undefined;
+  readonly resumeThreadId?: string | undefined;
+  readonly forkThread?: (
+    payload: CodexRpc.ClientRequestParamsByMethod["thread/fork"],
+  ) => Effect.Effect<
+    CodexRpc.ClientRequestResponsesByMethod["thread/fork"],
+    CodexErrors.CodexAppServerError
+  >;
 }): Effect.Effect<CodexThreadOpenResponse, CodexErrors.CodexAppServerError> => {
-  const resumeThreadId = input.resumeThreadId;
+  const resumeThreadId = input.resumeCursor?.threadId ?? input.resumeThreadId;
   const startParams = buildThreadStartParams({
     cwd: input.cwd,
     runtimeMode: input.runtimeMode,
@@ -701,6 +711,19 @@ export const openCodexThread = (input: {
 
   if (resumeThreadId === undefined) {
     return input.client.request("thread/start", startParams);
+  }
+
+  if (input.resumeCursor?.forkSession === true) {
+    if (!input.forkThread) {
+      return Effect.die(new Error("Codex thread fork transport is unavailable."));
+    }
+    const { ephemeral, ...forkParams } = startParams;
+    return input.forkThread({
+      threadId: resumeThreadId,
+      ...forkParams,
+      ...(ephemeral === true ? { ephemeral: true } : {}),
+      ...(input.resumeCursor.lastTurnId ? { lastTurnId: input.resumeCursor.lastTurnId } : {}),
+    });
   }
 
   return input.client
@@ -2039,7 +2062,8 @@ export const makeCodexSessionRuntime = (
         cwd: options.cwd,
         requestedModel,
         serviceTier: options.serviceTier,
-        resumeThreadId: readResumeCursorThreadId(options.resumeCursor),
+        resumeCursor: options.resumeCursor,
+        forkThread: (payload) => client.request("thread/fork", payload),
       });
 
       const providerThreadId = opened.thread.id;

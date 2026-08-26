@@ -99,6 +99,7 @@ import {
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useThreadActions } from "../hooks/useThreadActions";
+import { useForkThread } from "../hooks/useForkThread";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { openCommandPalette } from "../commandPaletteBus";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
@@ -1745,6 +1746,7 @@ export default function Sidebar() {
     archiveThread,
     deleteThread,
   } = useThreadActions();
+  const forkThread = useForkThread();
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
@@ -3027,6 +3029,7 @@ export default function Sidebar() {
       clearSelection,
       confirmThreadDelete,
       deleteThread,
+      forkThread,
       markThreadUnread,
       performSnooze,
       removeFromSelection,
@@ -3068,6 +3071,8 @@ export default function Sidebar() {
         const supportsTitleRegeneration =
           serverConfigs.get(thread.environmentId)?.environment.capabilities
             .threadTitleRegeneration === true;
+        const supportsForking =
+          serverConfigs.get(thread.environmentId)?.environment.capabilities.threadForking === true;
         const isRegeneratingTitle = thread.titleRegeneration != null;
         const isSettled = settledThreadKeysRef.current.has(threadKey);
         const isSnoozed = snoozedThreadKeysRef.current.has(threadKey);
@@ -3090,6 +3095,7 @@ export default function Sidebar() {
                 snooze: supportsSnooze,
                 pinning: supportsPinning,
                 titleRegeneration: supportsTitleRegeneration,
+                forking: supportsForking,
               },
               snoozePresets,
             }),
@@ -3130,6 +3136,9 @@ export default function Sidebar() {
           }
           case "settle":
             attemptSettle(threadRef);
+            return;
+          case "fork-thread":
+            await forkThread(threadRef);
             return;
           case "unsettle":
             attemptUnsettle(threadRef);

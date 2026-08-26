@@ -13,6 +13,7 @@
  */
 import type {
   ProviderInterruptTurnInput,
+  ProviderSessionForkPoint,
   ProviderInstanceId,
   ProviderRespondToRequestInput,
   ProviderRespondToUserInputInput,
@@ -45,6 +46,13 @@ export interface ProviderServiceShape {
     threadId: ThreadId,
     input: ProviderSessionStartInput,
   ) => Effect.Effect<ProviderSession, ProviderServiceError>;
+
+  /** Prepare and persist a dormant provider-native fork for a new T3 thread. */
+  readonly prepareSessionFork?: (input: {
+    readonly sourceThreadId: ThreadId;
+    readonly targetThreadId: ThreadId;
+    readonly forkPoint: ProviderSessionForkPoint;
+  }) => Effect.Effect<void, ProviderServiceError>;
 
   /**
    * Send a provider turn.

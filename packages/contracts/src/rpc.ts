@@ -73,6 +73,9 @@ import {
   OrchestrationGetTurnDiffInput,
   OrchestrationRpcSchemas,
   OrchestrationGetWorkflowScriptError,
+  ThreadForkError,
+  ThreadForkInput,
+  ThreadForkResult,
 } from "./orchestration.ts";
 import {
   ProviderUploadFeedbackError,
@@ -293,6 +296,7 @@ export const WS_METHODS = {
   serverGetBackgroundPolicy: "server.getBackgroundPolicy",
   serverGetUsageSummary: "server.getUsageSummary",
   serverGetProviderLimits: "server.getProviderLimits",
+  serverForkThread: "server.forkThread",
 
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
@@ -459,6 +463,12 @@ export const WsServerGetProviderLimitsRpc = Rpc.make(WS_METHODS.serverGetProvide
   payload: Schema.Struct({}),
   success: ProviderLimitsSnapshot,
   error: EnvironmentAuthorizationError,
+});
+
+export const WsServerForkThreadRpc = Rpc.make(WS_METHODS.serverForkThread, {
+  payload: ThreadForkInput,
+  success: ThreadForkResult,
+  error: Schema.Union([ThreadForkError, EnvironmentAuthorizationError]),
 });
 
 export const WsServerSignalProcessRpc = Rpc.make(WS_METHODS.serverSignalProcess, {
@@ -1044,6 +1054,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRetryResourceTelemetryRpc,
   WsServerGetUsageSummaryRpc,
   WsServerGetProviderLimitsRpc,
+  WsServerForkThreadRpc,
   WsServerSignalProcessRpc,
   WsServerReportClientActivityRpc,
   WsServerReportHostPowerStateRpc,

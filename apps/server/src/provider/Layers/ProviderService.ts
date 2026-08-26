@@ -1112,6 +1112,47 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const getCapabilities: ProviderServiceMethod<"getCapabilities"> = (instanceId) =>
     registry.getByInstance(instanceId).pipe(Effect.map((adapter) => adapter.capabilities));
 
+  const prepareSessionFork = Effect.fn("ProviderService.prepareSessionFork")(function* (
+    input: Parameters<NonNullable<ProviderService.ProviderServiceShape["prepareSessionFork"]>>[0],
+  ) {
+    const sourceBinding = Option.getOrUndefined(yield* directory.getBinding(input.sourceThreadId));
+    if (!sourceBinding || sourceBinding.resumeCursor == null) {
+      return yield* toValidationError(
+        "ProviderService.prepareSessionFork",
+        `Cannot fork thread '${input.sourceThreadId}' because no provider resume state is persisted.`,
+      );
+    }
+    const providerInstanceId = yield* requireBindingInstanceId(
+      "ProviderService.prepareSessionFork",
+      sourceBinding,
+    );
+    const adapter = yield* registry.getByInstance(providerInstanceId);
+    if (adapter.prepareSessionFork === undefined) {
+      return yield* toValidationError(
+        "ProviderService.prepareSessionFork",
+        `Provider '${sourceBinding.provider}' does not support session forking.`,
+      );
+    }
+    const resumeCursor = yield* adapter.prepareSessionFork({
+      sourceThreadId: input.sourceThreadId,
+      targetThreadId: input.targetThreadId,
+      sourceResumeCursor: sourceBinding.resumeCursor,
+      forkPoint: input.forkPoint,
+      ...(readPersistedCwd(sourceBinding.runtimePayload)
+        ? { cwd: readPersistedCwd(sourceBinding.runtimePayload) }
+        : {}),
+    });
+    yield* directory.upsert({
+      threadId: input.targetThreadId,
+      provider: sourceBinding.provider,
+      providerInstanceId,
+      status: "stopped",
+      resumeCursor,
+      runtimePayload: sourceBinding.runtimePayload,
+      ...(sourceBinding.runtimeMode ? { runtimeMode: sourceBinding.runtimeMode } : {}),
+    });
+  });
+
   const getInstanceInfo: ProviderServiceMethod<"getInstanceInfo"> = (instanceId) =>
     registry.getInstanceInfo(instanceId);
 
@@ -1259,6 +1300,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
   return {
     startSession,
+    prepareSessionFork,
     sendTurn,
     interruptTurn,
     respondToRequest,

@@ -733,6 +733,14 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.serverGetProviderLimits,
       staleTimeMs: 300_000,
     }),
+    forkThread: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:fork-thread",
+      tag: WS_METHODS.serverForkThread,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) => `${environmentId}:${input.sourceThreadId}`,
+      },
+    }),
     configProjection,
     welcome: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:welcome",

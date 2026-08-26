@@ -1657,6 +1657,30 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
   const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
   const sessions = new Map<ThreadId, CodexAdapterSessionContext>();
 
+  const prepareSessionFork: NonNullable<CodexAdapterShape["prepareSessionFork"]> = Effect.fn(
+    "prepareSessionFork",
+  )(function* (input) {
+    if (!isCodexResumeCursorSchema(input.sourceResumeCursor)) {
+      return yield* new ProviderAdapterValidationError({
+        provider: PROVIDER,
+        operation: "prepareSessionFork",
+        issue: "The source thread does not have a valid Codex thread id.",
+      });
+    }
+    if (!input.forkPoint.precedingTurnId) {
+      return yield* new ProviderAdapterValidationError({
+        provider: PROVIDER,
+        operation: "prepareSessionFork",
+        issue: "The selected Codex message has no completed preceding turn to fork.",
+      });
+    }
+    return {
+      threadId: input.sourceResumeCursor.threadId,
+      forkSession: true,
+      lastTurnId: input.forkPoint.precedingTurnId,
+    };
+  });
+
   const startSession: CodexAdapterShape["startSession"] = (input) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -2002,6 +2026,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     capabilities: {
       sessionModelSwitch: "in-session",
     },
+    prepareSessionFork,
     startSession,
     sendTurn,
     interruptTurn,

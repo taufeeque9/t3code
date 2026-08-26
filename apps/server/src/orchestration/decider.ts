@@ -1,8 +1,10 @@
 import {
   EventId,
+  MessageId,
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
+  ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
@@ -28,6 +30,36 @@ const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 // window is a failed/stale start, not pending work. Mirrors the client's
 // QUEUED_TURN_START_GRACE_MS in client-runtime threadSettled.ts.
 const QUEUED_TURN_START_GRACE_MS = 2 * 60 * 1_000;
+
+function pendingForkContext(thread: {
+  readonly id: ThreadId;
+  readonly messages: ReadonlyArray<{ readonly role: string }>;
+  readonly activities: ReadonlyArray<{ readonly kind: string; readonly payload: unknown }>;
+}): { readonly sourceThreadId: ThreadId; readonly beforeMessageId?: MessageId } | undefined {
+  const forkActivity = thread.activities.findLast((activity) => activity.kind === "thread.forked");
+  if (!forkActivity || typeof forkActivity.payload !== "object" || forkActivity.payload === null) {
+    return undefined;
+  }
+  const payload = forkActivity.payload as {
+    readonly sourceThreadId?: unknown;
+    readonly beforeMessageId?: unknown;
+    readonly copiedUserMessageCount?: unknown;
+  };
+  if (
+    typeof payload.sourceThreadId !== "string" ||
+    typeof payload.copiedUserMessageCount !== "number" ||
+    thread.messages.filter((message) => message.role === "user").length !==
+      payload.copiedUserMessageCount
+  ) {
+    return undefined;
+  }
+  return {
+    sourceThreadId: ThreadId.make(payload.sourceThreadId),
+    ...(typeof payload.beforeMessageId === "string"
+      ? { beforeMessageId: MessageId.make(payload.beforeMessageId) }
+      : {}),
+  };
+}
 
 /**
  * Blocked-on-you work derived from the thread's retained activities: an
@@ -381,6 +413,104 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           updatedAt: command.createdAt,
         },
       };
+    }
+
+    case "thread.fork": {
+      const source = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.sourceThreadId,
+      });
+      yield* requireThreadAbsent({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const beforeIndex =
+        command.beforeMessageId === undefined
+          ? source.messages.length
+          : source.messages.findIndex((message) => message.id === command.beforeMessageId);
+      if (beforeIndex < 0 || source.messages[beforeIndex]?.role !== "user") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Fork point '${command.beforeMessageId}' is not a user message on thread '${source.id}'.`,
+        });
+      }
+      const copiedMessages = source.messages.slice(0, beforeIndex);
+      const createdBase = yield* withEventBase({
+        aggregateKind: "thread",
+        aggregateId: command.threadId,
+        occurredAt: command.createdAt,
+        commandId: command.commandId,
+      });
+      const createdEvent: PlannedOrchestrationEvent = {
+        ...createdBase,
+        type: "thread.created",
+        payload: {
+          threadId: command.threadId,
+          projectId: source.projectId,
+          title: `${source.title} (fork)`,
+          modelSelection: source.modelSelection,
+          runtimeMode: source.runtimeMode,
+          interactionMode: source.interactionMode,
+          branch: source.branch,
+          worktreePath: source.worktreePath,
+          createdAt: command.createdAt,
+          updatedAt: command.createdAt,
+        },
+      };
+      const copiedMessageEvents: PlannedOrchestrationEvent[] = [];
+      for (const message of copiedMessages) {
+        const eventBase = yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        });
+        copiedMessageEvents.push({
+          ...eventBase,
+          type: "thread.message-sent",
+          payload: {
+            threadId: command.threadId,
+            messageId: MessageId.make(eventBase.eventId),
+            role: message.role,
+            text: message.text,
+            ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
+            turnId: message.turnId,
+            streaming: false,
+            createdAt: message.createdAt,
+            updatedAt: message.updatedAt,
+          },
+        });
+      }
+      const activityBase = yield* withEventBase({
+        aggregateKind: "thread",
+        aggregateId: command.threadId,
+        occurredAt: command.createdAt,
+        commandId: command.commandId,
+      });
+      const forkActivityEvent: PlannedOrchestrationEvent = {
+        ...activityBase,
+        type: "thread.activity-appended",
+        payload: {
+          threadId: command.threadId,
+          activity: {
+            id: activityBase.eventId,
+            tone: "info",
+            kind: "thread.forked",
+            summary: "Forked from another thread",
+            payload: {
+              sourceThreadId: source.id,
+              ...(command.beforeMessageId ? { beforeMessageId: command.beforeMessageId } : {}),
+              copiedUserMessageCount: copiedMessages.filter((message) => message.role === "user")
+                .length,
+            },
+            turnId: null,
+            createdAt: command.createdAt,
+          },
+        },
+      };
+      return [createdEvent, ...copiedMessageEvents, forkActivityEvent];
     }
 
     case "thread.delete": {
@@ -976,6 +1106,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           updatedAt: command.createdAt,
         },
       };
+      const forkContext = pendingForkContext(targetThread);
       const turnStartRequestedEvent: Omit<OrchestrationEvent, "sequence"> = {
         ...(yield* withEventBase({
           aggregateKind: "thread",
@@ -995,6 +1126,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           runtimeMode: targetThread.runtimeMode,
           interactionMode: targetThread.interactionMode,
           ...(sourceProposedPlan !== undefined ? { sourceProposedPlan } : {}),
+          ...(forkContext ? { forkContext } : {}),
           createdAt: command.createdAt,
         },
       };

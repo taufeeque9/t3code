@@ -12,6 +12,7 @@ export type ThreadActionMenuId =
   | "unpin"
   | "settle"
   | "unsettle"
+  | "fork-thread"
   | "snooze"
   | `snooze:${string}`
   | "unsnooze"
@@ -39,6 +40,7 @@ export interface ThreadActionMenuState {
     readonly snooze: boolean;
     readonly pinning: boolean;
     readonly titleRegeneration: boolean;
+    readonly forking: boolean;
   };
   readonly snoozePresets: ReadonlyArray<SnoozePreset>;
 }
@@ -77,6 +79,9 @@ export function buildThreadActionMenuItems(
             ? { id: "unsettle" as const, label: "Un-settle thread", icon: "circle-check" }
             : { id: "settle" as const, label: "Settle thread", icon: "circle-check" },
         ]
+      : []),
+    ...(state.supports.forking
+      ? [{ id: "fork-thread" as const, label: "Fork thread", icon: "git-fork" }]
       : []),
     ...(state.supports.snooze
       ? [

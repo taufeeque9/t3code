@@ -13,6 +13,7 @@ import type {
   ProviderDriverKind,
   ProviderUserInputAnswers,
   ProviderRuntimeEvent,
+  ProviderPrepareSessionForkInput,
   ProviderSendTurnInput,
   ProviderSession,
   ProviderSessionStartInput,
@@ -57,6 +58,15 @@ export interface ProviderAdapterShape<TError> {
   readonly startSession: (
     input: ProviderSessionStartInput,
   ) => Effect.Effect<ProviderSession, TError>;
+
+  /**
+   * Build a dormant provider-native fork cursor without starting or mutating
+   * the source session. The returned cursor is consumed by startSession when
+   * the destination thread sends its first turn.
+   */
+  readonly prepareSessionFork?: (
+    input: ProviderPrepareSessionForkInput,
+  ) => Effect.Effect<unknown, TError>;
 
   /**
    * Send a turn to an active provider session.

@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 
 import type {
   ProviderApprovalDecision,
+  ProviderPrepareSessionForkInput,
   ProviderRuntimeEvent,
   ProviderSendTurnInput,
   ProviderSession,
@@ -117,6 +118,9 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
       return session;
     }),
   );
+  const prepareSessionFork = vi.fn((input: ProviderPrepareSessionForkInput) =>
+    Effect.succeed({ forkOf: input.sourceResumeCursor }),
+  );
 
   const sendTurn = vi.fn(
     (
@@ -218,6 +222,7 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
     capabilities: {
       sessionModelSwitch: "in-session",
     },
+    prepareSessionFork,
     startSession,
     sendTurn,
     interruptTurn,
@@ -255,6 +260,7 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
     emit,
     updateSession,
     startSession,
+    prepareSessionFork,
     sendTurn,
     interruptTurn,
     respondToRequest,
@@ -400,6 +406,54 @@ function makeMultiClaudeServiceLayer(input: {
 }
 
 describe("compatible persisted provider instance resumes", () => {
+  it.effect("persists a dormant fork cursor without starting the source or target session", () => {
+    const harness = makeMultiClaudeServiceLayer({
+      firstContinuationKey: "claude:projects:/shared",
+      secondContinuationKey: "claude:projects:/shared",
+    });
+    const sourceThreadId = asThreadId("source-thread");
+    const targetThreadId = asThreadId("target-thread");
+    const sourceResumeCursor = { resume: "550e8400-e29b-41d4-a716-446655440001" };
+    return Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      const provider = yield* ProviderService.ProviderService;
+      yield* directory.upsert({
+        threadId: sourceThreadId,
+        provider: CLAUDE_AGENT_DRIVER,
+        providerInstanceId: harness.firstInstanceId,
+        status: "running",
+        resumeCursor: sourceResumeCursor,
+        runtimePayload: { cwd: "/tmp/shared-project", modelSelection: { model: "opus" } },
+        runtimeMode: "full-access",
+      });
+
+      const prepareSessionFork = provider.prepareSessionFork;
+      assert.ok(prepareSessionFork);
+      yield* prepareSessionFork({
+        sourceThreadId,
+        targetThreadId,
+        forkPoint: { type: "full", precedingTurnId: asTurnId("turn-1") },
+      });
+
+      assert.equal(harness.first.prepareSessionFork.mock.calls.length, 1);
+      assert.deepInclude(harness.first.prepareSessionFork.mock.calls[0]?.[0], {
+        sourceThreadId,
+        targetThreadId,
+        sourceResumeCursor,
+        cwd: "/tmp/shared-project",
+      });
+      assert.equal(harness.first.startSession.mock.calls.length, 0);
+      const targetBinding = Option.getOrUndefined(yield* directory.getBinding(targetThreadId));
+      assert.deepInclude(targetBinding, {
+        threadId: targetThreadId,
+        providerInstanceId: harness.firstInstanceId,
+        status: "stopped",
+        resumeCursor: { forkOf: sourceResumeCursor },
+        runtimeMode: "full-access",
+      });
+    }).pipe(Effect.provide(harness.layer));
+  });
+
   it.effect("reuses a stopped Claude instance cursor after switching accounts", () => {
     const harness = makeMultiClaudeServiceLayer({
       firstContinuationKey: "claude:projects:/shared",
