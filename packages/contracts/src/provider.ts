@@ -65,6 +65,29 @@ export const ProviderSessionStartInput = Schema.Struct({
 });
 export type ProviderSessionStartInput = typeof ProviderSessionStartInput.Type;
 
+export const ProviderSessionForkPoint = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("full"),
+    precedingTurnId: Schema.NullOr(TurnId),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("before-user-message"),
+    userMessageOrdinal: Schema.Number.check(Schema.isInt(), Schema.isGreaterThan(0)),
+    userMessageText: Schema.String,
+    precedingTurnId: Schema.NullOr(TurnId),
+  }),
+]);
+export type ProviderSessionForkPoint = typeof ProviderSessionForkPoint.Type;
+
+export const ProviderPrepareSessionForkInput = Schema.Struct({
+  sourceThreadId: ThreadId,
+  targetThreadId: ThreadId,
+  sourceResumeCursor: Schema.Unknown,
+  forkPoint: ProviderSessionForkPoint,
+  cwd: Schema.optional(TrimmedNonEmptyString),
+});
+export type ProviderPrepareSessionForkInput = typeof ProviderPrepareSessionForkInput.Type;
+
 export const ProviderSendTurnInput = Schema.Struct({
   threadId: ThreadId,
   input: Schema.optional(

@@ -155,6 +155,7 @@ function makeHarness(config?: {
   readonly baseDir?: string;
   readonly claudeConfig?: Partial<ClaudeSettings>;
   readonly instanceId?: ProviderInstanceId;
+  readonly readSessionMessages?: ClaudeAdapterLiveOptions["readSessionMessages"];
 }) {
   const query = new FakeClaudeQuery();
   let createInput:
@@ -170,6 +171,7 @@ function makeHarness(config?: {
       createInput = input;
       return query;
     },
+    ...(config?.readSessionMessages ? { readSessionMessages: config.readSessionMessages } : {}),
     ...(config?.nativeEventLogger
       ? {
           nativeEventLogger: config.nativeEventLogger,
@@ -3849,6 +3851,103 @@ describe("ClaudeAdapterLive", () => {
       assert.include(failure.issue, "valid Claude session UUID");
       assert.strictEqual(harness.getLastCreateQueryInput(), originalCreateQueryInput);
       assert.equal(yield* adapter.hasSession(RESUME_THREAD_ID), true);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("starts a full Claude fork under a new native session id", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const prepareSessionFork = adapter.prepareSessionFork;
+      assert.ok(prepareSessionFork);
+      const cursor = yield* prepareSessionFork({
+        sourceThreadId: ThreadId.make("source-thread"),
+        targetThreadId: RESUME_THREAD_ID,
+        sourceResumeCursor: {
+          resume: "550e8400-e29b-41d4-a716-446655440000",
+          resumeSessionAt: "assistant-source-anchor",
+          turnCount: 4,
+        },
+        forkPoint: { type: "full", precedingTurnId: null },
+      });
+      yield* adapter.startSession({
+        threadId: RESUME_THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        resumeCursor: cursor,
+        runtimeMode: "full-access",
+      });
+
+      const options = harness.getLastCreateQueryInput()?.options;
+      assert.equal(options?.resume, "550e8400-e29b-41d4-a716-446655440000");
+      assert.equal(options?.forkSession, true);
+      assert.equal(options?.resumeSessionAt, "assistant-source-anchor");
+      assert.match(options?.sessionId ?? "", /^[0-9a-f-]{36}$/i);
+      assert.notEqual(options?.sessionId, options?.resume);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("resolves a message fork to the preceding native Claude assistant", () => {
+    const harness = makeHarness({
+      readSessionMessages: async () => [
+        {
+          type: "user",
+          uuid: "native-user-1",
+          session_id: "source",
+          parent_tool_use_id: null,
+          message: { content: "first prompt" },
+        },
+        {
+          type: "assistant",
+          uuid: "native-assistant-1",
+          session_id: "source",
+          parent_tool_use_id: null,
+          message: { content: "first answer" },
+        },
+        {
+          type: "user",
+          uuid: "native-user-2",
+          session_id: "source",
+          parent_tool_use_id: null,
+          message: { content: "edit this prompt" },
+        },
+      ],
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const prepareSessionFork = adapter.prepareSessionFork;
+      assert.ok(prepareSessionFork);
+      const cursor = yield* prepareSessionFork({
+        sourceThreadId: ThreadId.make("source-thread"),
+        targetThreadId: RESUME_THREAD_ID,
+        sourceResumeCursor: {
+          resume: "550e8400-e29b-41d4-a716-446655440000",
+          turnCount: 2,
+        },
+        forkPoint: {
+          type: "before-user-message",
+          userMessageOrdinal: 2,
+          userMessageText: "edit this prompt",
+          precedingTurnId: null,
+        },
+        cwd: "/tmp/project",
+      });
+      yield* adapter.startSession({
+        threadId: RESUME_THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        resumeCursor: cursor,
+        cwd: "/tmp/project",
+        runtimeMode: "full-access",
+      });
+
+      const options = harness.getLastCreateQueryInput()?.options;
+      assert.equal(options?.forkSession, true);
+      assert.equal(options?.resumeSessionAt, "native-assistant-1");
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),

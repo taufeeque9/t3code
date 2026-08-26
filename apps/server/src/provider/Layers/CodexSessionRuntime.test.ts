@@ -775,6 +775,51 @@ describe("isRecoverableThreadResumeError", () => {
 });
 
 describe("openCodexThread", () => {
+  it.effect("forks a Codex thread through the requested completed turn", () =>
+    Effect.gen(function* () {
+      let forkPayload: CodexRpc.ClientRequestParamsByMethod["thread/fork"] | undefined;
+      const opened = yield* openCodexThread({
+        client: {
+          request: <M extends "thread/start" | "thread/resume">() =>
+            Effect.die(new Error("start/resume should not be used for a fork")) as Effect.Effect<
+              CodexRpc.ClientRequestResponsesByMethod[M],
+              CodexErrors.CodexAppServerError
+            >,
+        },
+        forkThread: (payload) => {
+          forkPayload = payload;
+          return Effect.succeed(
+            makeThreadOpenResponse(
+              "forked-thread",
+            ) as CodexRpc.ClientRequestResponsesByMethod["thread/fork"],
+          );
+        },
+        threadId: ThreadId.make("t3-target"),
+        runtimeMode: "full-access",
+        cwd: "/tmp/project",
+        requestedModel: "gpt-5.6-sol",
+        serviceTier: "fast",
+        resumeCursor: {
+          threadId: "source-native-thread",
+          forkSession: true,
+          lastTurnId: "completed-turn",
+        },
+      });
+
+      NodeAssert.equal(opened.thread.id, "forked-thread");
+      NodeAssert.deepStrictEqual(forkPayload, {
+        threadId: "source-native-thread",
+        lastTurnId: "completed-turn",
+        cwd: "/tmp/project",
+        approvalPolicy: "never",
+        approvalsReviewer: "user",
+        sandbox: "danger-full-access",
+        model: "gpt-5.6-sol",
+        serviceTier: "fast",
+      });
+    }),
+  );
+
   it.effect("falls back to thread/start when resume fails recoverably", () =>
     Effect.gen(function* () {
       const calls: Array<{ method: "thread/start" | "thread/resume"; payload: unknown }> = [];
