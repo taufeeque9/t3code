@@ -3821,6 +3821,40 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("rejects a malformed resume cursor without replacing the active session", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: RESUME_THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      const originalCreateQueryInput = harness.getLastCreateQueryInput();
+
+      const failure = yield* Effect.flip(
+        adapter.startSession({
+          threadId: RESUME_THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          resumeCursor: {
+            threadId: RESUME_THREAD_ID,
+            resume: "not-a-session-uuid",
+            turnCount: 42,
+          },
+          runtimeMode: "full-access",
+        }),
+      );
+
+      assert.instanceOf(failure, ProviderAdapterValidationError);
+      assert.include(failure.issue, "valid Claude session UUID");
+      assert.strictEqual(harness.getLastCreateQueryInput(), originalCreateQueryInput);
+      assert.equal(yield* adapter.hasSession(RESUME_THREAD_ID), true);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("preserves durable resume ids across Claude resume hooks", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

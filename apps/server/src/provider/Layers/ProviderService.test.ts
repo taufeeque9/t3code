@@ -332,6 +332,215 @@ function makeProviderServiceLayer() {
   };
 }
 
+function makeMultiClaudeServiceLayer(input: {
+  readonly firstContinuationKey: string;
+  readonly secondContinuationKey: string;
+}) {
+  const firstInstanceId = ProviderInstanceId.make("claude-first");
+  const secondInstanceId = ProviderInstanceId.make("claude-second");
+  const first = makeFakeCodexAdapter(CLAUDE_AGENT_DRIVER);
+  const second = makeFakeCodexAdapter(CLAUDE_AGENT_DRIVER);
+  const fallbackRegistry = makeAdapterRegistryMock({
+    [CLAUDE_AGENT_DRIVER]: first.adapter,
+  });
+  const adapters = new Map([
+    [firstInstanceId, first.adapter],
+    [secondInstanceId, second.adapter],
+  ]);
+  const continuationKeys = new Map([
+    [firstInstanceId, input.firstContinuationKey],
+    [secondInstanceId, input.secondContinuationKey],
+  ]);
+  const registry: ProviderAdapterRegistry.ProviderAdapterRegistry["Service"] = {
+    ...fallbackRegistry,
+    getByInstance: (instanceId) => {
+      const adapter = adapters.get(instanceId);
+      return adapter ? Effect.succeed(adapter) : fallbackRegistry.getByInstance(instanceId);
+    },
+    getInstanceInfo: (instanceId) => {
+      const continuationKey = continuationKeys.get(instanceId);
+      return continuationKey
+        ? Effect.succeed({
+            instanceId,
+            driverKind: CLAUDE_AGENT_DRIVER,
+            displayName: undefined,
+            enabled: true,
+            continuationIdentity: {
+              driverKind: CLAUDE_AGENT_DRIVER,
+              continuationKey,
+            },
+          })
+        : fallbackRegistry.getInstanceInfo(instanceId);
+    },
+    listInstances: () => Effect.succeed([firstInstanceId, secondInstanceId]),
+  };
+  const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
+    Layer.provide(SqlitePersistenceMemory),
+  );
+  const directoryLayer = ProviderSessionDirectoryLive.pipe(Layer.provide(runtimeRepositoryLayer));
+  const layer = Layer.mergeAll(
+    makeProviderServiceLive().pipe(
+      Layer.provide(Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistry, registry)),
+      Layer.provide(directoryLayer),
+      Layer.provide(defaultServerSettingsLayer),
+      Layer.provide(serverConfigTestLayer),
+      Layer.provide(AnalyticsService.layerTest),
+      Layer.provide(
+        Layer.succeed(
+          ProviderEventLoggers.ProviderEventLoggers,
+          ProviderEventLoggers.NoOpProviderEventLoggers,
+        ),
+      ),
+    ),
+    directoryLayer,
+    runtimeRepositoryLayer,
+    NodeServices.layer,
+  );
+  return { first, firstInstanceId, second, secondInstanceId, layer };
+}
+
+describe("compatible persisted provider instance resumes", () => {
+  it.effect("reuses a stopped Claude instance cursor after switching accounts", () => {
+    const harness = makeMultiClaudeServiceLayer({
+      firstContinuationKey: "claude:projects:/shared",
+      secondContinuationKey: "claude:projects:/shared",
+    });
+    const threadId = asThreadId("thread-compatible-switch");
+    const resumeCursor = { resume: "550e8400-e29b-41d4-a716-446655440001", turnCount: 42 };
+    return Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      const provider = yield* ProviderService.ProviderService;
+      yield* directory.upsert({
+        threadId,
+        provider: CLAUDE_AGENT_DRIVER,
+        providerInstanceId: harness.firstInstanceId,
+        status: "stopped",
+        resumeCursor,
+        runtimePayload: { cwd: "/tmp/shared-project" },
+        runtimeMode: "full-access",
+      });
+
+      yield* provider.startSession(threadId, {
+        provider: CLAUDE_AGENT_DRIVER,
+        providerInstanceId: harness.secondInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      assert.equal(harness.second.startSession.mock.calls.length, 1);
+      assert.deepInclude(harness.second.startSession.mock.calls[0]?.[0], {
+        providerInstanceId: harness.secondInstanceId,
+        resumeCursor,
+        cwd: "/tmp/shared-project",
+      });
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("rejects an account switch when persisted resume state is incompatible", () => {
+    const harness = makeMultiClaudeServiceLayer({
+      firstContinuationKey: "claude:projects:/first",
+      secondContinuationKey: "claude:projects:/second",
+    });
+    const threadId = asThreadId("thread-incompatible-switch");
+    return Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      const provider = yield* ProviderService.ProviderService;
+      yield* directory.upsert({
+        threadId,
+        provider: CLAUDE_AGENT_DRIVER,
+        providerInstanceId: harness.firstInstanceId,
+        status: "stopped",
+        resumeCursor: { resume: "550e8400-e29b-41d4-a716-446655440001", turnCount: 42 },
+        runtimeMode: "full-access",
+      });
+
+      const failure = yield* Effect.flip(
+        provider.startSession(threadId, {
+          provider: CLAUDE_AGENT_DRIVER,
+          providerInstanceId: harness.secondInstanceId,
+          threadId,
+          runtimeMode: "full-access",
+        }),
+      );
+
+      assert.instanceOf(failure, ProviderValidationError);
+      assert.include(failure.issue, "provider resume state is incompatible");
+      assert.equal(harness.second.startSession.mock.calls.length, 0);
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("rejects a compatible account switch when its persisted cursor is missing", () => {
+    const harness = makeMultiClaudeServiceLayer({
+      firstContinuationKey: "claude:projects:/shared",
+      secondContinuationKey: "claude:projects:/shared",
+    });
+    const threadId = asThreadId("thread-missing-switch-cursor");
+    return Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      const provider = yield* ProviderService.ProviderService;
+      yield* directory.upsert({
+        threadId,
+        provider: CLAUDE_AGENT_DRIVER,
+        providerInstanceId: harness.firstInstanceId,
+        status: "stopped",
+        resumeCursor: null,
+        runtimeMode: "full-access",
+      });
+
+      const failure = yield* Effect.flip(
+        provider.startSession(threadId, {
+          provider: CLAUDE_AGENT_DRIVER,
+          providerInstanceId: harness.secondInstanceId,
+          threadId,
+          runtimeMode: "full-access",
+        }),
+      );
+
+      assert.instanceOf(failure, ProviderValidationError);
+      assert.include(failure.issue, "no persisted resume cursor is available");
+      assert.equal(harness.second.startSession.mock.calls.length, 0);
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("prefers an explicit cursor over a compatible persisted cursor", () => {
+    const harness = makeMultiClaudeServiceLayer({
+      firstContinuationKey: "claude:projects:/shared",
+      secondContinuationKey: "claude:projects:/shared",
+    });
+    const threadId = asThreadId("thread-explicit-switch-cursor");
+    const persistedResumeCursor = {
+      resume: "550e8400-e29b-41d4-a716-446655440001",
+      turnCount: 42,
+    };
+    const resumeCursor = { resume: "550e8400-e29b-41d4-a716-446655440002", turnCount: 7 };
+    return Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      const provider = yield* ProviderService.ProviderService;
+      yield* directory.upsert({
+        threadId,
+        provider: CLAUDE_AGENT_DRIVER,
+        providerInstanceId: harness.firstInstanceId,
+        status: "stopped",
+        resumeCursor: persistedResumeCursor,
+        runtimeMode: "full-access",
+      });
+
+      yield* provider.startSession(threadId, {
+        provider: CLAUDE_AGENT_DRIVER,
+        providerInstanceId: harness.secondInstanceId,
+        threadId,
+        resumeCursor,
+        runtimeMode: "full-access",
+      });
+
+      assert.deepInclude(harness.second.startSession.mock.calls[0]?.[0], {
+        providerInstanceId: harness.secondInstanceId,
+        resumeCursor,
+      });
+    }).pipe(Effect.provide(harness.layer));
+  });
+});
+
 it.effect("ProviderServiceLive catches stopAll failures during shutdown", () =>
   Effect.gen(function* () {
     const codex = makeFakeCodexAdapter();
