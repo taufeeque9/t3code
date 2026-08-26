@@ -1,8 +1,10 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { CodexSettings, ServerSettings } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -189,6 +191,50 @@ describe("ProviderLimitsService", () => {
         }),
         expect.objectContaining({ driver: "codex", status: "error" }),
       ]);
+    }),
+  );
+
+  it.effect("probes the configured accounts in one concurrent wave", () =>
+    Effect.gen(function* () {
+      const started = yield* Ref.make(0);
+      const allStarted = yield* Deferred.make<void>();
+      const releaseProbes = yield* Deferred.make<void>();
+      const providerInstances = Object.fromEntries(
+        Array.from({ length: 6 }, (_, index) => [
+          `claude-${index + 1}`,
+          { driver: "claudeAgent" as const, enabled: true, config: {} },
+        ]),
+      );
+      const snapshotFiber = yield* readProviderLimitsSnapshot({
+        settings: decodeSettings({
+          providers: {
+            claudeAgent: { enabled: false },
+            codex: { enabled: false },
+          },
+          providerInstances,
+        }),
+        observedAt: "2026-08-25T00:00:00Z",
+        readers: {
+          claude: () =>
+            Effect.gen(function* () {
+              const count = yield* Ref.updateAndGet(started, (current) => current + 1);
+              if (count === 6) {
+                yield* Deferred.succeed(allStarted, undefined);
+              }
+              yield* Deferred.await(releaseProbes);
+              return availableResult("claude@example.com");
+            }),
+          codex: () => Effect.succeed(availableResult("codex@example.com")),
+        },
+      }).pipe(Effect.forkChild);
+
+      yield* Deferred.await(allStarted);
+      expect(yield* Ref.get(started)).toBe(6);
+
+      yield* Deferred.succeed(releaseProbes, undefined);
+      expect(
+        (yield* Fiber.join(snapshotFiber)).accounts.filter(({ status }) => status === "ready"),
+      ).toHaveLength(6);
     }),
   );
 

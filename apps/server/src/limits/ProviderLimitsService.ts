@@ -38,6 +38,7 @@ export class ProviderLimitsProbeError extends Schema.TaggedErrorClass<ProviderLi
 ) {}
 
 const PROVIDER_LIMITS_PROBE_TIMEOUT = "10 seconds";
+const PROVIDER_LIMITS_PROBE_CONCURRENCY = 8;
 
 export type ClaudeRateLimits = NonNullable<SDKControlGetUsageResponse["rate_limits"]> & {
   readonly limits?: ReadonlyArray<{
@@ -367,7 +368,7 @@ export function readProviderLimitsSnapshot<R>(input: {
             : "The account credential does not expose subscription limits.",
         } satisfies ProviderLimitsAccount;
       }),
-    { concurrency: 3 },
+    { concurrency: PROVIDER_LIMITS_PROBE_CONCURRENCY },
   ).pipe(
     Effect.map(
       (accounts) =>
