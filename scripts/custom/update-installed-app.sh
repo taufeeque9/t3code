@@ -10,6 +10,7 @@ runtime_state="${T3CODE_CUSTOM_RUNTIME_STATE:-/Users/tf-work/.t3/userdata/server
 destination="/Applications/T3 Code Custom.app"
 custom_bundle_id="com.taufeeque.t3code-custom"
 official_bundle_id="com.t3tools.t3code"
+signing_identity="${T3CODE_CUSTOM_SIGNING_IDENTITY:-0DE3E575AAF08266CD28947FB1C7D11DF6C8C55C}"
 mode="${1:---update}"
 
 mkdir -p "$state_dir" "$state_dir/builds" "$state_dir/backups"
@@ -128,8 +129,19 @@ if [[ "$built_commit" != "$desired_commit" || ! -d "$staged_app" ]]; then
 
   mkdir -p "$build_dir"
   ditto "$source_app" "$staged_app"
-  codesign --force --deep --sign - "$staged_app"
+  if ! security find-identity -v -p codesigning | grep -Fq "$signing_identity"; then
+    log "The stable T3 Code Custom signing identity is unavailable: $signing_identity"
+    exit 1
+  fi
+  codesign --force --deep --sign "$signing_identity" "$staged_app"
   codesign --verify --deep --strict "$staged_app"
+  designated_requirement="$(codesign -d -r- "$staged_app" 2>&1)"
+  signing_identity_lower="$(printf '%s' "$signing_identity" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$designated_requirement" != *"identifier \"$custom_bundle_id\""* ]] ||
+    [[ "$designated_requirement" != *"certificate root = H\"$signing_identity_lower\""* ]]; then
+    log "The staged app does not carry the expected stable designated requirement."
+    exit 1
+  fi
   actual_bundle_id="$(defaults read "$staged_app/Contents/Info" CFBundleIdentifier)"
   if [[ "$actual_bundle_id" != "$custom_bundle_id" ]]; then
     log "Unexpected bundle id: $actual_bundle_id"
@@ -141,13 +153,6 @@ if [[ "$built_commit" != "$desired_commit" || ! -d "$staged_app" ]]; then
   trap 'rmdir "$lock_dir" 2>/dev/null || true' EXIT
 fi
 
-active_sessions="$(active_session_count)"
-if (( active_sessions > 0 )); then
-  rm -f "$state_dir/idle-since"
-  log "Build is ready, but $active_sessions provider session(s) are active. Installation deferred."
-  exit 0
-fi
-
 install_after_app_exit=false
 if [[ "$mode" == "--after-app-exit" ]]; then
   if [[ -f "$runtime_state" ]] || application_is_running "$custom_bundle_id" || application_is_running "$official_bundle_id"; then
@@ -157,6 +162,12 @@ if [[ "$mode" == "--after-app-exit" ]]; then
   install_after_app_exit=true
   rm -f "$state_dir/idle-since"
 else
+  active_sessions="$(active_session_count)"
+  if (( active_sessions > 0 )); then
+    rm -f "$state_dir/idle-since"
+    log "Build is ready, but $active_sessions provider session(s) are active. Installation deferred."
+    exit 0
+  fi
   now_epoch="$(date +%s)"
   idle_since="$(read_state "$state_dir/idle-since")"
   if [[ -z "$idle_since" ]]; then
