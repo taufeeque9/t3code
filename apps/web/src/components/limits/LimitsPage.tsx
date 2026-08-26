@@ -1,5 +1,5 @@
 import { RefreshCwIcon } from "lucide-react";
-import type { ProviderLimitsAccount } from "@t3tools/contracts";
+import type { ProviderExtraUsage, ProviderLimitsAccount } from "@t3tools/contracts";
 
 import { isElectron } from "../../env";
 import { useProviderLimits } from "../../state/limits";
@@ -9,6 +9,7 @@ import { SidebarInset } from "../ui/sidebar";
 import { WorkspaceBreadcrumb, WorkspaceBreadcrumbItem } from "../WorkspaceBreadcrumb";
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
+import { formatCreditAmount } from "./LimitsPage.logic";
 
 function formatReset(value: string | null): string {
   if (!value) return "Reset time unavailable";
@@ -44,6 +45,37 @@ function usageColor(value: number): string {
   return "bg-emerald-500";
 }
 
+function clampUsagePercentage(value: number | null): number {
+  return Math.max(0, Math.min(100, value ?? 0));
+}
+
+function ExtraUsageLimit({ usage }: { readonly usage: ProviderExtraUsage }) {
+  const usedPercent = clampUsagePercentage(usage.usedPercent);
+  const formatAmount = (value: number | null) =>
+    formatCreditAmount(value, usage.currency, usage.decimalPlaces);
+
+  return (
+    <div className="border-t pt-5">
+      <div className="mb-1.5 flex items-baseline justify-between gap-3">
+        <span className="text-sm font-medium">Extra usage</span>
+        <span className="text-sm tabular-nums">
+          {formatAmount(usage.usedCredits)} of {formatAmount(usage.monthlyLimit)}
+        </span>
+      </div>
+      <div className="h-2 overflow-hidden rounded-full bg-muted">
+        <div
+          className={`h-full rounded-full ${usageColor(usedPercent)}`}
+          style={{ width: `${usedPercent}%` }}
+        />
+      </div>
+      <p className="mt-1.5 text-xs text-muted-foreground">
+        Monthly credit limit
+        {usage.usedPercent === null ? "" : ` · ${usage.usedPercent.toFixed(1)}% used`}
+      </p>
+    </div>
+  );
+}
+
 type DisplayAccount = ProviderLimitsAccount & { readonly environmentLabel: string };
 
 function LimitsAccountCard({ account }: { readonly account: DisplayAccount }) {
@@ -69,7 +101,7 @@ function LimitsAccountCard({ account }: { readonly account: DisplayAccount }) {
       ) : (
         <div className="mt-5 space-y-5">
           {account.buckets.map((bucket) => {
-            const used = Math.max(0, Math.min(100, bucket.usedPercent ?? 0));
+            const used = clampUsagePercentage(bucket.usedPercent);
             return (
               <div key={bucket.id}>
                 <div className="mb-1.5 flex items-baseline justify-between gap-3">
@@ -90,6 +122,7 @@ function LimitsAccountCard({ account }: { readonly account: DisplayAccount }) {
               </div>
             );
           })}
+          {account.extraUsage ? <ExtraUsageLimit usage={account.extraUsage} /> : null}
         </div>
       )}
     </section>

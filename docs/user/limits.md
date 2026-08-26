@@ -5,6 +5,8 @@ account. Open **Limits** from the bottom of the project sidebar, or select refre
 snapshot from every connected environment.
 
 Claude reports its five-hour session, weekly allowance, and any model-specific weekly allowance.
+When extra usage is enabled, its card also shows the exact credits used, monthly credit limit, and
+provider-reported utilization.
 Codex reports every limit bucket exposed by the app server, including separate model limits when
 available. Each row shows the percentage used and the provider's reset time.
 

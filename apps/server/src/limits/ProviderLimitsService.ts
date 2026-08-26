@@ -3,6 +3,7 @@ import {
   ClaudeSettings,
   CodexSettings,
   resolveProviderInstanceEnabled,
+  type ProviderExtraUsage,
   type ProviderLimitBucket,
   type ProviderLimitsAccount,
   type ProviderLimitsSnapshot,
@@ -52,6 +53,11 @@ export type ClaudeRateLimits = NonNullable<SDKControlGetUsageResponse["rate_limi
     readonly utilization?: number | null;
     readonly resets_at?: string | null;
   }>;
+  readonly extra_usage?:
+    | (NonNullable<SDKControlGetUsageResponse["rate_limits"]>["extra_usage"] & {
+        readonly decimal_places?: number;
+      })
+    | null;
 };
 
 export interface LimitProbeResult {
@@ -59,6 +65,7 @@ export interface LimitProbeResult {
   readonly plan: string | null;
   readonly available: boolean;
   readonly buckets: ProviderLimitBucket[];
+  readonly extraUsage?: ProviderExtraUsage;
 }
 
 export interface ProviderLimitsReaders<R> {
@@ -125,6 +132,19 @@ export function normalizeClaudeBuckets(rateLimits: ClaudeRateLimits): ProviderLi
   return buckets;
 }
 
+export function normalizeClaudeExtraUsage(
+  extraUsage: ClaudeRateLimits["extra_usage"],
+): ProviderExtraUsage | undefined {
+  if (!extraUsage?.is_enabled) return undefined;
+  return {
+    usedCredits: extraUsage.used_credits ?? null,
+    monthlyLimit: extraUsage.monthly_limit ?? null,
+    usedPercent: extraUsage.utilization ?? null,
+    currency: extraUsage.currency ?? null,
+    decimalPlaces: extraUsage.decimal_places ?? 2,
+  };
+}
+
 const readClaudeLimits = Effect.fn("ProviderLimitsService.readClaudeLimits")(function* (input: {
   readonly config: ClaudeSettings;
   readonly environment: NodeJS.ProcessEnv;
@@ -165,13 +185,14 @@ const readClaudeLimits = Effect.fn("ProviderLimitsService.readClaudeLimits")(fun
           runtime.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET(),
           runtime.accountInfo(),
         ]);
+        const rateLimits = usage.rate_limits as ClaudeRateLimits | null;
+        const extraUsage = normalizeClaudeExtraUsage(rateLimits?.extra_usage);
         return {
           accountLabel: account?.email ?? null,
           plan: usage.subscription_type,
           available: usage.rate_limits_available && usage.rate_limits !== null,
-          buckets: usage.rate_limits
-            ? normalizeClaudeBuckets(usage.rate_limits as ClaudeRateLimits)
-            : [],
+          buckets: rateLimits ? normalizeClaudeBuckets(rateLimits) : [],
+          ...(extraUsage ? { extraUsage } : {}),
         };
       } finally {
         signal.removeEventListener("abort", abort);
@@ -363,6 +384,7 @@ export function readProviderLimitsSnapshot<R>(input: {
           plan: result.success.plan,
           status: result.success.available ? "ready" : "unavailable",
           buckets: result.success.buckets,
+          ...(result.success.extraUsage ? { extraUsage: result.success.extraUsage } : {}),
           detail: result.success.available
             ? null
             : "The account credential does not expose subscription limits.",

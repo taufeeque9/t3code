@@ -12,6 +12,7 @@ import {
   codexWindowLabel,
   makeCodexLimitsEnvironment,
   normalizeClaudeBuckets,
+  normalizeClaudeExtraUsage,
   normalizeCodexBuckets,
   ProviderLimitsProbeError,
   readProviderLimitsSnapshot,
@@ -86,6 +87,33 @@ describe("ProviderLimitsService", () => {
         resetsAt: "2026-09-01T00:00:00Z",
       },
     ]);
+  });
+
+  it("normalizes enabled Claude extra usage credits", () => {
+    expect(
+      normalizeClaudeExtraUsage({
+        is_enabled: true,
+        monthly_limit: 500_000,
+        used_credits: 43_270,
+        utilization: 8.654,
+        currency: "USD",
+        decimal_places: 2,
+      }),
+    ).toEqual({
+      usedCredits: 43_270,
+      monthlyLimit: 500_000,
+      usedPercent: 8.654,
+      currency: "USD",
+      decimalPlaces: 2,
+    });
+    expect(
+      normalizeClaudeExtraUsage({
+        is_enabled: false,
+        monthly_limit: null,
+        used_credits: null,
+        utilization: null,
+      }),
+    ).toBeUndefined();
   });
 
   it("names Codex rate-limit windows", () => {
