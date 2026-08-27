@@ -8,7 +8,6 @@ on:
 permissions:
   contents: write
   issues: write
-  pull-requests: write
   statuses: write
 
 jobs:
@@ -82,26 +81,15 @@ jobs:
           vp test run scripts/build-desktop-artifact.test.ts
           vp run build:desktop
 
-      - name: Open and auto-merge sync PR
+      - name: Promote validated sync branch
         if: steps.merge.outputs.changed == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
           SYNC_BRANCH: ${{ steps.merge.outputs.sync_branch }}
-          SYNC_SHA: ${{ steps.merge.outputs.sync_sha }}
         run: |
-          pr_url="$(gh pr create \
-            --repo "$GITHUB_REPOSITORY" \
-            --base custom \
-            --head "$SYNC_BRANCH" \
-            --title "chore: merge upstream main" \
-            --body $'Written by you.\n\nWeekly merge of `pingdotgg/t3code@main` into the custom build. Auto-merge is enabled after required checks pass.')"
-          gh api \
-            --method POST \
-            "repos/${GITHUB_REPOSITORY}/statuses/${SYNC_SHA}" \
-            -f state=success \
-            -f context='Validate custom fork' \
-            -f description='Custom tests and desktop build passed'
-          gh pr merge --repo "$GITHUB_REPOSITORY" --auto --merge "$pr_url"
+          set -euo pipefail
+          git fetch origin custom
+          git merge-base --is-ancestor origin/custom "$SYNC_BRANCH"
+          git push origin "$SYNC_BRANCH:custom"
 
       - name: Report validation failure
         if: failure() && steps.merge.outputs.changed == 'true'

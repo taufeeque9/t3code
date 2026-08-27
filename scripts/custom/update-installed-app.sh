@@ -183,22 +183,11 @@ fi
 
 restart_after_install="$install_after_app_exit"
 if application_is_running "$custom_bundle_id"; then
-  restart_after_install=true
-  osascript -e "tell application id \"$custom_bundle_id\" to quit"
+  log "T3 Code Custom is running. Installation deferred until Taufeeque quits it manually."
+  exit 0
 elif application_is_running "$official_bundle_id"; then
-  restart_after_install=true
-  osascript -e "tell application id \"$official_bundle_id\" to quit"
-fi
-
-for _ in {1..30}; do
-  if ! application_is_running "$custom_bundle_id" && ! application_is_running "$official_bundle_id"; then
-    break
-  fi
-  sleep 1
-done
-if application_is_running "$custom_bundle_id" || application_is_running "$official_bundle_id"; then
-  log "T3 Code did not quit cleanly; leaving the current installation untouched."
-  exit 1
+  log "The official T3 Code app is running. Installation deferred until Taufeeque quits it manually."
+  exit 0
 fi
 
 backup_path=""
