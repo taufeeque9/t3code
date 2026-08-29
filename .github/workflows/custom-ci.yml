@@ -33,6 +33,7 @@ jobs:
       - name: Test custom behavior
         run: |
           vp test run apps/web/src/components/chat/MessagesTimeline.logic.test.ts
+          vp test run apps/server/src/orchestration/decider.fork.test.ts apps/server/src/orchestration/threadFork.test.ts
           vp test run scripts/build-desktop-artifact.test.ts
           vp test run scripts/custom/update-installed-app.test.ts
 

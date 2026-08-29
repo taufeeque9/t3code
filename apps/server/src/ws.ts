@@ -949,6 +949,7 @@ const makeWsRpcLayer = (
           threadId: targetThreadId,
           sourceThreadId: source.id,
           ...(cutoffMessageId ? { beforeMessageId: cutoffMessageId } : {}),
+          copiedMessages,
           createdAt: yield* nowIso,
         }).pipe(
           Effect.mapError(

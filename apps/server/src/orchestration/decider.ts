@@ -426,17 +426,16 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
-      const beforeIndex =
-        command.beforeMessageId === undefined
-          ? source.messages.length
-          : source.messages.findIndex((message) => message.id === command.beforeMessageId);
-      if (beforeIndex < 0 || source.messages[beforeIndex]?.role !== "user") {
+      if (
+        command.beforeMessageId !== undefined &&
+        command.copiedMessages.some((message) => message.id === command.beforeMessageId)
+      ) {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
-          detail: `Fork point '${command.beforeMessageId}' is not a user message on thread '${source.id}'.`,
+          detail: `Fork history for thread '${source.id}' includes its excluded fork point '${command.beforeMessageId}'.`,
         });
       }
-      const copiedMessages = source.messages.slice(0, beforeIndex);
+      const copiedMessages = command.copiedMessages;
       const createdBase = yield* withEventBase({
         aggregateKind: "thread",
         aggregateId: command.threadId,

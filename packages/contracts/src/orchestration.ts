@@ -1112,6 +1112,7 @@ const ThreadForkCommand = Schema.Struct({
   threadId: ThreadId,
   sourceThreadId: ThreadId,
   beforeMessageId: Schema.optional(MessageId),
+  copiedMessages: Schema.Array(OrchestrationMessage),
   createdAt: IsoDateTime,
 });
 

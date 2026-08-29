@@ -90,6 +90,7 @@ it.layer(NodeServices.layer)("thread fork decider", (it) => {
           threadId: targetThreadId,
           sourceThreadId,
           beforeMessageId: selectedMessageId,
+          copiedMessages: sourceReadModel().threads[0]?.messages.slice(0, 2) ?? [],
           createdAt: NOW,
         },
         readModel: sourceReadModel(),
@@ -112,6 +113,37 @@ it.layer(NodeServices.layer)("thread fork decider", (it) => {
     }),
   );
 
+  it.effect("uses command history when the command snapshot omits message bodies", () =>
+    Effect.gen(function* () {
+      const readModel = sourceReadModel();
+      const source = readModel.threads[0];
+      if (!source) return expect.fail("source thread is missing");
+      const copiedMessages = source.messages.slice(0, 2);
+      const lightweightReadModel: OrchestrationReadModel = {
+        ...readModel,
+        threads: [{ ...source, messages: [] }],
+      };
+
+      const result = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.fork",
+          commandId: CommandId.make("fork-lightweight-command"),
+          threadId: targetThreadId,
+          sourceThreadId,
+          beforeMessageId: selectedMessageId,
+          copiedMessages,
+          createdAt: NOW,
+        },
+        readModel: lightweightReadModel,
+      });
+      const copiedText = (Array.isArray(result) ? result : [result]).flatMap((event) =>
+        event.type === "thread.message-sent" ? [event.payload.text] : [],
+      );
+
+      expect(copiedText).toEqual(["first", "answer"]);
+    }),
+  );
+
   it.effect("adds fork context only to the first new turn", () =>
     Effect.gen(function* () {
       const forkResult = yield* decideOrchestrationCommand({
@@ -121,6 +153,7 @@ it.layer(NodeServices.layer)("thread fork decider", (it) => {
           threadId: targetThreadId,
           sourceThreadId,
           beforeMessageId: selectedMessageId,
+          copiedMessages: sourceReadModel().threads[0]?.messages.slice(0, 2) ?? [],
           createdAt: NOW,
         },
         readModel: sourceReadModel(),
