@@ -48,9 +48,9 @@ fi
 
 installed_commit="$(read_state "$state_dir/installed-commit")"
 built_commit="$(read_state "$state_dir/built-commit")"
-active_sessions="$(active_session_count)"
 
 if [[ "$mode" == "--status" ]]; then
+  active_sessions="$(active_session_count)"
   app_installed=false
   if [[ -d "$destination" ]]; then
     app_installed=true
