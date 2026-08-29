@@ -7,7 +7,7 @@ state_dir="${T3CODE_CUSTOM_UPDATER_HOME:-/Users/tf-work/.t3/custom-updater}"
 vp_bin="${T3CODE_CUSTOM_VP_BIN:-/Users/tf-work/.vite-plus/bin/vp}"
 database="${T3CODE_CUSTOM_DATABASE:-/Users/tf-work/.t3/userdata/state.sqlite}"
 runtime_state="${T3CODE_CUSTOM_RUNTIME_STATE:-/Users/tf-work/.t3/userdata/server-runtime.json}"
-destination="/Applications/T3 Code Custom.app"
+destination="${T3CODE_CUSTOM_DESTINATION:-/Applications/T3 Code Custom.app}"
 custom_bundle_id="com.taufeeque.t3code-custom"
 official_bundle_id="com.t3tools.t3code"
 signing_identity="${T3CODE_CUSTOM_SIGNING_IDENTITY:-0DE3E575AAF08266CD28947FB1C7D11DF6C8C55C}"
@@ -40,16 +40,53 @@ application_is_running() {
   [[ "$(osascript -e "application id \"$bundle_id\" is running" 2>/dev/null || printf 'false\n')" == "true" ]]
 }
 
-desired_commit="$(git -C "$repo_dir" ls-remote origin refs/heads/custom | awk '{print $1}')"
-if [[ -z "$desired_commit" ]]; then
-  log "No custom branch was found on origin."
-  exit 1
-fi
+install_staged_app() {
+  local commit="$1"
+  local restart_after_install="$2"
+  local staged_app="$state_dir/builds/$commit/T3 Code Custom.app"
+
+  if [[ ! -d "$staged_app" ]]; then
+    log "No staged T3 Code Custom build is available at ${commit:0:12}."
+    return 1
+  fi
+  if [[ -f "$runtime_state" ]] || application_is_running "$custom_bundle_id" || application_is_running "$official_bundle_id"; then
+    log "T3 is still running; installation deferred until Taufeeque quits it manually."
+    return 0
+  fi
+
+  local backup_path=""
+  if [[ -d "$destination" ]]; then
+    backup_path="$state_dir/backups/$(date -u +%Y%m%dT%H%M%SZ)-T3 Code Custom.app"
+    mv "$destination" "$backup_path"
+  fi
+
+  if ! ditto "$staged_app" "$destination"; then
+    if [[ -n "$backup_path" && -d "$backup_path" ]]; then
+      mv "$backup_path" "$destination"
+    fi
+    log "Installation failed; the previous app was restored."
+    return 1
+  fi
+  codesign --verify --deep --strict "$destination"
+  printf '%s\n' "$commit" > "$state_dir/installed-commit"
+  rm -f "$state_dir/idle-since"
+  log "Installed T3 Code Custom at ${commit:0:12}."
+
+  if [[ "$restart_after_install" == "true" ]]; then
+    open -b "$custom_bundle_id"
+    log "Restarted T3 Code Custom."
+  fi
+}
 
 installed_commit="$(read_state "$state_dir/installed-commit")"
 built_commit="$(read_state "$state_dir/built-commit")"
 
 if [[ "$mode" == "--status" ]]; then
+  desired_commit="$(git -C "$repo_dir" ls-remote origin refs/heads/custom | awk '{print $1}')"
+  if [[ -z "$desired_commit" ]]; then
+    log "No custom branch was found on origin."
+    exit 1
+  fi
   active_sessions="$(active_session_count)"
   app_installed=false
   if [[ -d "$destination" ]]; then
@@ -69,6 +106,25 @@ if ! mkdir "$lock_dir" 2>/dev/null; then
   exit 0
 fi
 trap 'rmdir "$lock_dir" 2>/dev/null || true' EXIT
+
+if [[ "$mode" == "--after-app-exit" ]]; then
+  if [[ -z "$built_commit" ]]; then
+    log "No staged T3 Code Custom build is ready to install."
+    exit 0
+  fi
+  if [[ "$installed_commit" == "$built_commit" && -d "$destination" ]]; then
+    log "T3 Code Custom is already current at ${built_commit:0:12}."
+    exit 0
+  fi
+  install_staged_app "$built_commit" true
+  exit 0
+fi
+
+desired_commit="$(git -C "$repo_dir" ls-remote origin refs/heads/custom | awk '{print $1}')"
+if [[ -z "$desired_commit" ]]; then
+  log "No custom branch was found on origin."
+  exit 1
+fi
 
 if [[ "$installed_commit" == "$desired_commit" && -d "$destination" ]]; then
   log "T3 Code Custom is already current at ${desired_commit:0:12}."
@@ -153,62 +209,22 @@ if [[ "$built_commit" != "$desired_commit" || ! -d "$staged_app" ]]; then
   trap 'rmdir "$lock_dir" 2>/dev/null || true' EXIT
 fi
 
-install_after_app_exit=false
-if [[ "$mode" == "--after-app-exit" ]]; then
-  if [[ -f "$runtime_state" ]] || application_is_running "$custom_bundle_id" || application_is_running "$official_bundle_id"; then
-    log "The quit trigger fired while T3 is still running; installation deferred."
-    exit 0
-  fi
-  install_after_app_exit=true
+active_sessions="$(active_session_count)"
+if (( active_sessions > 0 )); then
   rm -f "$state_dir/idle-since"
-else
-  active_sessions="$(active_session_count)"
-  if (( active_sessions > 0 )); then
-    rm -f "$state_dir/idle-since"
-    log "Build is ready, but $active_sessions provider session(s) are active. Installation deferred."
-    exit 0
-  fi
-  now_epoch="$(date +%s)"
-  idle_since="$(read_state "$state_dir/idle-since")"
-  if [[ -z "$idle_since" ]]; then
-    printf '%s\n' "$now_epoch" > "$state_dir/idle-since"
-    log "No sessions are active. Installation will proceed on the next check after the idle grace period."
-    exit 0
-  fi
-  if (( now_epoch - idle_since < 600 )); then
-    log "Waiting for the 10-minute idle grace period before restarting T3 Code."
-    exit 0
-  fi
-fi
-
-restart_after_install="$install_after_app_exit"
-if application_is_running "$custom_bundle_id"; then
-  log "T3 Code Custom is running. Installation deferred until Taufeeque quits it manually."
+  log "Build is ready, but $active_sessions provider session(s) are active. Installation deferred."
   exit 0
-elif application_is_running "$official_bundle_id"; then
-  log "The official T3 Code app is running. Installation deferred until Taufeeque quits it manually."
+fi
+now_epoch="$(date +%s)"
+idle_since="$(read_state "$state_dir/idle-since")"
+if [[ -z "$idle_since" ]]; then
+  printf '%s\n' "$now_epoch" > "$state_dir/idle-since"
+  log "No sessions are active. Installation will proceed on the next check after the idle grace period."
+  exit 0
+fi
+if (( now_epoch - idle_since < 600 )); then
+  log "Waiting for the 10-minute idle grace period before restarting T3 Code."
   exit 0
 fi
 
-backup_path=""
-if [[ -d "$destination" ]]; then
-  backup_path="$state_dir/backups/$(date -u +%Y%m%dT%H%M%SZ)-T3 Code Custom.app"
-  mv "$destination" "$backup_path"
-fi
-
-if ! ditto "$staged_app" "$destination"; then
-  if [[ -n "$backup_path" && -d "$backup_path" ]]; then
-    mv "$backup_path" "$destination"
-  fi
-  log "Installation failed; the previous app was restored."
-  exit 1
-fi
-codesign --verify --deep --strict "$destination"
-printf '%s\n' "$desired_commit" > "$state_dir/installed-commit"
-rm -f "$state_dir/idle-since"
-log "Installed T3 Code Custom at ${desired_commit:0:12}."
-
-if [[ "$restart_after_install" == "true" ]]; then
-  open -b "$custom_bundle_id"
-  log "Restarted T3 Code Custom."
-fi
+install_staged_app "$desired_commit" false
