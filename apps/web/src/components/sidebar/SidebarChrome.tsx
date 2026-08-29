@@ -151,6 +151,7 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const currentFooterPage = useLocation({
     select: (location) => {
       if (/^\/settings(?:\/|$)/.test(location.pathname)) return "settings";
+      if (/^\/projects\/[^/]+\/?$/.test(location.pathname)) return "project-settings";
       if (location.pathname === "/usage") return "usage";
       if (location.pathname === "/limits") return "limits";
       if (location.pathname === "/pull-requests") return "pull-requests";
