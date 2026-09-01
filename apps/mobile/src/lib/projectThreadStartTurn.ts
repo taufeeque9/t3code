@@ -9,7 +9,8 @@ import {
 } from "@t3tools/contracts";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 
-import { toUploadChatImageAttachments, type DraftComposerImageAttachment } from "./composerImages";
+import { toUploadChatImageAttachments, type DraftComposerAttachment } from "./composerImages";
+import type { UploadedMobileAttachment } from "./attachmentUpload";
 import { randomHex } from "./uuid";
 
 export function deriveThreadTitleFromPrompt(value: string): string {
@@ -30,7 +31,8 @@ export interface ProjectThreadStartTurnSpec {
   readonly messageId: string;
   readonly createdAt: string;
   readonly text: string;
-  readonly attachments: ReadonlyArray<DraftComposerImageAttachment>;
+  readonly attachments: ReadonlyArray<DraftComposerAttachment>;
+  readonly uploadedAttachments?: ReadonlyArray<UploadedMobileAttachment>;
   readonly modelSelection: ModelSelection;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
@@ -57,7 +59,11 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
       messageId: MessageId.make(spec.messageId),
       role: "user" as const,
       text: spec.text,
-      attachments: toUploadChatImageAttachments(spec.attachments),
+      attachments:
+        spec.uploadedAttachments ??
+        toUploadChatImageAttachments(
+          spec.attachments.filter((attachment) => attachment.type === "image"),
+        ),
     },
     modelSelection: spec.modelSelection,
     titleSeed: title,
