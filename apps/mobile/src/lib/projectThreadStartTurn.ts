@@ -7,6 +7,7 @@ import {
   type ProviderInteractionMode,
   type RuntimeMode,
 } from "@t3tools/contracts";
+import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 
 import { toUploadChatImageAttachments, type DraftComposerAttachment } from "./composerImages";
@@ -14,7 +15,7 @@ import type { UploadedMobileAttachment } from "./attachmentUpload";
 import { randomHex } from "./uuid";
 
 export function deriveThreadTitleFromPrompt(value: string): string {
-  const trimmed = value.trim();
+  const trimmed = assistantCitationsToPlainText(value).trim();
   if (trimmed.length === 0) {
     return "New thread";
   }

@@ -1,13 +1,21 @@
+import {
+  EnvironmentId,
+  MessageId,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
+import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import { describe, expect, it, vi } from "vite-plus/test";
-
-import { ProjectId, ProviderInstanceId } from "@t3tools/contracts";
 
 vi.mock("./uuid", () => ({
   randomHex: () => "deadbeef",
 }));
+vi.mock("./composerImages", () => ({ toUploadChatImageAttachments: () => [] }));
 
 import {
   buildProjectThreadStartTurnInput,
+  deriveThreadTitleFromPrompt,
   type ProjectThreadStartTurnSpec,
 } from "./projectThreadStartTurn";
 
@@ -33,6 +41,49 @@ const makeSpec = (
   worktreePath: null,
   startFromOrigin: false,
   ...overrides,
+});
+
+describe("project thread title", () => {
+  it("keeps ordinary titles and the empty-prompt fallback", () => {
+    expect(deriveThreadTitleFromPrompt("  Fix\n the parser  ")).toBe("Fix the parser");
+    expect(deriveThreadTitleFromPrompt(" \n ")).toBe("New thread");
+  });
+
+  it.each([
+    {
+      comment: undefined,
+      title: "Keep `cache[key]` & <parser> shared. Retry!",
+    },
+    {
+      comment: 'Why "shared"?',
+      title: 'Keep `cache[key]` & <parser> shared. Retry! Comment: Why "shared"?',
+    },
+  ])("uses readable titles and intact links with comment $comment", ({ comment, title }) => {
+    const quoteText = "Keep `cache[key]` & <parser> shared.\n  Retry!";
+    const text = serializeAssistantCitation({
+      version: 1,
+      environmentId: EnvironmentId.make("source-environment"),
+      threadId: ThreadId.make("source-thread"),
+      messageId: MessageId.make("source-message"),
+      text: quoteText,
+      ...(comment === undefined ? {} : { comment }),
+      start: 0,
+      end: quoteText.length,
+      prefix: "",
+      suffix: "",
+    });
+    const input = buildProjectThreadStartTurnInput(
+      makeSpec({
+        text,
+        workspaceMode: "local",
+        branch: null,
+      }),
+    );
+
+    expect(input.titleSeed).toBe(title);
+    expect(input.bootstrap.createThread.title).toBe(input.titleSeed);
+    expect(input.message.text).toBe(text);
+  });
 });
 
 describe("buildProjectThreadStartTurnInput", () => {
