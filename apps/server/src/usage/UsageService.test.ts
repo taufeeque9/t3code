@@ -7,7 +7,7 @@ import * as NodePath from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
-import { UsageDay, type UsageSummaryInput } from "@t3tools/contracts";
+import { ProviderInstanceId, UsageDay, type UsageSummaryInput } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -107,6 +107,65 @@ describe("UsageService", () => {
       yield* Effect.promise(() => NodeFSP.appendFile(transcript, claudeLine(2, 7)));
       const second = yield* service.readSummary(WINDOW);
       assert.strictEqual(totalOutputTokens(second), 12);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("scans every Claude provider instance home and collapses shared trees", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+
+      // An instance whose `projects` is a symlink into the legacy home must
+      // not be scanned twice; an instance with its own tree must be counted.
+      const sharedHome = NodePath.join(home, "claude-shared");
+      const ownHome = NodePath.join(home, "claude-own");
+      const ownTranscriptDir = NodePath.join(ownHome, "projects", "proj");
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(sharedHome, { recursive: true });
+        await NodeFSP.symlink(
+          NodePath.join(home, "claude", "projects"),
+          NodePath.join(sharedHome, "projects"),
+        );
+        await NodeFSP.mkdir(ownTranscriptDir, { recursive: true });
+        await NodeFSP.writeFile(NodePath.join(ownTranscriptDir, "session.jsonl"), claudeLine(2, 9));
+      });
+
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-instances-test",
+            home,
+            settings: {
+              ...settings,
+              providerInstances: {
+                [ProviderInstanceId.make("claude-shared")]: {
+                  driver: "claudeAgent",
+                  config: { homePath: sharedHome },
+                },
+                [ProviderInstanceId.make("claude-own")]: {
+                  driver: "claudeAgent",
+                  config: { homePath: ownHome },
+                },
+              },
+            },
+          }),
+        ),
+      );
+
+      const summary = yield* service.readSummary(WINDOW);
+      assert.strictEqual(totalOutputTokens(summary), 14);
+
+      const claudeDirs = summary.sources
+        .filter((source) => source.fingerprint.provider === "claude")
+        .map((source) => source.fingerprint.resolvedHomePath)
+        .toSorted();
+      const expectedDirs = yield* Effect.promise(() =>
+        Promise.all([
+          NodeFSP.realpath(NodePath.join(home, "claude", "projects")),
+          NodeFSP.realpath(NodePath.join(ownHome, "projects")),
+        ]),
+      );
+      assert.deepStrictEqual(claudeDirs, expectedDirs.toSorted());
     }).pipe(Effect.scoped),
   );
 

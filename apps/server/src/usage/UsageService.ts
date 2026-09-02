@@ -15,6 +15,7 @@
 import * as NodeOS from "node:os";
 
 import {
+  ClaudeSettings,
   USAGE_CONTRACT_VERSION,
   type UsageProviderKind,
   type UsageSource,
@@ -41,6 +42,7 @@ import { expandHomePath } from "../pathExpansion.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
+import { deriveProviderInstanceConfigMap } from "../provider/Layers/ProviderInstanceRegistryHydration.ts";
 import { UsageAggregator } from "./usageAggregation.ts";
 import { parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
@@ -84,6 +86,8 @@ const decodeRatesCache = Schema.decodeUnknownEffect(
 const encodeRatesCache = Schema.encodeEffect(
   Schema.fromJsonString(RatesCacheFile as unknown as Schema.Codec<typeof RatesCacheFile.Type>),
 );
+
+const decodeClaudeSettings = Schema.decodeUnknownEffect(ClaudeSettings);
 
 /** The scan cache is narrowed by hand in `usageScanCache`, so JSON is enough here. */
 const ScanCacheJson = Schema.fromJsonString(Schema.Unknown as unknown as Schema.Codec<unknown>);
@@ -202,6 +206,13 @@ export const make = Effect.gen(function* () {
       return nestedExists ? nested : path.join(homePath, "projects");
     });
 
+  interface TranscriptDir {
+    readonly provider: UsageProviderKind;
+    readonly dir: string;
+    /** Only this file name is scanned when set; otherwise every `.jsonl`. */
+    readonly fileName?: string;
+  }
+
   /** Resolves the transcript directory for each provider. */
   const resolveTranscriptDirs = Effect.fn("UsageService.resolveTranscriptDirs")(function* () {
     // A settings failure must surface as an error: swallowing it here would
@@ -220,8 +231,28 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-    const claudeHome = yield* resolveClaudeHomePath(settings.providers.claudeAgent);
-    const claudeDir = yield* resolveClaudeTranscriptDir(claudeHome);
+    // Every Claude instance owns a home, and several instances can share one
+    // transcript tree through symlinks, so each home resolves to its real
+    // transcript directory and duplicates collapse to a single scan.
+    const claudeDirs = new Set<string>();
+    for (const instance of Object.values(deriveProviderInstanceConfigMap(settings))) {
+      if (instance.driver !== "claudeAgent") continue;
+      const claudeSettings = yield* decodeClaudeSettings(instance.config).pipe(
+        Effect.mapError(
+          (cause) =>
+            new UsageReadError({
+              reason: "scanFailed",
+              detail: "Claude provider settings could not be read.",
+              cause,
+            }),
+        ),
+      );
+      const claudeHome = yield* resolveClaudeHomePath(claudeSettings);
+      const claudeDir = yield* resolveClaudeTranscriptDir(claudeHome);
+      claudeDirs.add(
+        yield* fileSystem.realPath(claudeDir).pipe(Effect.orElseSucceed(() => claudeDir)),
+      );
+    }
     const codexLayout = yield* resolveCodexHomeLayout(settings.providers.codex);
     // Grok Settings only expose the binary path; home is `$GROK_HOME` or `~/.grok`.
     // Empty/whitespace GROK_HOME must fall back: coalescing alone would scan cwd.
@@ -231,15 +262,12 @@ export const make = Effect.gen(function* () {
         ? path.resolve(expandHomePath(grokHomeEnv))
         : path.join(NodeOS.homedir(), ".grok");
 
-    return [
-      { provider: "claude" as const, dir: claudeDir },
-      { provider: "codex" as const, dir: path.join(codexLayout.sharedHomePath, "sessions") },
-      {
-        provider: "grok" as const,
-        dir: path.join(grokHome, "sessions"),
-        fileName: "updates.jsonl",
-      },
-    ];
+    const dirs: TranscriptDir[] = [...claudeDirs].map((dir) => ({ provider: "claude", dir }));
+    dirs.push(
+      { provider: "codex", dir: path.join(codexLayout.sharedHomePath, "sessions") },
+      { provider: "grok", dir: path.join(grokHome, "sessions"), fileName: "updates.jsonl" },
+    );
+    return dirs;
   });
 
   /**
