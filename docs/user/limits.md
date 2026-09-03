@@ -15,8 +15,9 @@ send a model prompt or consume inference tokens. An unavailable card usually mea
 credential has expired or does not grant access to subscription usage.
 
 Claude accounts that are not reporting limits show a **Sign in** button. It opens that account's
-sign-in page in your browser; paste the code the page returns and the account is signed back in
-without leaving T3 Code. Limits refresh automatically once it succeeds. Each account signs in
+sign-in page in your browser. Some sign-ins complete on their own once you approve them, and others
+hand back a code to paste; the dialog takes a code when there is one and otherwise finishes as soon
+as you select Continue. Limits refresh automatically once it succeeds. Each account signs in
 separately, so an account whose card looks healthy is left alone.
 
 The Limits and Usage pages answer different questions: Limits shows subscription allowance, while

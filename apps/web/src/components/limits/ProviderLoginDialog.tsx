@@ -92,8 +92,10 @@ export function ProviderLoginDialog(props: {
     };
   }, [startLogin, target]);
 
+  // An empty code is meaningful: the provider's own browser callback may have
+  // completed the sign-in, and the server then just waits for its CLI to exit.
   const submit = useCallback(async () => {
-    if (!target || loginId === null || code.trim().length === 0) {
+    if (!target || loginId === null) {
       return;
     }
     setBusy(true);
@@ -119,7 +121,8 @@ export function ProviderLoginDialog(props: {
         <DialogHeader>
           <DialogTitle>Sign in to {target?.displayName ?? "provider"}</DialogTitle>
           <DialogDescription>
-            Approve the sign-in in your browser, then paste the code it gives you back here.
+            Approve the sign-in in your browser. If it hands you back a code, paste it here;
+            otherwise just select Continue.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4 px-6 py-5">
@@ -140,7 +143,7 @@ export function ProviderLoginDialog(props: {
               </a>
               <div className="grid gap-1.5">
                 <label className="text-sm font-medium" htmlFor="provider-login-code">
-                  Code from the browser
+                  Code from the browser <span className="text-muted-foreground">(if shown)</span>
                 </label>
                 <Input
                   autoFocus
@@ -164,12 +167,8 @@ export function ProviderLoginDialog(props: {
           <Button onClick={() => onOpenChange(false)} size="sm" variant="outline">
             Cancel
           </Button>
-          <Button
-            disabled={busy || loginId === null || code.trim().length === 0}
-            onClick={() => void submit()}
-            size="sm"
-          >
-            {busy ? "Signing in…" : "Sign in"}
+          <Button disabled={busy || loginId === null} onClick={() => void submit()} size="sm">
+            {busy ? "Finishing…" : "Continue"}
           </Button>
         </DialogFooter>
       </DialogPopup>

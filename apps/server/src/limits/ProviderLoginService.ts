@@ -39,6 +39,8 @@ const decodeClaudeSettings = Schema.decodeUnknownEffect(ClaudeSettings);
 const AUTHORIZE_URL_TIMEOUT = "30 seconds";
 /** A sign-in nobody finishes must not keep a CLI alive forever. */
 const PENDING_LOGIN_TIMEOUT = "10 minutes";
+/** How long a code-less submit waits for the browser callback to land. */
+const BROWSER_CALLBACK_TIMEOUT = "90 seconds";
 /** Bounds the buffered CLI output; the URL arrives in the first few lines. */
 const MAX_OUTPUT_CHARS = 64 * 1024;
 
@@ -51,6 +53,8 @@ interface PendingLogin {
   readonly accountLabel: string | null;
   /** Everything the CLI has written, used for the URL and for failure detail. */
   output: string;
+  /** Set once the CLI exits, which the browser callback can do on its own. */
+  exitCode: number | null;
 }
 
 export class ProviderLoginService extends Context.Service<
@@ -187,8 +191,14 @@ export const make = Effect.gen(function* () {
       child,
       accountLabel: instance.displayName ?? null,
       output: "",
+      exitCode: null,
     };
     pendingByLoginId.set(loginId, pending);
+    // The CLI's own callback server can complete the sign-in without a pasted
+    // code, so its exit is recorded whether or not anyone is waiting on it.
+    child.once("exit", (code) => {
+      pending.exitCode = code ?? 1;
+    });
     // Expiry sweep rather than a cancellable timer: a sign-in that already
     // finished is simply no longer the map's entry for this id.
     yield* Effect.sleep(PENDING_LOGIN_TIMEOUT).pipe(
@@ -227,6 +237,17 @@ export const make = Effect.gen(function* () {
     return { loginId, authorizeUrl } satisfies ProviderLoginStartResult;
   });
 
+  const finishLogin = (pending: PendingLogin, exitCode: number) =>
+    exitCode === 0
+      ? Effect.succeed({ accountLabel: pending.accountLabel } satisfies ProviderLoginSubmitResult)
+      : Effect.fail(
+          new ProviderLoginError({
+            reason: "login-failed",
+            message:
+              lastMeaningfulLine(pending.output) ?? "The Claude CLI rejected the sign-in code.",
+          }),
+        );
+
   const submit = Effect.fn("ProviderLoginService.submit")(function* (input: {
     readonly loginId: string;
     readonly code: string;
@@ -238,16 +259,28 @@ export const make = Effect.gen(function* () {
         message: "This sign-in expired. Start it again.",
       });
     }
+    const code = input.code.trim();
+
+    // The browser may already have finished it, in which case there is nothing
+    // to send and the recorded exit is the whole answer.
+    if (pending.exitCode !== null) {
+      forget(pending);
+      return yield* finishLogin(pending, pending.exitCode);
+    }
     forget(pending);
 
     const exitCode = yield* Effect.tryPromise({
       try: () =>
         new Promise<number>((resolve, reject) => {
           pending.child.once("error", reject);
-          pending.child.once("exit", (code) => resolve(code ?? 1));
-          pending.child.stdin.write(`${input.code.trim()}\n`, (error) => {
-            if (error) reject(error);
-          });
+          pending.child.once("exit", (exited) => resolve(exited ?? 1));
+          // An empty code means "the browser is handling it": wait for the CLI
+          // to exit on its own rather than feeding it an invalid line.
+          if (code.length > 0) {
+            pending.child.stdin.write(`${code}\n`, (error) => {
+              if (error) reject(error);
+            });
+          }
         }),
       catch: (cause) =>
         new ProviderLoginError({
@@ -255,15 +288,32 @@ export const make = Effect.gen(function* () {
           message: "The sign-in code could not be delivered to the Claude CLI.",
           cause,
         }),
-    }).pipe(Effect.tapError(() => Effect.sync(() => pending.child.kill())));
+    }).pipe(
+      Effect.timeoutOrElse({
+        duration: BROWSER_CALLBACK_TIMEOUT,
+        orElse: () =>
+          Effect.fail(
+            new ProviderLoginError({
+              reason: "login-pending",
+              message:
+                "Still waiting for the browser to finish signing in. Approve it, then try again.",
+            }),
+          ),
+      }),
+      // A timeout leaves the CLI running so the browser can still finish it;
+      // only a hard failure is worth killing.
+      Effect.tapError((error) =>
+        Effect.sync(() => {
+          if (error.reason === "login-pending") {
+            pendingByLoginId.set(pending.loginId, pending);
+            return;
+          }
+          pending.child.kill();
+        }),
+      ),
+    );
 
-    if (exitCode !== 0) {
-      return yield* new ProviderLoginError({
-        reason: "login-failed",
-        message: lastMeaningfulLine(pending.output) ?? "The Claude CLI rejected the sign-in code.",
-      });
-    }
-    return { accountLabel: pending.accountLabel } satisfies ProviderLoginSubmitResult;
+    return yield* finishLogin(pending, exitCode);
   });
 
   return ProviderLoginService.of({ start, submit });

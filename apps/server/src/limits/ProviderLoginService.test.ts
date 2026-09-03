@@ -34,6 +34,15 @@ process.stdin.on("data", (chunk) => {
 });
 `;
 
+/** Mimics the CLI's own browser callback finishing the sign-in unprompted. */
+const SELF_COMPLETING_CLI = `#!/usr/bin/env node
+process.stdout.write("If the browser didn't open, visit: ${AUTHORIZE_URL}\\n");
+setTimeout(() => {
+  process.stdout.write("Login successful.\\n");
+  process.exit(0);
+}, 50);
+`;
+
 /** A CLI that dies before printing anything, like a bad binary path. */
 const FAILING_CLI = `#!/usr/bin/env node
 process.stdout.write("not logged in: profile missing\\n");
@@ -120,6 +129,18 @@ describe("ProviderLoginService", () => {
       );
       assert.strictEqual(failure.reason, "login-failed");
       assert.strictEqual(failure.message, "not logged in: profile missing");
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("accepts a sign-in the browser completed without a pasted code", () =>
+    Effect.gen(function* () {
+      const { settings } = yield* setup(SELF_COMPLETING_CLI);
+      const service = yield* makeService(settings);
+
+      const started = yield* service.start({ instanceId: ProviderInstanceId.make("claude-alt") });
+      // No code: the CLI exits on its own once the browser callback lands.
+      const submitted = yield* service.submit({ loginId: started.loginId, code: "" });
+      assert.strictEqual(submitted.accountLabel, "Claude Alt");
     }).pipe(Effect.scoped),
   );
 

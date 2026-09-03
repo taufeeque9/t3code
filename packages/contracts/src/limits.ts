@@ -77,6 +77,7 @@ export const ProviderLoginErrorReason = Schema.Literals([
   "instance-not-found",
   "unsupported-provider",
   "login-not-pending",
+  "login-pending",
   "login-failed",
 ]);
 export type ProviderLoginErrorReason = typeof ProviderLoginErrorReason.Type;
