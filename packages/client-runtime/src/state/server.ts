@@ -840,6 +840,22 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.serverGetProviderLimits,
       staleTimeMs: 300_000,
     }),
+    startProviderLogin: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:start-provider-login",
+      tag: WS_METHODS.serverStartProviderLogin,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) => `${environmentId}:${input.instanceId}`,
+      },
+    }),
+    submitProviderLogin: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:submit-provider-login",
+      tag: WS_METHODS.serverSubmitProviderLogin,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) => `${environmentId}:${input.loginId}`,
+      },
+    }),
     forkThread: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:fork-thread",
       tag: WS_METHODS.serverForkThread,

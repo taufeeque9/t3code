@@ -1,5 +1,6 @@
 import { RefreshCwIcon } from "lucide-react";
-import type { ProviderExtraUsage, ProviderLimitsAccount } from "@t3tools/contracts";
+import { useState } from "react";
+import type { EnvironmentId, ProviderExtraUsage, ProviderLimitsAccount } from "@t3tools/contracts";
 
 import { isElectron } from "../../env";
 import { useProviderLimits } from "../../state/limits";
@@ -10,6 +11,7 @@ import { WorkspaceBreadcrumb, WorkspaceBreadcrumbItem } from "../WorkspaceBreadc
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { formatCreditAmount } from "./LimitsPage.logic";
+import { ProviderLoginDialog, type ProviderLoginTarget } from "./ProviderLoginDialog";
 
 function formatReset(value: string | null): string {
   if (!value) return "Reset time unavailable";
@@ -76,10 +78,22 @@ function ExtraUsageLimit({ usage }: { readonly usage: ProviderExtraUsage }) {
   );
 }
 
-type DisplayAccount = ProviderLimitsAccount & { readonly environmentLabel: string };
+type DisplayAccount = ProviderLimitsAccount & {
+  readonly environmentLabel: string;
+  readonly environmentId: EnvironmentId;
+};
 
-function LimitsAccountCard({ account }: { readonly account: DisplayAccount }) {
+function LimitsAccountCard({
+  account,
+  onSignIn,
+}: {
+  readonly account: DisplayAccount;
+  readonly onSignIn: (target: ProviderLoginTarget) => void;
+}) {
   const providerName = account.driver === "claudeAgent" ? "Claude" : "Codex";
+  // Only Claude exposes a sign-in T3 Code can drive, and only a card that is
+  // not reporting limits has anything to fix.
+  const canSignIn = account.driver === "claudeAgent" && account.status !== "ready";
 
   return (
     <section className="rounded-2xl border bg-card p-5">
@@ -97,7 +111,24 @@ function LimitsAccountCard({ account }: { readonly account: DisplayAccount }) {
         </span>
       </div>
       {account.status !== "ready" ? (
-        <p className="mt-5 text-sm text-muted-foreground">{account.detail}</p>
+        <div className="mt-5 space-y-3">
+          <p className="text-sm text-muted-foreground">{account.detail}</p>
+          {canSignIn ? (
+            <Button
+              onClick={() =>
+                onSignIn({
+                  environmentId: account.environmentId,
+                  instanceId: account.instanceId,
+                  displayName: account.displayName,
+                })
+              }
+              size="sm"
+              variant="outline"
+            >
+              Sign in
+            </Button>
+          ) : null}
+        </div>
       ) : (
         <div className="mt-5 space-y-5">
           {account.buckets.map((bucket) => {
@@ -131,12 +162,14 @@ function LimitsAccountCard({ account }: { readonly account: DisplayAccount }) {
 
 export function LimitsPage() {
   const { environments, refresh } = useProviderLimits();
+  const [loginTarget, setLoginTarget] = useState<ProviderLoginTarget | null>(null);
   const waiting = environments.some((environment) => environment.waiting);
   const failures = environments.filter((environment) => environment.detail !== null);
   const accounts = environments.flatMap((environment) =>
     environment.accounts.map((account) => ({
       ...account,
       environmentLabel: environment.environmentLabel,
+      environmentId: environment.environmentId,
     })),
   );
 
@@ -192,6 +225,7 @@ export function LimitsPage() {
                   <LimitsAccountCard
                     account={account}
                     key={`${account.environmentLabel}:${account.instanceId}`}
+                    onSignIn={setLoginTarget}
                   />
                 ))}
               </div>
@@ -199,6 +233,13 @@ export function LimitsPage() {
           </WorkspacePageContainer>
         </ScrollArea>
       </div>
+      <ProviderLoginDialog
+        onOpenChange={(open) => {
+          if (!open) setLoginTarget(null);
+        }}
+        onSignedIn={refresh}
+        target={loginTarget}
+      />
     </SidebarInset>
   );
 }

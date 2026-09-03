@@ -12,8 +12,12 @@ available. Each row shows the percentage used and the provider's reset time.
 
 Limits are read directly from the provider and are cached for five minutes. Reading them does not
 send a model prompt or consume inference tokens. An unavailable card usually means that account's
-credential does not grant access to subscription usage; sign in with the provider's full OAuth flow
-and refresh the page.
+credential has expired or does not grant access to subscription usage.
+
+Claude accounts that are not reporting limits show a **Sign in** button. It opens that account's
+sign-in page in your browser; paste the code the page returns and the account is signed back in
+without leaving T3 Code. Limits refresh automatically once it succeeds. Each account signs in
+separately, so an account whose card looks healthy is left alone.
 
 The Limits and Usage pages answer different questions: Limits shows subscription allowance, while
 Usage estimates token activity and API-equivalent cost from local session history.
