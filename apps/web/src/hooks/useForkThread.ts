@@ -50,7 +50,16 @@ export function useForkThread() {
       }
       // The thread route treats an unknown thread as missing and bounces to
       // the home screen, so wait for the read model to carry the fork first.
-      await waitForServerThread(target);
+      if (!(await waitForServerThread(target))) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Thread forked, but it has not loaded yet",
+            description: "Open it from the sidebar.",
+          }),
+        );
+        return;
+      }
       try {
         await router.navigate({
           to: "/$environmentId/$threadId",
