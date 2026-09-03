@@ -603,6 +603,7 @@ export function deriveLockedProvider(input: {
   thread: Thread | null | undefined;
   selectedProvider: string | null;
   threadProvider: string | null;
+  providers: ReadonlyArray<Pick<ServerProvider, "instanceId" | "driver">>;
 }): ProviderDriverKind | null {
   if (!threadHasStarted(input.thread)) {
     return null;
@@ -611,15 +612,12 @@ export function deriveLockedProvider(input: {
   if (sessionProvider && isProviderDriverKind(sessionProvider)) {
     return sessionProvider;
   }
-  const narrowedThreadProvider =
-    input.threadProvider && isProviderDriverKind(input.threadProvider)
-      ? input.threadProvider
-      : null;
-  const narrowedSelectedProvider =
-    input.selectedProvider && isProviderDriverKind(input.selectedProvider)
-      ? input.selectedProvider
-      : null;
-  return narrowedThreadProvider ?? narrowedSelectedProvider ?? null;
+  // Without a session the lock comes from an instance id, which is only a
+  // driver kind for the default instances; custom instances resolve through
+  // the configured provider list.
+  const resolveDriverKind = (instanceId: string | null): ProviderDriverKind | null =>
+    input.providers.find((provider) => provider.instanceId === instanceId)?.driver ?? null;
+  return resolveDriverKind(input.threadProvider) ?? resolveDriverKind(input.selectedProvider);
 }
 
 export function getStartedThreadModelChangeBlockReason(input: {
@@ -660,15 +658,17 @@ export function getStartedThreadModelChangeBlockReason(input: {
   };
 }
 
-export async function waitForStartedServerThread(
+/** Resolves true once the thread detail satisfies `predicate`, false on timeout. */
+async function waitForServerThreadState(
   threadRef: ScopedThreadRef,
-  timeoutMs = 1_000,
+  predicate: (thread: Thread | null | undefined) => boolean,
+  timeoutMs: number,
 ): Promise<boolean> {
   const threadAtom = environmentThreadDetails.detailAtom(threadRef);
   const getThread = () => appAtomRegistry.get(threadAtom);
   const thread = getThread();
 
-  if (threadHasStarted(thread)) {
+  if (predicate(thread)) {
     return true;
   }
 
@@ -688,13 +688,13 @@ export async function waitForStartedServerThread(
     };
 
     const unsubscribe = appAtomRegistry.subscribe(threadAtom, (thread) => {
-      if (!threadHasStarted(thread)) {
+      if (!predicate(thread)) {
         return;
       }
       finish(true);
     });
 
-    if (threadHasStarted(getThread())) {
+    if (predicate(getThread())) {
       finish(true);
       return;
     }
@@ -703,6 +703,21 @@ export async function waitForStartedServerThread(
       finish(false);
     }, timeoutMs);
   });
+}
+
+export function waitForStartedServerThread(
+  threadRef: ScopedThreadRef,
+  timeoutMs = 1_000,
+): Promise<boolean> {
+  return waitForServerThreadState(threadRef, threadHasStarted, timeoutMs);
+}
+
+/** Waits for a freshly created thread to reach the client before routing to it. */
+export function waitForServerThread(
+  threadRef: ScopedThreadRef,
+  timeoutMs = 5_000,
+): Promise<boolean> {
+  return waitForServerThreadState(threadRef, (thread) => thread != null, timeoutMs);
 }
 
 export interface LocalDispatchSnapshot {

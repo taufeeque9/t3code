@@ -7,6 +7,7 @@ import type { MessageId, ScopedThreadRef } from "@t3tools/contracts";
 import { useRouter } from "@tanstack/react-router";
 import { useCallback } from "react";
 
+import { waitForServerThread } from "../components/ChatView.logic";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { serverEnvironment } from "../state/server";
 import { buildThreadRouteParams } from "../threadRoutes";
@@ -47,6 +48,9 @@ export function useForkThread() {
       if (result.value.draftText !== null) {
         setPrompt(target, result.value.draftText);
       }
+      // The thread route treats an unknown thread as missing and bounces to
+      // the home screen, so wait for the read model to carry the fork first.
+      await waitForServerThread(target);
       try {
         await router.navigate({
           to: "/$environmentId/$threadId",

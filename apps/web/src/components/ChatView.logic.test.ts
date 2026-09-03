@@ -2,6 +2,7 @@ import {
   EnvironmentId,
   MessageId,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
   TurnId,
@@ -12,6 +13,7 @@ import type { Thread, ThreadShell } from "../types";
 import type { CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifact-templates";
 import type { RightPanelSurface } from "../rightPanelStore";
 import {
+  deriveLockedProvider,
   MAX_HIDDEN_MOUNTED_PREVIEW_THREADS,
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   agentControlledBrowserCloseConfirmation,
@@ -1181,5 +1183,67 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
     expect(hasServerAcknowledgedLocalDispatch({ ...common, hasPendingApproval: true })).toBe(true);
     expect(hasServerAcknowledgedLocalDispatch({ ...common, hasPendingUserInput: true })).toBe(true);
     expect(hasServerAcknowledgedLocalDispatch({ ...common, threadError: "failed" })).toBe(true);
+  });
+});
+
+describe("deriveLockedProvider", () => {
+  const providers = [
+    { instanceId: ProviderInstanceId.make("codex"), driver: ProviderDriverKind.make("codex") },
+    {
+      instanceId: ProviderInstanceId.make("claude-sokobans"),
+      driver: ProviderDriverKind.make("claudeAgent"),
+    },
+  ];
+
+  it("does not lock a thread that has not started", () => {
+    expect(
+      deriveLockedProvider({
+        thread: makeThread(),
+        selectedProvider: null,
+        threadProvider: "claude-sokobans",
+        providers,
+      }),
+    ).toBeNull();
+  });
+
+  it("locks to the session driver when a session exists", () => {
+    expect(
+      deriveLockedProvider({
+        thread: makeThread({ session: readySession }),
+        selectedProvider: null,
+        threadProvider: "claude-sokobans",
+        providers,
+      }),
+    ).toBe("codex");
+  });
+
+  it("resolves a custom instance id to its driver kind when no session exists", () => {
+    expect(
+      deriveLockedProvider({
+        thread: makeThread({ latestTurn: completedTurn }),
+        selectedProvider: null,
+        threadProvider: "claude-sokobans",
+        providers,
+      }),
+    ).toBe("claudeAgent");
+  });
+
+  it("falls back to the composer selection and unlocks unknown instances", () => {
+    expect(
+      deriveLockedProvider({
+        thread: makeThread({ latestTurn: completedTurn }),
+        selectedProvider: "codex",
+        threadProvider: "removed-instance",
+        providers,
+      }),
+    ).toBe("codex");
+    expect(
+      deriveLockedProvider({
+        thread: makeThread({ latestTurn: completedTurn }),
+        selectedProvider: null,
+        threadProvider: "removed-instance",
+        providers,
+      }),
+    ).toBeNull();
   });
 });
