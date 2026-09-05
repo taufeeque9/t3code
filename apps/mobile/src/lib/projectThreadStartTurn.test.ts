@@ -11,7 +11,6 @@ import { describe, expect, it, vi } from "vite-plus/test";
 vi.mock("./uuid", () => ({
   randomHex: () => "deadbeef",
 }));
-vi.mock("./composerImages", () => ({ toUploadChatImageAttachments: () => [] }));
 
 import {
   buildProjectThreadStartTurnInput,
@@ -29,7 +28,7 @@ const makeSpec = (
   messageId: "message-1",
   createdAt: "2026-08-10T12:00:00.000Z",
   text: "Build the mobile change",
-  attachments: [],
+  uploadedAttachments: [],
   modelSelection: {
     instanceId: ProviderInstanceId.make("codex"),
     model: "gpt-5.4",
