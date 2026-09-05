@@ -48,6 +48,9 @@ jobs:
             T3CODE_CUSTOM_DATABASE="$RUNNER_TEMP/state.sqlite" \
             bash scripts/custom/update-installed-app.sh --status | grep '^active_sessions=1$'
 
+      - name: Install browser secret helper build libraries
+        run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config
+
       - name: Build desktop pipeline
         run: vp run build:desktop
 

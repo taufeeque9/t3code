@@ -74,6 +74,9 @@ jobs:
           cache: true
           run-install: true
 
+      - name: Install browser secret helper build libraries
+        run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config
+
       - name: Validate merged source
         if: steps.merge.outputs.changed == 'true'
         run: |
