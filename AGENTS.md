@@ -40,6 +40,48 @@ The rest of this document is meant to help you navigate the codebase and make ch
 
 Of note: Most T3 Code contributions will come from T3 Code itself, often controlled remotely. This means you should be careful about accessing data, killing dev servers, and other things that may damage the T3 Code instance that the contributor is using.
 
+## Custom fork maintenance
+
+This checkout is Taufeeque's maintained fork. Its deployment branch and installed desktop app follow a separate workflow from upstream T3 Code releases.
+
+- The development checkout is `/Users/tf-work/Desktop/t3code-custom`. The background updater uses the isolated checkout at `/Users/tf-work/.t3/custom-updater/repo` because macOS LaunchAgents cannot read `~/Desktop` reliably. Do not point the updater at the development checkout.
+- `custom` is the fork's deployment branch. For this fork, do not open pull requests. Work on a temporary branch, validate it, merge it directly into `custom`, and push `custom`. Never amend, force-push, reset, or clean either checkout.
+- GitHub Actions merges `pingdotgg/t3code@main` into `custom` weekly using the same temporary-branch, validate, and promote flow. Conflicts are reported in GitHub issues labeled `upstream-sync-conflict` and must be resolved manually.
+- A local LaunchAgent checks `origin/custom` every 15 minutes. It installs dependencies with `vp install --frozen-lockfile`, builds the Apple Silicon DMG with `vp run dist:desktop:dmg:arm64`, verifies the bundle identity, and stages the resulting `T3 Code Custom.app` before installation.
+- Never replace the installed app while a provider session is starting or running. The updater requires ten continuous idle minutes, and it must never initiate, schedule, or automate quitting T3 Code. If an update is ready, leave it staged until Taufeeque quits the app manually.
+- The custom app installs at `/Applications/T3 Code Custom.app` with bundle id `com.taufeeque.t3code-custom`. Keep the official T3 Code app as a fallback, but never run both concurrently because they intentionally share `~/.t3` state.
+
+### When upstream implements something the fork already has
+
+Every fork feature that upstream reimplements is a merge conflict forever, so
+overlap gets resolved rather than carried.
+
+- Compare the two implementations and **ask Taufeeque which to keep**, describing
+  what each does that the other does not. Do not decide this alone.
+- When they are equivalent, take upstream's as-is and delete the fork's, or keep
+  the fork's change out entirely. Fewer fork-owned lines means easier merges.
+- When the fork's version does something upstream's does not, prefer the smallest
+  edit **on top of upstream's implementation** over keeping a parallel one, and
+  record why in `docs/operations/custom-fork-changes.md`.
+
+Keep `docs/operations/custom-fork-changes.md` current: it inventories what the
+fork owns, why, and what a future merge should do with it. Update it in the same
+commit that adds, changes, or retires a fork feature.
+
+Check updater state before investigating or changing the installation:
+
+```bash
+/Users/tf-work/.claude/skills/update-t3-fork/scripts/update-installed-app.sh --status
+```
+
+Request an immediate updater check through the LaunchAgent rather than running a potentially long build in the current agent turn:
+
+```bash
+launchctl kickstart -k "gui/$(id -u)/com.taufeeque.t3code-custom-updater"
+```
+
+Diagnose failures from `/Users/tf-work/.t3/custom-updater/updater.log` and `/Users/tf-work/.t3/custom-updater/updater-error.log`.
+
 ## A small glossary
 
 We need to be on the same page with terminology. When communicating, use this language:

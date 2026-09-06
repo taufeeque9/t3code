@@ -219,7 +219,6 @@ import {
   ResourceTelemetrySnapshot,
 } from "./resourceTelemetry.ts";
 import {
-  ProviderLimitsSnapshot,
   ProviderLoginError,
   ProviderLoginStartInput,
   ProviderLoginStartResult,
@@ -342,7 +341,6 @@ export const WS_METHODS = {
   serverReportHostPowerState: "server.reportHostPowerState",
   serverGetBackgroundPolicy: "server.getBackgroundPolicy",
   serverGetUsageSummary: "server.getUsageSummary",
-  serverGetProviderLimits: "server.getProviderLimits",
   serverForkThread: "server.forkThread",
   serverStartProviderLogin: "server.startProviderLogin",
   serverSubmitProviderLogin: "server.submitProviderLogin",
@@ -584,12 +582,6 @@ export const WsServerGetUsageSummaryRpc = Rpc.make(WS_METHODS.serverGetUsageSumm
   payload: UsageSummaryInput,
   success: UsageSummary,
   error: Schema.Union([EnvironmentAuthorizationError, UsageReadError]),
-});
-
-export const WsServerGetProviderLimitsRpc = Rpc.make(WS_METHODS.serverGetProviderLimits, {
-  payload: Schema.Struct({}),
-  success: ProviderLimitsSnapshot,
-  error: EnvironmentAuthorizationError,
 });
 
 export const WsServerStartProviderLoginRpc = Rpc.make(WS_METHODS.serverStartProviderLogin, {
@@ -1270,7 +1262,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetResourceTelemetryHistoryRpc,
   WsServerRetryResourceTelemetryRpc,
   WsServerGetUsageSummaryRpc,
-  WsServerGetProviderLimitsRpc,
   WsServerForkThreadRpc,
   WsServerStartProviderLoginRpc,
   WsServerSubmitProviderLoginRpc,

@@ -49,6 +49,11 @@ If a window looks stale, refresh Limits to re-check every provider and hub.
 API-key accounts may not report subscription limits. This also applies to Claude connections
 using a proxy through `ANTHROPIC_AUTH_TOKEN`.
 
+A Claude account that stops reporting limits usually has an expired credential, and its card
+offers **Sign in**. That opens the account's sign-in page in your browser; some sign-ins finish on
+their own once approved, and others hand back a code to paste. Limits re-check as soon as it
+succeeds, and each account signs in separately.
+
 ## Connect a CLIProxyAPI hub
 
 To see pooled accounts, open **Settings → Providers → Usage providers → Add hub**. Choose the

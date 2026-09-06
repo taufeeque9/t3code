@@ -140,8 +140,10 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
     select: (location) => {
       if (/^\/settings(?:\/|$)/.test(location.pathname)) return "settings";
       if (/^\/projects\/[^/]+\/?$/.test(location.pathname)) return "project-settings";
-      if (location.pathname === "/usage") return "usage";
-      if (location.pathname === "/limits") return "limits";
+      if (location.pathname === "/usage") {
+        const metric = (location.search as { readonly metric?: string }).metric;
+        return metric === "limits" ? "limits" : "usage";
+      }
       if (location.pathname === "/pull-requests") return "pull-requests";
       return null;
     },
@@ -171,12 +173,12 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
 
   const handleUsageClick = useCallback(() => {
     closeMobileSidebar();
-    void navigate({ to: "/usage" });
+    void navigate({ to: "/usage", search: {} });
   }, [closeMobileSidebar, navigate]);
 
   const handleLimitsClick = useCallback(() => {
     closeMobileSidebar();
-    void navigate({ to: "/limits" });
+    void navigate({ to: "/usage", search: { metric: "limits" } });
   }, [closeMobileSidebar, navigate]);
 
   const handleBackClick = useCallback(() => {

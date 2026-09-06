@@ -117,6 +117,47 @@ describe("claudeUsageResponseToLimits", () => {
       },
     ]);
   });
+
+  it("reports extra usage only for an account that enabled it", () => {
+    const read = (extra: object) =>
+      claudeUsageResponseToLimits({
+        checkedAt,
+        response: {
+          rate_limits_available: true,
+          rate_limits: {
+            five_hour: { utilization: 10, resets_at: null },
+            ...({ extra_usage: extra } as object),
+          },
+        },
+      }).limits.extraUsage;
+
+    expect(
+      read({
+        is_enabled: true,
+        used_credits: 1234,
+        monthly_limit: 5000,
+        utilization: 24.68,
+        currency: "USD",
+        decimal_places: 2,
+      }),
+    ).toEqual({
+      usedCredits: 1234,
+      monthlyLimit: 5000,
+      usedPercent: 24.68,
+      currency: "USD",
+      decimalPlaces: 2,
+    });
+
+    expect(read({ is_enabled: false, used_credits: 10, monthly_limit: 20 })).toBeUndefined();
+    // Credit-counting accounts omit the currency and rely on the default scale.
+    expect(read({ is_enabled: true, used_credits: 7 })).toEqual({
+      usedCredits: 7,
+      monthlyLimit: null,
+      usedPercent: null,
+      currency: null,
+      decimalPlaces: 2,
+    });
+  });
 });
 
 describe("claudeRateLimitEventToUpdate", () => {

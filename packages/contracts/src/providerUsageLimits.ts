@@ -39,6 +39,20 @@ export const ServerProviderResetCredits = Schema.Struct({
 export type ServerProviderResetCredits = typeof ServerProviderResetCredits.Type;
 
 /**
+ * Pay-as-you-go credits spent past the subscription allowance. Claude reports
+ * these only when the account has extra usage enabled. Amounts are minor units
+ * scaled by `decimalPlaces`.
+ */
+export const ServerProviderExtraUsage = Schema.Struct({
+  usedCredits: Schema.NullOr(Schema.Number),
+  monthlyLimit: Schema.NullOr(Schema.Number),
+  usedPercent: Schema.NullOr(Schema.Number),
+  currency: Schema.NullOr(Schema.String),
+  decimalPlaces: NonNegativeInt,
+});
+export type ServerProviderExtraUsage = typeof ServerProviderExtraUsage.Type;
+
+/**
  * Subscription usage the provider knows about the signed-in account.
  *
  * `unavailable` distinguishes an account that can never report windows (API
@@ -49,6 +63,7 @@ export const ServerProviderUsageLimits = Schema.Struct({
   checkedAt: IsoDateTime,
   windows: ForwardCompatibleArray(ServerProviderUsageWindow),
   resetCredits: Schema.optional(ServerProviderResetCredits),
+  extraUsage: Schema.optional(ServerProviderExtraUsage),
   unavailable: Schema.optional(
     Schema.Struct({
       reason: Schema.Literals(["unsupported", "probeFailed"]),

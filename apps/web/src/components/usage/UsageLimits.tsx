@@ -3,6 +3,7 @@ import {
   type ProviderConsumeResetCreditOutcome,
   ProviderInstanceId,
   ServerProvider,
+  ServerProviderExtraUsage,
   ServerProviderResetCredits,
   ServerProviderUsageWindow,
   UsageLimitSourceAccount,
@@ -27,6 +28,7 @@ import { Fragment, useState } from "react";
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
+import { ProviderLoginDialog, type ProviderLoginTarget } from "./ProviderLoginDialog";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
@@ -252,8 +254,15 @@ function ProviderLimits({
   readonly now: number;
 }) {
   const limits = provider.usageLimits;
+  const [loginTarget, setLoginTarget] = useState<ProviderLoginTarget | null>(null);
+  const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
+    reportFailure: false,
+  });
   if (!limits) return null;
   const notice = limitsNotice(limits);
+  // Only Claude exposes a sign-in T3 Code can drive, and only an account that
+  // is not reporting windows has anything to fix.
+  const canSignIn = provider.driver === "claudeAgent" && notice !== null;
   return (
     <section className="flex flex-col gap-3">
       <AccountHeading
@@ -269,6 +278,26 @@ function ProviderLimits({
       ) : (
         <LimitWindows driver={provider.driver} windows={limits.windows} now={now} />
       )}
+      {canSignIn ? (
+        <div>
+          <Button
+            onClick={() =>
+              setLoginTarget({
+                environmentId,
+                instanceId: provider.instanceId,
+                displayName:
+                  providerLimitsLabel(provider, (driver) => getDriverOption(driver)?.label) ??
+                  String(provider.instanceId),
+              })
+            }
+            size="sm"
+            variant="outline"
+          >
+            Sign in
+          </Button>
+        </div>
+      ) : null}
+      {limits.extraUsage ? <ExtraUsage usage={limits.extraUsage} /> : null}
       {limits.resetCredits ? (
         <ResetCredits
           environmentId={environmentId}
@@ -277,7 +306,59 @@ function ProviderLimits({
           now={now}
         />
       ) : null}
+      <ProviderLoginDialog
+        onOpenChange={(open) => {
+          if (!open) setLoginTarget(null);
+        }}
+        onSignedIn={() => void refreshProviders({ environmentId, input: {} })}
+        target={loginTarget}
+      />
     </section>
+  );
+}
+
+/**
+ * Amounts arrive as minor units scaled by `decimalPlaces`; a missing currency
+ * means the provider counts credits rather than money.
+ */
+function formatCreditAmount(
+  value: number | null,
+  currency: string | null,
+  decimalPlaces: number,
+): string {
+  if (value === null) return "—";
+  const places = Math.max(0, Math.min(20, Math.trunc(decimalPlaces)));
+  const amount = value / 10 ** places;
+  if (!currency) return `${amount.toFixed(places)} credits`;
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency,
+      minimumFractionDigits: places,
+      maximumFractionDigits: places,
+    }).format(amount);
+  } catch {
+    return `${amount.toFixed(places)} ${currency}`;
+  }
+}
+
+/** Pay-as-you-go spend past the subscription allowance, against its cap. */
+function ExtraUsage({ usage }: { readonly usage: ServerProviderExtraUsage }) {
+  const used = Math.max(0, Math.min(100, usage.usedPercent ?? 0));
+  const amount = (value: number | null) =>
+    formatCreditAmount(value, usage.currency, usage.decimalPlaces);
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-baseline justify-between gap-3 text-xs">
+        <span className="font-medium text-foreground">Extra usage</span>
+        <span className="tabular-nums text-muted-foreground">
+          {amount(usage.usedCredits)} of {amount(usage.monthlyLimit)}
+        </span>
+      </div>
+      <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+        <div className="h-full rounded-full bg-foreground/60" style={{ width: `${used}%` }} />
+      </div>
+    </div>
   );
 }
 

@@ -1036,11 +1036,6 @@ export function createServerEnvironmentAtoms<R, E>(
       staleTimeMs: 60_000,
       refreshTrigger: ({ environmentId }) => usagePricesAtom(environmentId),
     }),
-    providerLimits: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:server:provider-limits",
-      tag: WS_METHODS.serverGetProviderLimits,
-      staleTimeMs: 300_000,
-    }),
     startProviderLogin: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:start-provider-login",
       tag: WS_METHODS.serverStartProviderLogin,

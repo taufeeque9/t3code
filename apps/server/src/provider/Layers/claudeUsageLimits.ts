@@ -12,6 +12,7 @@
  */
 import type { SDKControlGetUsageResponse, SDKRateLimitInfo } from "@anthropic-ai/claude-agent-sdk";
 import type {
+  ServerProviderExtraUsage,
   ProviderUsageLimitsUpdate,
   ServerProviderUsageLimits,
   ServerProviderUsageWindow,
@@ -154,6 +155,34 @@ export function claudeRateLimitEventToUpdate(
  * Percentages on the `get_usage` response are already 0–100. Also yields the
  * scoped-bucket names the response carried, for the event mapper to reuse.
  */
+/**
+ * `rate_limits.extra_usage`, absent from the SDK's published types. Present
+ * only for accounts that enabled pay-as-you-go credits.
+ */
+interface ClaudeExtraUsage {
+  readonly is_enabled?: boolean;
+  readonly used_credits?: number | null;
+  readonly monthly_limit?: number | null;
+  readonly utilization?: number | null;
+  readonly currency?: string | null;
+  readonly decimal_places?: number;
+}
+
+export function claudeExtraUsage(
+  rateLimits: SDKControlGetUsageResponse["rate_limits"],
+): ServerProviderExtraUsage | undefined {
+  const extra = (rateLimits as { readonly extra_usage?: ClaudeExtraUsage | null } | null)
+    ?.extra_usage;
+  if (!extra?.is_enabled) return undefined;
+  return {
+    usedCredits: extra.used_credits ?? null,
+    monthlyLimit: extra.monthly_limit ?? null,
+    usedPercent: extra.utilization ?? null,
+    currency: extra.currency ?? null,
+    decimalPlaces: Math.max(0, Math.trunc(extra.decimal_places ?? 2)),
+  };
+}
+
 export function claudeUsageResponseToLimits(input: {
   readonly response: Pick<SDKControlGetUsageResponse, "rate_limits_available" | "rate_limits">;
   readonly checkedAt: string;
@@ -183,8 +212,12 @@ export function claudeUsageResponseToLimits(input: {
     // skipped would let a mid-turn event open a row the probe never showed.
     overageIncluded ??= entry.display_name;
   }
+  const extraUsage = claudeExtraUsage(response.rate_limits);
   return {
-    limits: makeUsageLimits({ checkedAt, windows }),
+    limits: {
+      ...makeUsageLimits({ checkedAt, windows }),
+      ...(extraUsage ? { extraUsage } : {}),
+    },
     names: { overageIncluded },
   };
 }

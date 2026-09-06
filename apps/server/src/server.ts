@@ -124,7 +124,6 @@ import * as ResourceMonitorBinary from "./resourceTelemetry/ResourceMonitorBinar
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import * as UsageService from "./usage/UsageService.ts";
-import * as ProviderLimits from "./limits/ProviderLimitsService.ts";
 import * as ProviderLogin from "./limits/ProviderLoginService.ts";
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
 import {
@@ -199,9 +198,6 @@ const BackgroundLayerLive = BackgroundPolicy.layer.pipe(
 );
 
 const UsageLayerLive = UsageService.layer.pipe(Layer.provide(ServerSettingsLayerLive));
-const ProviderLimitsLayerLive = ProviderLimits.layer.pipe(
-  Layer.provideMerge(ServerSettingsLayerLive),
-);
 const ProviderLoginLayerLive = ProviderLogin.layer.pipe(
   Layer.provideMerge(ServerSettingsLayerLive),
 );
@@ -521,7 +517,6 @@ const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(
   Layer.provideMerge(BackgroundLayerLive),
   Layer.provideMerge(ResourceDiagnosticsLayerLive),
   Layer.provideMerge(UsageLayerLive),
-  Layer.provideMerge(ProviderLimitsLayerLive),
   Layer.provideMerge(ProviderLoginLayerLive),
   Layer.provideMerge(TraceDiagnostics.layer),
   Layer.provideMerge(AnalyticsService.layer),
