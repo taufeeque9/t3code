@@ -258,11 +258,15 @@ function ProviderLimits({
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
-  if (!limits) return null;
-  const notice = limitsNotice(limits);
   // Only Claude exposes a sign-in T3 Code can drive, and only an account that
   // is not reporting windows has anything to fix.
-  const canSignIn = provider.driver === "claudeAgent" && notice !== null;
+  const isClaude = provider.driver === "claudeAgent";
+  // A probe that fails outright reports no limits at all, which is exactly how
+  // an unusable credential looks. Other providers drop out silently; a Claude
+  // account still has to offer its way back in.
+  if (!limits && !isClaude) return null;
+  const notice = limits ? limitsNotice(limits) : "Could not read this account's limits.";
+  const canSignIn = isClaude && notice !== null;
   return (
     <section className="flex flex-col gap-3">
       <AccountHeading
@@ -273,10 +277,10 @@ function ProviderLimits({
         email={provider.auth.email}
         accentColor={provider.accentColor}
       />
-      {notice ? (
-        <span className="text-xs text-muted-foreground">{notice}</span>
-      ) : (
+      {limits && notice === null ? (
         <LimitWindows driver={provider.driver} windows={limits.windows} now={now} />
+      ) : (
+        <span className="text-xs text-muted-foreground">{notice}</span>
       )}
       {canSignIn ? (
         <div>
@@ -297,8 +301,8 @@ function ProviderLimits({
           </Button>
         </div>
       ) : null}
-      {limits.extraUsage ? <ExtraUsage usage={limits.extraUsage} /> : null}
-      {limits.resetCredits ? (
+      {limits?.extraUsage ? <ExtraUsage usage={limits.extraUsage} /> : null}
+      {limits?.resetCredits ? (
         <ResetCredits
           environmentId={environmentId}
           instanceId={provider.instanceId}

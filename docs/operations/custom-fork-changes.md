@@ -55,8 +55,14 @@ broken account but offers no way to fix it.
 - `apps/web/src/components/usage/ProviderLoginDialog.tsx`, and the **Sign in**
   button in upstream's `UsageLimits.tsx`
 
+Upstream's only in-app provider sign-in is Antigravity's Google flow
+(`ProviderSetupSection.tsx`); Claude has none. The fork's card also renders for a
+Claude account whose probe failed outright, where upstream would show nothing,
+since that is what an unusable credential looks like.
+
 **On conflict:** the button lives inside an upstream file. Re-apply it to
-upstream's card rather than reviving a separate page.
+upstream's card rather than reviving a separate page. Retire it if upstream ever
+offers a Claude sign-in of its own.
 
 ### Claude multi-account support
 
