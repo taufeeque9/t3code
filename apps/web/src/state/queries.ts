@@ -8,6 +8,12 @@ import {
   makeThreadSearchKey,
   type EnvironmentThreadSearchMatch,
 } from "@t3tools/client-runtime/state/thread-search";
+import {
+  createThreadUnitSearchAtomFamily,
+  makeThreadUnitSearchKey,
+  type EnvironmentThreadUnitSearchMatch,
+  type ThreadUnitSearchTarget,
+} from "@t3tools/client-runtime/state/thread-unit-search";
 import { type VcsRefTarget } from "@t3tools/client-runtime/state/vcs";
 import type {
   EnvironmentId,
@@ -43,6 +49,26 @@ const EMPTY_THREAD_SEARCH_ATOM = Atom.make({
   matches: EMPTY_THREAD_SEARCH_MATCHES,
   isLoading: false,
 }).pipe(Atom.withLabel("web:thread-search:empty"));
+
+const threadUnitSearchAtom = createThreadUnitSearchAtomFamily({
+  getSearchAtom: (target, query) =>
+    orchestrationEnvironment.threadUnitSearch({
+      environmentId: target.environmentId,
+      input: {
+        query,
+        ...(target.projectId === null ? {} : { projectId: target.projectId }),
+      },
+    }),
+  labelPrefix: "web:thread-unit-search",
+});
+
+const EMPTY_UNIT_SEARCH_MATCHES: ReadonlyArray<EnvironmentThreadUnitSearchMatch> = Object.freeze(
+  [],
+);
+const EMPTY_UNIT_SEARCH_ATOM = Atom.make({
+  matches: EMPTY_UNIT_SEARCH_MATCHES,
+  isLoading: false,
+}).pipe(Atom.withLabel("web:thread-unit-search:empty"));
 
 const threadSearchResultsAtom = createThreadSearchResultsAtomFamily({
   getSearchAtom: (environmentId, query) =>
@@ -97,6 +123,35 @@ export function useThreadSearch(
   const isDebouncing = canSearch && normalizedQuery !== debouncedQuery;
   return {
     matches: isDebouncing ? EMPTY_THREAD_SEARCH_MATCHES : result.matches,
+    isPending: canSearch && (isDebouncing || result.isLoading),
+  };
+}
+
+/**
+ * Fuzzy search across indexed thread units, scoped to whatever the sidebar has
+ * selected. Debounced like the palette's search, since both fire per keystroke.
+ */
+export function useThreadUnitSearch(
+  targets: ReadonlyArray<ThreadUnitSearchTarget>,
+  query: string,
+): {
+  readonly matches: ReadonlyArray<EnvironmentThreadUnitSearchMatch>;
+  readonly isPending: boolean;
+} {
+  const normalizedQuery = query.trim();
+  const debouncedQuery = useDebouncedValue(normalizedQuery, THREAD_SEARCH_DEBOUNCE_MS);
+  const canSearch = targets.length > 0 && normalizedQuery.length >= 2;
+  const settledQuery = canSearch && normalizedQuery === debouncedQuery ? debouncedQuery : null;
+  const searchKey = useMemo(
+    () => (settledQuery === null ? null : makeThreadUnitSearchKey(targets, settledQuery)),
+    [settledQuery, targets],
+  );
+  const result = useAtomValue(
+    searchKey === null ? EMPTY_UNIT_SEARCH_ATOM : threadUnitSearchAtom(searchKey),
+  );
+  const isDebouncing = canSearch && normalizedQuery !== debouncedQuery;
+  return {
+    matches: isDebouncing ? EMPTY_UNIT_SEARCH_MATCHES : result.matches,
     isPending: canSearch && (isDebouncing || result.isLoading),
   };
 }

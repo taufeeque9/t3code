@@ -172,6 +172,9 @@ import {
   type SidebarListMarker,
   type SidebarSection,
 } from "./Sidebar.logic";
+import { useThreadUnitSearch } from "../state/queries";
+import type { ThreadUnitSearchTarget } from "@t3tools/client-runtime/state/thread-unit-search";
+import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
 import {
   createSidebarCollisionDetection,
@@ -2585,10 +2588,41 @@ export default function Sidebar() {
     () => [...pinnedThreads, ...activeThreads, ...snoozedThreads, ...settledThreads],
     [activeThreads, pinnedThreads, settledThreads, snoozedThreads],
   );
-  const threadSearchResults = useMemo(
-    () => searchSidebarThreadsByTitle(searchableThreads, threadSearchQuery),
-    [searchableThreads, threadSearchQuery],
-  );
+  // Scope the server-side search the way the sidebar is scoped. A project group
+  // can span environments, and each names the project by its own id.
+  const threadSearchTargets = useMemo<ThreadUnitSearchTarget[]>(() => {
+    const group = projectScopeKey === null ? null : projectGroupByScopeKey.get(projectScopeKey);
+    if (group) {
+      return group.memberProjectRefs.map((ref) => ({
+        environmentId: ref.environmentId as EnvironmentId,
+        projectId: ref.projectId as ProjectId,
+      }));
+    }
+    return [...new Set(searchableThreads.map((thread) => thread.environmentId))].map(
+      (environmentId) => ({ environmentId, projectId: null }),
+    );
+  }, [projectGroupByScopeKey, projectScopeKey, searchableThreads]);
+  const threadUnitSearch = useThreadUnitSearch(threadSearchTargets, threadSearchQuery);
+  const threadSearchResults = useMemo(() => {
+    // Titles first: a thread whose name matches is the one being looked for more
+    // often than one that merely mentions the words somewhere inside.
+    const titleMatches = searchSidebarThreadsByTitle(searchableThreads, threadSearchQuery);
+    const keyOf = (thread: { readonly environmentId: EnvironmentId; readonly id: ThreadId }) =>
+      scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+    const seen = new Set(titleMatches.map(keyOf));
+    const threadsByKey = new Map(searchableThreads.map((thread) => [keyOf(thread), thread]));
+    const contentMatches: typeof titleMatches = [];
+    for (const match of threadUnitSearch.matches) {
+      const key = scopedThreadKey(scopeThreadRef(match.environmentId, match.threadId));
+      if (seen.has(key)) continue;
+      const thread = threadsByKey.get(key);
+      // A match the sidebar has not loaded has no row to render.
+      if (!thread) continue;
+      seen.add(key);
+      contentMatches.push(thread);
+    }
+    return [...titleMatches, ...contentMatches];
+  }, [searchableThreads, threadSearchQuery, threadUnitSearch.matches]);
   const threadSearchResultOrderKey = threadSearchResults
     .map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)))
     .join("\0");

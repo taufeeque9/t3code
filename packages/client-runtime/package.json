@@ -230,6 +230,10 @@
     "./work-log/scroll-anchor": {
       "types": "./src/work-log/scrollAnchor.ts",
       "default": "./src/work-log/scrollAnchor.ts"
+    },
+    "./state/thread-unit-search": {
+      "types": "./src/state/threadUnitSearch.ts",
+      "default": "./src/state/threadUnitSearch.ts"
     }
   },
   "scripts": {
