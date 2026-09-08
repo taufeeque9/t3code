@@ -96,6 +96,47 @@ smallest edit on top of upstream's pipeline rather than a parallel view.
 
 **On conflict:** drop all of it the moment upstream reports extra usage itself.
 
+### Fuzzy sidebar search over thread contents
+
+The sidebar matched thread titles only, among threads it had already loaded.
+Upstream's `orchestration.searchThreads` is an exact substring scan over whole
+messages, is not scoped to a project, and backs the command palette rather than
+the sidebar. It is left untouched; the fork adds a parallel path.
+
+- `apps/server/src/persistence/Migrations/050_ProjectionThreadSearchUnits.ts`
+- `apps/server/src/orchestration/Layers/threadSearchIndex.ts` and its test —
+  its own service, not a method on `ProjectionSnapshotQuery`, whose shape a
+  dozen upstream tests stub
+- `packages/shared/src/fuzzyMatch.ts`, `threadSearchUnits.ts` and their tests
+- `packages/contracts`: `orchestration.searchThreadUnits` and its schemas, the
+  RPC in `rpc.ts`, the scope in `RpcAuthorization.ts`, the `ws.ts` handler
+- `packages/client-runtime/src/state/threadUnitSearch.ts`
+- `apps/web`: `useThreadUnitSearch` in `state/queries.ts`, and the merge with
+  the title match in `Sidebar.tsx`
+
+One row per unit — title, URL, user message — is what bounds fuzzy matching to
+a single unit, so a loose query cannot stitch two messages together. Units are
+derived and re-extracted when a thread's `updated_at` passes its watermark, so
+no projection write path is fork-owned.
+
+**On conflict:** the fork touches upstream files only at the registration
+points listed above. Retire it if upstream ever makes its own search fuzzy and
+project-scoped.
+
+### Composer: queue a message for the end of the turn
+
+Sending mid-turn interrupts the agent, and upstream offers no way to hold a
+message back. Client-side and web-only by choice: a server-side queued turn
+would work across surfaces but is a much larger orchestration change.
+
+- `apps/web/src/queuedMessageStore.ts` and its test
+- `apps/web/src/components/ChatView.tsx`: `queueCurrentPrompt`,
+  `editQueuedMessage`, the auto-send effect, the banner, the shortcut case
+- `packages/contracts/src/keybindings.ts` (`composer.queue`),
+  `packages/shared/src/keybindings.ts` (default `mod+shift+enter`)
+
+Text only; attachments stay with the composer draft.
+
 ### Chat: stop-hook follow-ups
 
 `MessagesTimeline.logic.ts` keeps a turn expanded through a stop-hook warning and

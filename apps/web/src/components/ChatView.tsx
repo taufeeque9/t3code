@@ -6232,6 +6232,7 @@ export default function ChatView(props: ChatViewProps) {
     toggleRightPanelMaximized,
     toggleTerminalVisibility,
     composerRef,
+    queueCurrentPrompt,
   ]);
 
   // Paste-to-focus: the resting composer blurs on a click into the timeline,
