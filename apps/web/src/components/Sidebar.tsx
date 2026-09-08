@@ -1952,6 +1952,8 @@ function latestTurnDiff(
 
 const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
   thread: SidebarThreadSummary;
+  /** The text that matched, when the hit was not on the title. */
+  matchSnippet: string | null;
   projectCwd: string | null;
   projectFaviconPath: string | null;
   projectIcon: ProjectIconOverride | null;
@@ -2030,7 +2032,10 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
               onMouseMove={props.onHighlight}
               onClick={props.onSelect}
               className={cn(
-                "flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm outline-none",
+                "flex w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm outline-none",
+                // A content hit carries a second line, so the row grows rather
+                // than truncating the reason it matched out of view.
+                props.matchSnippet === null ? "h-9" : "min-h-9 py-1.5",
                 props.isHighlighted || props.isRouteActive
                   ? "bg-sidebar-row-active text-sidebar-foreground"
                   : "text-sidebar-muted-foreground/75 hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
@@ -2044,10 +2049,22 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
             projectName={props.projectTitle ?? ""}
             faviconPath={props.projectFaviconPath}
             projectIcon={props.projectIcon}
-            className="size-4 shrink-0"
+            className={cn("size-4 shrink-0", props.matchSnippet !== null && "mt-0.5 self-start")}
           />
-          <span className="min-w-0 flex-1 truncate">{thread.title}</span>
-          <span className="shrink-0 text-xs text-muted-foreground/55 tabular-nums">
+          <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+            <span className="truncate">{thread.title}</span>
+            {props.matchSnippet === null ? null : (
+              <span className="truncate text-xs text-muted-foreground/70">
+                {props.matchSnippet}
+              </span>
+            )}
+          </span>
+          <span
+            className={cn(
+              "shrink-0 text-xs text-muted-foreground/55 tabular-nums",
+              props.matchSnippet !== null && "mt-0.5 self-start",
+            )}
+          >
             {threadTimeLabel(thread)}
           </span>
         </TooltipTrigger>
@@ -2603,7 +2620,7 @@ export default function Sidebar() {
     );
   }, [projectGroupByScopeKey, projectScopeKey, searchableThreads]);
   const threadUnitSearch = useThreadUnitSearch(threadSearchTargets, threadSearchQuery);
-  const threadSearchResults = useMemo(() => {
+  const threadSearchResult = useMemo(() => {
     // Titles first: a thread whose name matches is the one being looked for more
     // often than one that merely mentions the words somewhere inside.
     const titleMatches = searchSidebarThreadsByTitle(searchableThreads, threadSearchQuery);
@@ -2612,6 +2629,9 @@ export default function Sidebar() {
     const seen = new Set(titleMatches.map(keyOf));
     const threadsByKey = new Map(searchableThreads.map((thread) => [keyOf(thread), thread]));
     const contentMatches: typeof titleMatches = [];
+    // What matched, so a row can show why it is in the list. Title hits are
+    // omitted: the row already shows the title.
+    const snippetByThreadKey = new Map<string, string>();
     for (const match of threadUnitSearch.matches) {
       const key = scopedThreadKey(scopeThreadRef(match.environmentId, match.threadId));
       if (seen.has(key)) continue;
@@ -2620,9 +2640,12 @@ export default function Sidebar() {
       if (!thread) continue;
       seen.add(key);
       contentMatches.push(thread);
+      if (match.kind !== "title") snippetByThreadKey.set(key, match.snippet);
     }
-    return [...titleMatches, ...contentMatches];
+    return { threads: [...titleMatches, ...contentMatches], snippetByThreadKey };
   }, [searchableThreads, threadSearchQuery, threadUnitSearch.matches]);
+  const threadSearchResults = threadSearchResult.threads;
+  const threadSearchSnippets = threadSearchResult.snippetByThreadKey;
   const threadSearchResultOrderKey = threadSearchResults
     .map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)))
     .join("\0");
@@ -4560,6 +4583,7 @@ export default function Sidebar() {
                       <SidebarSearchResultRow
                         key={threadKey}
                         thread={thread}
+                        matchSnippet={threadSearchSnippets.get(threadKey) ?? null}
                         projectCwd={
                           projectCwdByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null
                         }
