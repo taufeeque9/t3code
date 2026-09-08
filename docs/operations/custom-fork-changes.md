@@ -52,17 +52,21 @@ broken account but offers no way to fix it.
 - `apps/server/src/limits/ProviderLoginService.ts` and its test
 - `packages/contracts/src/limits.ts` (sign-in contracts only), the two
   `server.*ProviderLogin` RPCs, their `ws.ts` handlers and auth scopes
-- `apps/web/src/components/usage/ProviderLoginDialog.tsx`, and the **Sign in**
-  button in upstream's `UsageLimits.tsx`
+- `apps/web/src/components/usage/ProviderLoginDialog.tsx`,
+  `claudeSignIn.ts` and `ClaudeSignIns.tsx`, plus one line rendering
+  `<ClaudeSignIns />` in upstream's `UsageLimitsPooled.tsx`
 
 Upstream's only in-app provider sign-in is Antigravity's Google flow
-(`ProviderSetupSection.tsx`); Claude has none. The fork's card also renders for a
-Claude account whose probe failed outright, where upstream would show nothing,
-since that is what an unusable credential looks like.
+(`ProviderSetupSection.tsx`); Claude has none. Upstream reports a broken account
+through `collectLimitNotices`, which returns plain strings with no provider
+identity, and drops an account whose probe reported nothing at all — which is
+exactly what an unusable credential looks like. The fork collects those accounts
+separately rather than widening that function, so upstream's notices and their
+tests stay untouched.
 
-**On conflict:** the button lives inside an upstream file. Re-apply it to
-upstream's card rather than reviving a separate page. Retire it if upstream ever
-offers a Claude sign-in of its own.
+**On conflict:** the collection is fork-owned; only the one render line sits in
+an upstream file. Re-apply that line wherever upstream's limits view puts its
+notices. Retire the whole thing if upstream ever offers a Claude sign-in.
 
 ### Claude multi-account support
 
@@ -87,7 +91,8 @@ smallest edit on top of upstream's pipeline rather than a parallel view.
 - `packages/contracts/src/providerUsageLimits.ts`: `ServerProviderExtraUsage`,
   optional `extraUsage` on `ServerProviderUsageLimits`
 - `apps/server/src/provider/Layers/claudeUsageLimits.ts`: `claudeExtraUsage`
-- `apps/web/src/components/usage/UsageLimits.tsx`: the `ExtraUsage` bar
+- `apps/web/src/components/usage/extraUsage.ts`, shown as an `Extra` row in the
+  account popover of upstream's `UsageLimitsPooled.tsx`
 
 **On conflict:** drop all of it the moment upstream reports extra usage itself.
 
@@ -106,8 +111,10 @@ keeping only while the setting is actually used.
 - `packages/contracts/src/settings.ts` (`WorktreeBranchPrefix`,
   `DEFAULT_WORKTREE_BRANCH_PREFIX`), `packages/shared/src/git.ts`
 - `apps/web`: `SettingsPanels.tsx`, `GitActionsControl`, `ChatView.tsx`
-- `apps/mobile`: `projectThreadStartTurn.ts`, `use-project-actions.ts`,
-  `use-thread-outbox-drain.ts`, `NewTaskDraftScreen.tsx`
+- `apps/mobile`: `projectThreadStartTurn.ts`, `use-thread-outbox-drain.ts`.
+  Upstream moved thread creation onto the outbox (#10435) and deleted
+  `use-project-actions.ts`, so the setting now reaches the server through the
+  drain alone and `NewTaskDraftScreen.tsx` is upstream's again.
 - `apps/server`: `CheckpointReactor.ts`, `ProviderCommandReactor.ts`
 
 This one touches the most files of any fork feature and conflicts on most merges.
@@ -126,4 +133,11 @@ Removed on 2026-09-05 when upstream shipped its own limits view. Do not revive.
 
 What survived the retirement: the sign-in flow above, and a `metric` search param
 on the usage route so the sidebar's Limits entry opens that view in one click
-(`apps/web/src/routes/usage.tsx`, `SidebarChrome.tsx`).
+(`apps/web/src/routes/usage.tsx`, `SidebarChrome.tsx`). Upstream later added a
+stored metric preference; the route prop overrides it while the search param is
+present, so a deep link still wins and an ordinary visit resumes the last view.
+
+On 2026-09-07 upstream replaced the per-provider list with the pooled view
+(`UsageLimitsPooled.tsx`), deleting the `ProviderLimits` component the fork's
+sign-in button and extra-usage bar lived in. Both were re-homed onto the pooled
+view rather than kept as a parallel one.

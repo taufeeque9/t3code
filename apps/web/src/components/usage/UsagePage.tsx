@@ -1,3 +1,4 @@
+import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { useAtomValue } from "@effect/atom-react";
 import {
   USAGE_CONTRACT_VERSION,
@@ -8,10 +9,9 @@ import {
   CircleAlertIcon,
   ChevronDownIcon,
   CircleDashedIcon,
-  RefreshCwIcon,
   SlidersHorizontalIcon,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import {
   isCompatibleUsageContractVersion,
@@ -62,6 +62,11 @@ import { UsageLimitsSection } from "./UsageLimits";
 import { UsagePriceOverrides } from "./UsagePriceOverrides";
 import { UsageProviderChart, type UsageChartMetric } from "./UsageProviderChart";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION, providersWithUsage } from "./usageProviders";
+import {
+  readUsagePagePreferences,
+  saveUsagePagePreferences,
+  type UsagePagePreferences,
+} from "./usagePagePreferences";
 
 export type UsageMetric = UsageChartMetric | "limits";
 const METRIC_OPTIONS = [
@@ -81,22 +86,31 @@ const WINDOW_OPTIONS = [
   { days: 90, label: "90 days" },
 ] as const;
 
+function isUsageWindowDays(value: number): value is UsagePagePreferences["windowDays"] {
+  return WINDOW_OPTIONS.some((option) => option.days === value);
+}
+
 export function UsagePage(
   props: {
     readonly metric?: UsageMetric;
     readonly onMetricChange?: (metric: UsageMetric) => void;
   } = {},
 ) {
+  const [preferences, setPreferences] = useState(readUsagePagePreferences);
   const [windowSelection, setWindowSelection] = useState(() => ({
-    days: 30,
-    window: makeWindow(30),
+    days: preferences.windowDays,
+    window: makeWindow(
+      preferences.windowDays,
+      undefined,
+      preferences.windowDays === 1 ? "hour" : "day",
+    ),
   }));
-  const [localMetric, setLocalMetric] = useState<UsageMetric>(props.metric ?? "cost");
-  // Controlled by the route when it carries a `metric`, so a link can open a
-  // view directly; self-managed otherwise.
-  const metric = props.metric ?? localMetric;
-  const setMetric = props.onMetricChange ?? setLocalMetric;
+  // The route controls the metric while its search param carries one, so a link
+  // can open a view directly; the stored preference applies otherwise.
+  const metric = props.metric ?? preferences.metric;
   const showingLimits = metric === "limits";
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const refreshingRef = useRef(false);
   const [breakdown, setBreakdown] = useState<"model" | "time">("model");
   const [selectedEnvironmentIds, setSelectedEnvironmentIds] =
     useState<ReadonlySet<EnvironmentId> | null>(null);
@@ -141,32 +155,55 @@ export function UsagePage(
   const timeValueColumnWidth = `${60 / (activeProviders.length + 2)}%`;
 
   const selectWindow = (days: number) => {
+    if (!isUsageWindowDays(days)) return;
+    const nextPreferences = { metric, windowDays: days };
+    setPreferences(nextPreferences);
+    saveUsagePagePreferences(nextPreferences);
     setWindowSelection({
       days,
       window: makeWindow(days, undefined, days === 1 ? "hour" : "day"),
     });
   };
+  const selectMetric = (nextMetric: UsageMetric) => {
+    const nextPreferences = { metric: nextMetric, windowDays };
+    setPreferences(nextPreferences);
+    saveUsagePagePreferences(nextPreferences);
+    props.onMetricChange?.(nextMetric);
+  };
   const refreshWindow = () => {
+    if (refreshingRef.current) return;
+
     if (showingLimits) {
-      for (const [environmentId, presentation] of presentations) {
-        if (selectedEnvironmentIds !== null && !selectedEnvironmentIds.has(environmentId)) continue;
-        if (presentation.connection.phase === "connected" && presentation.serverConfig !== null) {
-          void refreshProviders({ environmentId, input: {} });
-        }
-      }
+      refreshingRef.current = true;
+      setIsRefreshing(true);
+      void Promise.all(
+        Array.from(presentations, ([environmentId, presentation]) => {
+          if (selectedEnvironmentIds !== null && !selectedEnvironmentIds.has(environmentId)) return;
+          if (presentation.connection.phase === "connected" && presentation.serverConfig !== null) {
+            return refreshProviders({ environmentId, input: {} });
+          }
+        }),
+      ).finally(() => {
+        refreshingRef.current = false;
+        setIsRefreshing(false);
+      });
       return;
     }
     const nextWindow = makeWindow(windowDays, undefined, isPast24Hours ? "hour" : "day");
     if (
-      nextWindow.sinceDay === window.sinceDay &&
-      nextWindow.untilDay === window.untilDay &&
-      nextWindow.sinceTime === window.sinceTime &&
-      nextWindow.untilTime === window.untilTime
+      nextWindow.sinceDay !== window.sinceDay ||
+      nextWindow.untilDay !== window.untilDay ||
+      nextWindow.sinceTime !== window.sinceTime ||
+      nextWindow.untilTime !== window.untilTime
     ) {
-      refresh();
-    } else {
       setWindowSelection({ days: windowDays, window: nextWindow });
     }
+    refreshingRef.current = true;
+    setIsRefreshing(true);
+    void refresh(nextWindow).finally(() => {
+      refreshingRef.current = false;
+      setIsRefreshing(false);
+    });
   };
   const windowLabel =
     isPast24Hours && window.sinceTime !== undefined && window.untilTime !== undefined
@@ -204,7 +241,7 @@ export function UsagePage(
           value={[metric]}
           onValueChange={(next) => {
             const value = next[0];
-            if (isUsageMetric(value)) setMetric(value);
+            if (isUsageMetric(value)) selectMetric(value);
           }}
         >
           {METRIC_OPTIONS.map((option) => (
@@ -234,17 +271,19 @@ export function UsagePage(
         <Button
           onClick={refreshWindow}
           aria-label={showingLimits ? "Refresh limits" : "Refresh usage"}
+          aria-busy={isRefreshing}
+          disabled={isRefreshing}
           size="icon-sm"
           variant="ghost"
         >
-          <RefreshCwIcon className="size-3.5" />
+          <RefreshIcon className="size-3.5" refreshing={isRefreshing} />
         </Button>
       </div>
       <div className="col-span-2 ms-auto flex min-w-0 items-center justify-end gap-1 xl:hidden">
         <Select
           value={metric}
           onValueChange={(value) => {
-            if (isUsageMetric(value)) setMetric(value);
+            if (isUsageMetric(value)) selectMetric(value);
           }}
         >
           <SelectTrigger
@@ -291,10 +330,12 @@ export function UsagePage(
         <Button
           onClick={refreshWindow}
           aria-label={showingLimits ? "Refresh limits" : "Refresh usage"}
+          aria-busy={isRefreshing}
+          disabled={isRefreshing}
           size="icon-sm"
           variant="ghost"
         >
-          <RefreshCwIcon className="size-3.5" />
+          <RefreshIcon className="size-3.5" refreshing={isRefreshing} />
         </Button>
       </div>
     </div>
