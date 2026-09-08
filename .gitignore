@@ -38,3 +38,6 @@ node_modules/
 *.log
 .env*
 !.env.example
+
+# Declarations the desktop build emits next to their sources.
+scripts/lib/*.d.ts

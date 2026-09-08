@@ -131,7 +131,10 @@ if [[ "$installed_commit" == "$desired_commit" && -d "$destination" ]]; then
   exit 0
 fi
 
-if [[ -n "$(git -C "$repo_dir" status --porcelain)" ]]; then
+# Tracked changes only. The desktop build drops generated files into the
+# checkout, and counting those as local changes let the updater's own output
+# block every later run.
+if [[ -n "$(git -C "$repo_dir" status --porcelain --untracked-files=no)" ]]; then
   log "The custom checkout has local changes; refusing to update it automatically."
   exit 1
 fi
