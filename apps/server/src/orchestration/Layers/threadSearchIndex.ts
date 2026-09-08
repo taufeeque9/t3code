@@ -141,24 +141,18 @@ function makeIndex(sql: SqlClient.SqlClient) {
     `,
   });
 
-  /** Replaces one thread's units and advances its watermark in a single pass. */
-  const reindexThread = Effect.fn("threadSearchIndex.reindexThread")(function* (thread: {
+  const writeThreadUnits = Effect.fn("threadSearchIndex.writeThreadUnits")(function* (thread: {
     readonly threadId: ThreadId;
     readonly projectId: ProjectId;
-    readonly title: string;
     readonly updatedAt: string;
+    readonly units: ReadonlyArray<{
+      readonly kind: string;
+      readonly text: string;
+      readonly createdAt: string | null;
+    }>;
   }) {
-    const messages = yield* findThreadMessages({ threadId: thread.threadId });
-    const units = buildThreadSearchUnits({
-      title: thread.title,
-      messages: messages.map((message) => ({
-        role: message.role,
-        text: message.text,
-        createdAt: message.createdAt,
-      })),
-    });
     yield* sql`DELETE FROM projection_thread_search_units WHERE thread_id = ${thread.threadId}`;
-    for (const [index, unit] of units.entries()) {
+    for (const [index, unit] of thread.units.entries()) {
       yield* sql`
         INSERT INTO projection_thread_search_units
           (unit_id, thread_id, project_id, kind, text, created_at)
@@ -177,6 +171,36 @@ function makeIndex(sql: SqlClient.SqlClient) {
       VALUES (${thread.threadId}, ${thread.updatedAt})
       ON CONFLICT(thread_id) DO UPDATE SET indexed_updated_at = excluded.indexed_updated_at
     `;
+  });
+
+  /**
+   * Replaces one thread's units and advances its watermark. The writes run in
+   * one transaction: a thread can produce hundreds of unit rows, and unbatched
+   * inserts would each commit separately on the server's single connection.
+   */
+  const reindexThread = Effect.fn("threadSearchIndex.reindexThread")(function* (thread: {
+    readonly threadId: ThreadId;
+    readonly projectId: ProjectId;
+    readonly title: string;
+    readonly updatedAt: string;
+  }) {
+    const messages = yield* findThreadMessages({ threadId: thread.threadId });
+    const units = buildThreadSearchUnits({
+      title: thread.title,
+      messages: messages.map((message) => ({
+        role: message.role,
+        text: message.text,
+        createdAt: message.createdAt,
+      })),
+    });
+    yield* sql.withTransaction(
+      writeThreadUnits({
+        threadId: thread.threadId,
+        projectId: thread.projectId,
+        updatedAt: thread.updatedAt,
+        units,
+      }),
+    );
   });
 
   const refreshIndex = Effect.fn("threadSearchIndex.refresh")(function* (
