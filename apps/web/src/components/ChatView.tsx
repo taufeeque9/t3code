@@ -5,6 +5,11 @@ import {
   hasProviderUsageLimits,
   isUsageLimitsCommand,
 } from "@t3tools/shared/usageLimits";
+import {
+  dismissLimitWarning,
+  isLimitWarningDismissed,
+  resolveLimitWarning,
+} from "./usage/limitWarning";
 import { feedbackBannerItem } from "./chat/ComposerFeedback";
 import { usageLimitsBannerItem } from "./chat/ComposerUsageLimits";
 import { derivePendingRequests } from "@t3tools/client-runtime/pending-requests";
@@ -203,6 +208,7 @@ import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import {
   AlarmClockIcon,
   ClockIcon,
+  TriangleAlertIcon,
   CheckCircle2Icon,
   ChevronDownIcon,
   GitBranchIcon,
@@ -5785,6 +5791,42 @@ export default function ChatView(props: ChatViewProps) {
       }),
     [feedbackSubmissions, routeThreadKey],
   );
+  // Unlike the on-demand panel above, this one is not gated on the user asking:
+  // a thread about to be refused should say so before the turn is spent. It
+  // reads the same live provider statuses, so it costs no extra request.
+  const limitWarning = useMemo(
+    () =>
+      resolveLimitWarning(
+        activeProviderInstanceId === null
+          ? null
+          : collectProviderUsageLimits(
+              activeProviderInstanceId,
+              providerStatuses,
+              usageLimitSources,
+              Date.parse(`${nowMinute}:00.000Z`),
+            ),
+        activeProviderInstanceId,
+      ),
+    [activeProviderInstanceId, nowMinute, providerStatuses, usageLimitSources],
+  );
+  const [limitWarningDismissTick, setLimitWarningDismissTick] = useState(0);
+  const limitWarningBanner = useMemo<ComposerBannerStackItem | null>(() => {
+    void limitWarningDismissTick;
+    if (!limitWarning || isLimitWarningDismissed(limitWarning.key)) return null;
+    return {
+      id: `limit-warning:${limitWarning.key}`,
+      variant: "warning",
+      priority: "urgent",
+      icon: <TriangleAlertIcon />,
+      title: `${limitWarning.accountLabel}: ${limitWarning.usedPercent}% of ${limitWarning.windowLabel} used`,
+      description: "Switch account or wait for the reset before starting a long turn.",
+      dismissLabel: "Dismiss limit warning",
+      onDismiss: () => {
+        dismissLimitWarning(limitWarning.key);
+        setLimitWarningDismissTick((tick) => tick + 1);
+      },
+    };
+  }, [limitWarning, limitWarningDismissTick]);
   const queuedMessageBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
     if (!queuedMessage) return null;
     const collapsed = queuedMessage.prompt.replace(/\s+/g, " ").trim();
@@ -5821,8 +5863,10 @@ export default function ChatView(props: ChatViewProps) {
     // The user asked for this one, so it leads the notice tier instead of trailing it.
     const usageLimitsItems = usageLimitsBanner === null ? [] : [usageLimitsBanner];
     const queuedMessageItems = queuedMessageBannerItem === null ? [] : [queuedMessageBannerItem];
+    const limitWarningItems = limitWarningBanner === null ? [] : [limitWarningBanner];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [
+        ...limitWarningItems,
         ...queuedMessageItems,
         ...feedbackBannerItems,
         ...usageLimitsItems,
@@ -5834,6 +5878,7 @@ export default function ChatView(props: ChatViewProps) {
       ];
     }
     return [
+      ...limitWarningItems,
       ...queuedMessageItems,
       ...feedbackBannerItems,
       ...usageLimitsItems,

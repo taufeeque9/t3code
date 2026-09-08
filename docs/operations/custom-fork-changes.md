@@ -100,6 +100,19 @@ smallest edit on top of upstream's pipeline rather than a parallel view.
 
 **On conflict:** drop all of it the moment upstream reports extra usage itself.
 
+### Composer: warning when the thread's account is nearly spent
+
+Upstream shows limits only when asked (`/limits`), so a turn can be refused
+with no warning. This warns in the thread at 95% of a session or weekly window.
+
+- `apps/web/src/components/usage/limitWarning.ts` and its test
+- `apps/web/src/components/ChatView.tsx`: the `limitWarning` memo and its banner
+
+Scoped to the account the thread actually sends through, not the pool: a pool
+with room elsewhere does not help a turn about to be refused. Reads the same
+live provider statuses the on-demand panel uses, so it costs no extra request.
+Dismissal is keyed on the window's reset time, so it lapses on rollover.
+
 ### Limits bars: per-instance colour and short names
 
 Upstream paints every account in a pool with one hardcoded driver colour and
