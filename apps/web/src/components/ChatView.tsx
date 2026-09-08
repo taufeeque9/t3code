@@ -198,9 +198,11 @@ import {
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
+import { useQueuedMessageStore } from "../queuedMessageStore";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import {
   AlarmClockIcon,
+  ClockIcon,
   CheckCircle2Icon,
   ChevronDownIcon,
   GitBranchIcon,
@@ -1527,6 +1529,37 @@ export default function ChatView(props: ChatViewProps) {
     return draft ? composerDraftHasUserContent({ ...draft, prompt: "" }) : false;
   });
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
+  const queuedMessage = useQueuedMessageStore((store) => store.byThreadKey[routeThreadKey] ?? null);
+  const queueMessage = useQueuedMessageStore((store) => store.queue);
+  const takeQueuedMessage = useQueuedMessageStore((store) => store.take);
+  const removeQueuedMessage = useQueuedMessageStore((store) => store.remove);
+
+  /**
+   * Moves the composer's draft into the queue, to be sent once the agent stops.
+   * Returns false when there is nothing to queue, so the shortcut can say so.
+   */
+  const queueCurrentPrompt = useCallback((): boolean => {
+    const prompt = promptRef.current;
+    if (prompt.trim().length === 0) return false;
+    if (!queueMessage(routeThreadKey, prompt)) return false;
+    promptRef.current = "";
+    setComposerDraftPrompt(composerDraftTarget, "");
+    composerRef.current?.resetCursorState();
+    return true;
+  }, [composerDraftTarget, queueMessage, routeThreadKey, setComposerDraftPrompt]);
+
+  /** Returns the queued message to the composer so it can be reworded. */
+  const editQueuedMessage = useCallback(() => {
+    const taken = takeQueuedMessage(routeThreadKey);
+    if (!taken) return;
+    // Anything already typed keeps its place ahead of the restored text rather
+    // than being overwritten by it.
+    const existing = promptRef.current.trim();
+    const restored = existing.length > 0 ? `${existing}\n\n${taken.prompt}` : taken.prompt;
+    promptRef.current = restored;
+    setComposerDraftPrompt(composerDraftTarget, restored);
+    composerRef.current?.focusAtEnd();
+  }, [composerDraftTarget, routeThreadKey, setComposerDraftPrompt, takeQueuedMessage]);
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
   const addComposerDraftFiles = useComposerDraftStore((store) => store.addFiles);
   const setComposerDraftTerminalContexts = useComposerDraftStore(
@@ -5747,6 +5780,29 @@ export default function ChatView(props: ChatViewProps) {
       }),
     [feedbackSubmissions, routeThreadKey],
   );
+  const queuedMessageBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
+    if (!queuedMessage) return null;
+    const collapsed = queuedMessage.prompt.replace(/\s+/g, " ").trim();
+    return {
+      id: "queued-message",
+      variant: "info",
+      priority: "notice",
+      icon: <ClockIcon />,
+      title: "Queued for the end of this turn",
+      description: collapsed.length > 120 ? `${collapsed.slice(0, 120)}\u2026` : collapsed,
+      actions: (
+        <>
+          <Button size="xs" variant="ghost" onClick={editQueuedMessage}>
+            Edit
+          </Button>
+          <Button size="xs" variant="ghost" onClick={() => removeQueuedMessage(routeThreadKey)}>
+            Discard
+          </Button>
+        </>
+      ),
+    };
+  }, [editQueuedMessage, queuedMessage, removeQueuedMessage, routeThreadKey]);
+
   const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
     const backgroundLivenessItems =
       backgroundLivenessBannerItem === null ? [] : [backgroundLivenessBannerItem];
@@ -5756,6 +5812,7 @@ export default function ChatView(props: ChatViewProps) {
     const parkedThreadItems = parkedThreadBannerItem === null ? [] : [parkedThreadBannerItem];
     // The user asked for this one, so it leads the notice tier instead of trailing it.
     const usageLimitsItems = usageLimitsBanner === null ? [] : [usageLimitsBanner];
+    const queuedMessageItems = queuedMessageBannerItem === null ? [] : [queuedMessageBannerItem];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [
         ...feedbackBannerItems,
@@ -5765,6 +5822,7 @@ export default function ChatView(props: ChatViewProps) {
         ...resumeCompactionItems,
         ...wokeThreadItems,
         ...parkedThreadItems,
+        ...queuedMessageItems,
       ];
     }
     return [
@@ -5813,6 +5871,7 @@ export default function ChatView(props: ChatViewProps) {
         },
       },
       ...parkedThreadItems,
+      ...queuedMessageItems,
     ];
   }, [
     activeBranchMismatchKey,
@@ -5950,6 +6009,22 @@ export default function ChatView(props: ChatViewProps) {
         context: shortcutContext,
       });
       if (!command) return;
+
+      if (command === "composer.queue") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.repeat) return;
+        if (!queueCurrentPrompt()) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "info",
+              title: "Nothing to queue",
+              description: "Type a message first, then queue it for the end of this turn.",
+            }),
+          );
+        }
+        return;
+      }
 
       if (command === "thread.copyReference") {
         event.preventDefault();
@@ -7022,6 +7097,51 @@ export default function ChatView(props: ChatViewProps) {
       resetLocalDispatch();
     }
   };
+
+  // Send the queued message once the turn has actually finished. `isWorking`
+  // already folds in connecting, compaction and an in-flight local dispatch, so
+  // it going false is the thread being ready for another turn.
+  const queuedSendInFlightRef = useRef(false);
+  useEffect(() => {
+    if (!queuedMessage || isWorking || queuedSendInFlightRef.current) return;
+    if (!activeThread || isConnecting || !clientSettingsHydrated || threadDetailLoading) return;
+    queuedSendInFlightRef.current = true;
+    const taken = takeQueuedMessage(routeThreadKey);
+    if (!taken) {
+      queuedSendInFlightRef.current = false;
+      return;
+    }
+    // A draft typed while the message sat queued is restored afterwards, since
+    // sending the queue must not cost the user text they are still writing.
+    const pendingDraft = promptRef.current;
+    promptRef.current = taken.prompt;
+    setComposerDraftPrompt(composerDraftTarget, taken.prompt);
+    void onSend()
+      .catch(() => {
+        // A failed send puts the message back rather than dropping it.
+        queueMessage(routeThreadKey, taken.prompt);
+      })
+      .finally(() => {
+        if (pendingDraft.trim().length > 0) {
+          promptRef.current = pendingDraft;
+          setComposerDraftPrompt(composerDraftTarget, pendingDraft);
+        }
+        queuedSendInFlightRef.current = false;
+      });
+  }, [
+    activeThread,
+    clientSettingsHydrated,
+    composerDraftTarget,
+    isConnecting,
+    isWorking,
+    onSend,
+    queueMessage,
+    queuedMessage,
+    routeThreadKey,
+    setComposerDraftPrompt,
+    takeQueuedMessage,
+    threadDetailLoading,
+  ]);
 
   const onRespondToApproval = useCallback(
     async (requestId: ApprovalRequestId, decision: ProviderApprovalDecision) => {
