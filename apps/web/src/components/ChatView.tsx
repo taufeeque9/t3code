@@ -5823,6 +5823,7 @@ export default function ChatView(props: ChatViewProps) {
     const queuedMessageItems = queuedMessageBannerItem === null ? [] : [queuedMessageBannerItem];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [
+        ...queuedMessageItems,
         ...feedbackBannerItems,
         ...usageLimitsItems,
         ...systemComposerBannerItems,
@@ -5830,10 +5831,10 @@ export default function ChatView(props: ChatViewProps) {
         ...resumeCompactionItems,
         ...wokeThreadItems,
         ...parkedThreadItems,
-        ...queuedMessageItems,
       ];
     }
     return [
+      ...queuedMessageItems,
       ...feedbackBannerItems,
       ...usageLimitsItems,
       ...systemComposerBannerItems,
@@ -5879,7 +5880,6 @@ export default function ChatView(props: ChatViewProps) {
         },
       },
       ...parkedThreadItems,
-      ...queuedMessageItems,
     ];
   }, [
     activeBranchMismatchKey,
