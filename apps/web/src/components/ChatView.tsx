@@ -1548,18 +1548,23 @@ export default function ChatView(props: ChatViewProps) {
     return true;
   }, [composerDraftTarget, queueMessage, routeThreadKey, setComposerDraftPrompt]);
 
-  /** Returns the queued message to the composer so it can be reworded. */
+  /**
+   * Returns the queued message to the composer so it can be reworded. Goes
+   * through the editor handle rather than the draft store: the store holds the
+   * value, but only the handle puts it into the editor the user sees.
+   */
   const editQueuedMessage = useCallback(() => {
-    const taken = takeQueuedMessage(routeThreadKey);
-    if (!taken) return;
-    // Anything already typed keeps its place ahead of the restored text rather
-    // than being overwritten by it.
-    const existing = promptRef.current.trim();
-    const restored = existing.length > 0 ? `${existing}\n\n${taken.prompt}` : taken.prompt;
-    promptRef.current = restored;
-    setComposerDraftPrompt(composerDraftTarget, restored);
-    composerRef.current?.focusAtEnd();
-  }, [composerDraftTarget, routeThreadKey, setComposerDraftPrompt, takeQueuedMessage]);
+    const queued = takeQueuedMessage(routeThreadKey);
+    if (!queued) return;
+    // Anything already typed keeps its place ahead of the restored text.
+    if (composerRef.current?.insertTextAtEnd(queued.prompt, { ensureLeadingBoundary: true })) {
+      composerRef.current?.focusAtEnd();
+      return;
+    }
+    // No editor mounted to take it, so the message stays queued rather than
+    // vanishing into a composer that never showed it.
+    queueMessage(routeThreadKey, queued.prompt);
+  }, [queueMessage, routeThreadKey, takeQueuedMessage]);
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
   const addComposerDraftFiles = useComposerDraftStore((store) => store.addFiles);
   const setComposerDraftTerminalContexts = useComposerDraftStore(
@@ -5786,10 +5791,13 @@ export default function ChatView(props: ChatViewProps) {
     return {
       id: "queued-message",
       variant: "info",
-      priority: "notice",
+      // Not a notice: a notice sinks into the collapsed group, where the stack
+      // makes it pointer-events-none until expanded and Edit/Discard stop
+      // responding. This banner exists to be clicked.
+      priority: "activity",
       icon: <ClockIcon />,
-      title: "Queued for the end of this turn",
-      description: collapsed.length > 120 ? `${collapsed.slice(0, 120)}\u2026` : collapsed,
+      title: "Queued",
+      description: collapsed.length > 60 ? `${collapsed.slice(0, 60)}\u2026` : collapsed,
       actions: (
         <>
           <Button size="xs" variant="ghost" onClick={editQueuedMessage}>
