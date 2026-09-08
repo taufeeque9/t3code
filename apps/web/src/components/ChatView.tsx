@@ -5819,7 +5819,6 @@ export default function ChatView(props: ChatViewProps) {
       priority: "urgent",
       icon: <TriangleAlertIcon />,
       title: `${limitWarning.accountLabel}: ${limitWarning.usedPercent}% of ${limitWarning.windowLabel} used`,
-      description: "Switch account or wait for the reset before starting a long turn.",
       dismissLabel: "Dismiss limit warning",
       onDismiss: () => {
         dismissLimitWarning(limitWarning.key);
@@ -6068,13 +6067,7 @@ export default function ChatView(props: ChatViewProps) {
         event.stopPropagation();
         if (event.repeat) return;
         if (!queueCurrentPrompt()) {
-          toastManager.add(
-            stackedThreadToast({
-              type: "info",
-              title: "Nothing to queue",
-              description: "Type a message first, then queue it for the end of this turn.",
-            }),
-          );
+          toastManager.add(stackedThreadToast({ type: "info", title: "Nothing to queue" }));
         }
         return;
       }

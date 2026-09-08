@@ -111,7 +111,8 @@ with no warning. This warns in the thread at 95% of a session or weekly window.
 Scoped to the account the thread actually sends through, not the pool: a pool
 with room elsewhere does not help a turn about to be refused. Reads the same
 live provider statuses the on-demand panel uses, so it costs no extra request.
-Dismissal is keyed on the window's reset time, so it lapses on rollover.
+Dismissal is keyed on the window's reset time, so it lapses on rollover. The
+banner states the number and nothing else; advisory copy is unwanted here.
 
 ### Limits bars: per-instance colour and short names
 
