@@ -143,8 +143,10 @@ the sidebar. It is left untouched; the fork adds a parallel path.
 - `packages/contracts`: `orchestration.searchThreadUnits` and its schemas, the
   RPC in `rpc.ts`, the scope in `RpcAuthorization.ts`, the `ws.ts` handler
 - `packages/client-runtime/src/state/threadUnitSearch.ts`
-- `apps/web`: `useThreadUnitSearch` in `state/queries.ts`, and the merge with
-  the title match in `Sidebar.tsx`
+- `apps/web`: `useThreadUnitSearch` in `state/queries.ts`, and in `Sidebar.tsx`
+  both the merge with the title match and `SidebarSearchResultRow`'s second
+  line, which shows the matched text so a filtered list says why each row is in
+  it. Title hits stay one line.
 
 One row per unit — title, URL, user message — is what bounds fuzzy matching to
 a single unit, so a loose query cannot stitch two messages together. Units are
