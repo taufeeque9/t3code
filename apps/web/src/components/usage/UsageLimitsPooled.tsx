@@ -14,6 +14,7 @@ import { TicketIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
 import { usePrimarySettings } from "../../hooks/useSettings";
+import { shortAccountName } from "./accountName";
 import { cn } from "../../lib/utils";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
@@ -102,7 +103,13 @@ function AccountName({
   readonly account: LimitAccount;
   readonly className?: string;
 }) {
-  if (account.displayName) return <span className={className}>{account.displayName}</span>;
+  if (account.displayName) {
+    return (
+      <span className={className}>
+        {shortAccountName(account.displayName, getDriverOption(account.driver)?.label)}
+      </span>
+    );
+  }
   if (account.email) {
     return (
       <span className={cn("inline-flex min-w-0 items-center", className)}>
@@ -241,6 +248,9 @@ function PoolSegment({
   const remaining = remainingPercent(window);
   const resetsIn = formatResetsIn(window, now);
   const credits = account.limits.resetCredits?.availableCount ?? 0;
+  // The colour configured for this instance is how the user already tells these
+  // accounts apart elsewhere; the driver colour would paint them all alike.
+  const segmentColor = account.accentColor ?? color;
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
@@ -258,7 +268,7 @@ function PoolSegment({
         <div
           aria-hidden
           className="absolute inset-y-0 left-0 rounded-md opacity-35"
-          style={{ width: `${remaining}%`, backgroundColor: color }}
+          style={{ width: `${remaining}%`, backgroundColor: segmentColor }}
         />
         {/* The spent share is hatched, not blank: it is what the countdown restores. */}
         {remaining < 100 && reset ? (
@@ -267,7 +277,7 @@ function PoolSegment({
             className="absolute inset-y-0 right-0 opacity-20"
             style={{
               width: `${100 - remaining}%`,
-              backgroundImage: `repeating-linear-gradient(135deg, ${color} 0 1px, transparent 1px 5px)`,
+              backgroundImage: `repeating-linear-gradient(135deg, ${segmentColor} 0 1px, transparent 1px 5px)`,
             }}
           />
         ) : null}
@@ -299,7 +309,7 @@ function PoolSegment({
           </span>
         </div>
       </PopoverTrigger>
-      <LegendRow account={account} window={window} color={color} now={now} index={index} />
+      <LegendRow account={account} window={window} color={segmentColor} now={now} index={index} />
       {account.redeem ? (
         <RedeemableSegmentPopup
           account={account}

@@ -100,6 +100,20 @@ smallest edit on top of upstream's pipeline rather than a parallel view.
 
 **On conflict:** drop all of it the moment upstream reports extra usage itself.
 
+### Limits bars: per-instance colour and short names
+
+Upstream paints every account in a pool with one hardcoded driver colour and
+prints the full instance name on each bar, so four Claude accounts look alike
+and each row repeats the heading's own word.
+
+- `apps/web/src/components/usage/accountName.ts` and its test
+- `apps/web/src/components/usage/UsageLimitsPooled.tsx`: `segmentColor` from
+  `account.accentColor`, and the `shortAccountName` call in `AccountName`
+
+The accent colour already reaches the client on `UsageLimitsReport`; upstream
+only uses it for the avatar. Popover titles and aria-labels keep the full name,
+which is read without the heading for context.
+
 ### Fuzzy sidebar search over thread contents
 
 The sidebar matched thread titles only, among threads it had already loaded.
