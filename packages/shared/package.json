@@ -278,6 +278,14 @@
     "./dateTime": {
       "types": "./src/dateTime.ts",
       "import": "./src/dateTime.ts"
+    },
+    "./fuzzyMatch": {
+      "types": "./src/fuzzyMatch.ts",
+      "import": "./src/fuzzyMatch.ts"
+    },
+    "./threadSearchUnits": {
+      "types": "./src/threadSearchUnits.ts",
+      "import": "./src/threadSearchUnits.ts"
     }
   },
   "scripts": {

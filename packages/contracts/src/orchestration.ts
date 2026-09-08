@@ -30,6 +30,7 @@ export const ORCHESTRATION_WS_METHODS = {
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
   searchThreads: "orchestration.searchThreads",
+  searchThreadUnits: "orchestration.searchThreadUnits",
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
@@ -1957,6 +1958,41 @@ export const OrchestrationSearchThreadsResult = Schema.Struct({
 });
 export type OrchestrationSearchThreadsResult = typeof OrchestrationSearchThreadsResult.Type;
 
+/**
+ * Fuzzy sidebar search over indexed thread units.
+ *
+ * Separate from `searchThreads` above, which is an exact substring scan over
+ * whole messages. This one matches per unit — title, URL, or user message — so
+ * a loose query cannot stitch two of them together, and it can be scoped to one
+ * project the way the sidebar is.
+ */
+export const OrchestrationThreadSearchUnitKind = Schema.Literals(["title", "url", "user-message"]);
+export type OrchestrationThreadSearchUnitKind = typeof OrchestrationThreadSearchUnitKind.Type;
+
+export const OrchestrationSearchThreadUnitsInput = Schema.Struct({
+  query: TrimmedString.check(Schema.isMinLength(2), Schema.isMaxLength(200)),
+  /** Absent searches every project, matching the sidebar's "all" scope. */
+  projectId: Schema.optional(ProjectId),
+  limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))),
+});
+export type OrchestrationSearchThreadUnitsInput = typeof OrchestrationSearchThreadUnitsInput.Type;
+
+export const OrchestrationThreadSearchUnitMatch = Schema.Struct({
+  threadId: ThreadId,
+  projectId: ProjectId,
+  kind: OrchestrationThreadSearchUnitKind,
+  /** The matched unit's text, already whitespace-collapsed for display. */
+  snippet: Schema.String.check(Schema.isMaxLength(2000)),
+  score: NonNegativeInt,
+  unitCreatedAt: Schema.NullOr(IsoDateTime),
+});
+export type OrchestrationThreadSearchUnitMatch = typeof OrchestrationThreadSearchUnitMatch.Type;
+
+export const OrchestrationSearchThreadUnitsResult = Schema.Struct({
+  matches: Schema.Array(OrchestrationThreadSearchUnitMatch),
+});
+export type OrchestrationSearchThreadUnitsResult = typeof OrchestrationSearchThreadUnitsResult.Type;
+
 export const OrchestrationGetWorkflowScriptInput = Schema.Struct({
   threadId: ThreadId,
   /** Absolute path from the workflow's runHandles.scriptPath. The server
@@ -2049,6 +2085,10 @@ export const OrchestrationRpcSchemas = {
   searchThreads: {
     input: OrchestrationSearchThreadsInput,
     output: OrchestrationSearchThreadsResult,
+  },
+  searchThreadUnits: {
+    input: OrchestrationSearchThreadUnitsInput,
+    output: OrchestrationSearchThreadUnitsResult,
   },
   getArchivedShellSnapshot: {
     input: Schema.Struct({}),
