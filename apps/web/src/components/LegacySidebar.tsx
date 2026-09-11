@@ -107,6 +107,8 @@ import { isModelPickerOpen } from "../modelPickerVisibility";
 import { useShortcutModifierState } from "../shortcutModifierState";
 import { ensureLocalApi, readLocalApi } from "../localApi";
 import { useComposerDraftStore } from "../composerDraftStore";
+import { useQueuedMessageStore } from "../queuedMessageStore";
+import { hasQueuedTurnStart } from "@t3tools/client-runtime/state/thread-settled";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useDesktopUpdateState } from "../state/desktopUpdate";
 
@@ -376,6 +378,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   } = props;
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const threadKey = scopedThreadKey(threadRef);
+  const queuedMessage = useQueuedMessageStore((store) => store.byThreadKey[threadKey]);
   const { leaseLiveStatus, rowRef } = useSidebarRowSubscriptionLease(isActive);
   const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
   const isSelected = useThreadSelectionStore((state) => state.selectedThreadKeys.has(threadKey));
@@ -440,6 +443,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     thread: {
       ...thread,
       lastVisitedAt,
+      hasQueuedMessage: !!queuedMessage,
+      hasQueuedMessageError: !!queuedMessage?.error,
+      hasQueuedTurnStart: hasQueuedTurnStart(thread, { now: new Date().toISOString() }),
     },
   });
   const linkedPullRequestStatus = useLinkedThreadPullRequest(
@@ -1107,6 +1113,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     isManualProjectSorting,
     dragHandleProps,
   } = props;
+  const queuedMessagesByThreadKey = useQueuedMessageStore((store) => store.byThreadKey);
   const environmentMachine = project.allRemoteMembersAreWsl
     ? "linux"
     : project.allRemoteMembersAreDesktopLocal
@@ -1268,9 +1275,14 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       const lastVisitedAt = lastVisitedAtByThreadKey.get(
         scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
       );
+      const queuedMessage =
+        queuedMessagesByThreadKey[scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))];
       return resolveThreadStatusPill({
         thread: {
           ...thread,
+          hasQueuedMessage: !!queuedMessage,
+          hasQueuedMessageError: !!queuedMessage?.error,
+          hasQueuedTurnStart: hasQueuedTurnStart(thread, { now: new Date().toISOString() }),
           ...(lastVisitedAt !== null && lastVisitedAt !== undefined ? { lastVisitedAt } : {}),
         },
       });
@@ -1289,7 +1301,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       projectStatus,
       visibleProjectThreads,
     };
-  }, [projectThreads, threadLastVisitedAts, threadSortOrder]);
+  }, [projectThreads, queuedMessagesByThreadKey, threadLastVisitedAts, threadSortOrder]);
   const pinnedCollapsedThread = useMemo(() => {
     const activeThreadKey = activeRouteThreadKey ?? undefined;
     if (!activeThreadKey || projectExpanded) {
@@ -1320,9 +1332,14 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       const lastVisitedAt = lastVisitedAtByThreadKey.get(
         scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
       );
+      const queuedMessage =
+        queuedMessagesByThreadKey[scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))];
       return resolveThreadStatusPill({
         thread: {
           ...thread,
+          hasQueuedMessage: !!queuedMessage,
+          hasQueuedMessageError: !!queuedMessage?.error,
+          hasQueuedTurnStart: hasQueuedTurnStart(thread, { now: new Date().toISOString() }),
           ...(lastVisitedAt !== null && lastVisitedAt !== undefined ? { lastVisitedAt } : {}),
         },
       });
@@ -1361,6 +1378,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     projectExpanded,
     projectThreads,
     sidebarThreadPreviewCount,
+    queuedMessagesByThreadKey,
     threadLastVisitedAts,
     visibleProjectThreads,
   ]);

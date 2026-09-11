@@ -25,6 +25,7 @@ import {
   resolveProjectStatusIndicator,
   resolveThreadRowClassName,
   resolveSidebarThreadStatus,
+  resolveSidebarThreadSection,
   resolveThreadStatusPill,
   resolveWorkingStartedAt,
   searchSidebarThreadsByTitle,
@@ -323,6 +324,24 @@ function makeLatestTurn(overrides?: {
 }
 
 describe("hasUnseenCompletion", () => {
+  it.each(["hasQueuedMessage", "hasQueuedTurnStart"] as const)(
+    "does not report completion with %s",
+    (pendingState) => {
+      expect(
+        hasUnseenCompletion({
+          hasActionableProposedPlan: false,
+          hasPendingApprovals: false,
+          hasPendingUserInput: false,
+          [pendingState]: true,
+          interactionMode: "default",
+          latestTurn: makeLatestTurn(),
+          lastVisitedAt: "2026-03-09T10:04:00.000Z",
+          session: null,
+        }),
+      ).toBe(false);
+    },
+  );
+
   it("returns true when a thread completed after its last visit", () => {
     expect(
       hasUnseenCompletion({
@@ -766,6 +785,19 @@ describe("resolveSidebarThreadStatus", () => {
     ).toBe("approval");
   });
 
+  it.each(["hasQueuedMessage", "hasQueuedTurnStart"] as const)(
+    "keeps a thread working with %s",
+    (pendingState) => {
+      expect(
+        resolveSidebarThreadStatus({
+          ...idle,
+          [pendingState]: true,
+          session: { ...session, status: "ready", activeTurnId: null },
+        }),
+      ).toBe("working");
+    },
+  );
+
   it("reports working for running and starting sessions", () => {
     expect(resolveSidebarThreadStatus({ ...idle, session })).toBe("working");
     expect(
@@ -774,6 +806,17 @@ describe("resolveSidebarThreadStatus", () => {
         session: { ...session, status: "starting" as const },
       }),
     ).toBe("working");
+  });
+
+  it("shows a failed queue as requiring attention", () => {
+    expect(
+      resolveSidebarThreadStatus({
+        ...idle,
+        hasQueuedMessage: true,
+        hasQueuedMessageError: true,
+        session: { ...session, status: "ready", activeTurnId: null },
+      }),
+    ).toBe("failed");
   });
 
   it("reports failed only while the session status is error", () => {
@@ -1996,6 +2039,51 @@ describe("resolveThreadStatusPill", () => {
     ).toBeNull();
   });
 
+  it.each(["hasQueuedMessage", "hasQueuedTurnStart"] as const)(
+    "keeps %s ahead of completed and plan-ready status",
+    (pendingState) => {
+      expect(
+        resolveThreadStatusPill({
+          thread: {
+            ...baseThread,
+            [pendingState]: true,
+            hasActionableProposedPlan: true,
+            latestTurn: makeLatestTurn(),
+            lastVisitedAt: "2026-03-09T10:04:00.000Z",
+            session: { ...baseThread.session, status: "ready", activeTurnId: null },
+          },
+        }),
+      ).toMatchObject({ label: "Working", pulse: true });
+    },
+  );
+
+  it("shows a session failure when queued work is blocked", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          hasQueuedMessage: true,
+          session: { ...baseThread.session, status: "error", activeTurnId: null },
+        },
+      }),
+    ).toMatchObject({ label: "Failed", pulse: false });
+  });
+
+  it("shows a queue failure instead of completed", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          hasQueuedMessage: true,
+          hasQueuedMessageError: true,
+          latestTurn: makeLatestTurn(),
+          lastVisitedAt: "2026-03-09T10:04:00.000Z",
+          session: { ...baseThread.session, status: "ready", activeTurnId: null },
+        },
+      }),
+    ).toMatchObject({ label: "Queue Failed", pulse: false });
+  });
+
   it("shows completed when there is an unseen completion and no active blocker", () => {
     expect(
       resolveThreadStatusPill({
@@ -2489,5 +2577,37 @@ describe("resolveSidebarDropVerb", () => {
     expect(resolveSidebarDropVerb("pinned", "pinned")).toBeNull();
     expect(resolveSidebarDropVerb("active", null)).toBeNull();
     expect(resolveSidebarDropVerb("active", "snoozed")).toBeNull();
+  });
+});
+
+describe("resolveSidebarThreadSection", () => {
+  const settled = {
+    isSettled: true,
+    isSnoozed: false,
+    isPinned: false,
+    hasQueuedWork: false,
+    hasQueueError: false,
+  };
+  it("keeps queued work active when the server settles the original turn", () => {
+    expect(resolveSidebarThreadSection({ ...settled, hasQueuedWork: true })).toBe("active");
+    expect(resolveSidebarThreadSection(settled)).toBe("settled");
+  });
+  it("keeps failed queued work visible for attention", () => {
+    expect(
+      resolveSidebarThreadSection({
+        ...settled,
+        hasQueuedWork: true,
+        hasQueueError: true,
+        isSnoozed: true,
+      }),
+    ).toBe("active");
+  });
+  it("preserves pinning and manual snoozing while work is queued", () => {
+    expect(resolveSidebarThreadSection({ ...settled, hasQueuedWork: true, isPinned: true })).toBe(
+      "pinned",
+    );
+    expect(resolveSidebarThreadSection({ ...settled, hasQueuedWork: true, isSnoozed: true })).toBe(
+      "snoozed",
+    );
   });
 });

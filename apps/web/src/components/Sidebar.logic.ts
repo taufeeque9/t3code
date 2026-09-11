@@ -170,6 +170,19 @@ export function resolveSidebarDropTarget(
   return { section, pinnedOrder, activeOrder };
 }
 
+export function resolveSidebarThreadSection(input: {
+  isSnoozed: boolean;
+  isSettled: boolean;
+  isPinned: boolean;
+  hasQueuedWork: boolean;
+  hasQueueError: boolean;
+}): SidebarSection {
+  if (input.isSnoozed && !input.hasQueueError) return "snoozed";
+  if (input.isSettled && !input.hasQueuedWork && !input.hasQueueError) return "settled";
+  if (input.isPinned) return "pinned";
+  return "active";
+}
+
 export type SidebarThreadDropPlan =
   | { readonly kind: "none" }
   /** Within the pinned block: the existing key writes. */
@@ -493,7 +506,9 @@ export interface ThreadStatusPill {
     | "Completed"
     | "Pending Approval"
     | "Awaiting Input"
-    | "Plan Ready";
+    | "Plan Ready"
+    | "Queue Failed"
+    | "Failed";
   colorClass: string;
   dotClass: string;
   pulse: boolean;
@@ -503,6 +518,8 @@ export interface ThreadStatusPill {
 // then active work, then the actionable plan prompt, then passive
 // monitoring. A Monitoring sibling must never hide a Plan Ready thread.
 const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
+  "Queue Failed": 7,
+  Failed: 7,
   "Pending Approval": 6,
   "Awaiting Input": 5,
   Working: 4,
@@ -523,6 +540,9 @@ type ThreadStatusInput = Pick<
   | "backgroundLiveness"
 > & {
   lastVisitedAt?: string | undefined;
+  hasQueuedMessage?: boolean;
+  hasQueuedMessageError?: boolean;
+  hasQueuedTurnStart?: boolean;
 };
 
 export interface ThreadJumpHintVisibilityController {
@@ -611,6 +631,7 @@ export function useThreadJumpHintVisibility(): {
 }
 
 export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
+  if (thread.hasQueuedMessage || thread.hasQueuedTurnStart) return false;
   if (!thread.latestTurn?.completedAt) return false;
   const completedAt = Date.parse(thread.latestTurn.completedAt);
   if (Number.isNaN(completedAt)) return false;
@@ -813,9 +834,14 @@ export function shouldRecedeSidebarThread(input: {
 type SidebarThreadStatusInput = Pick<
   SidebarThreadSummary,
   "hasPendingApprovals" | "hasPendingUserInput" | "session" | "backgroundLiveness"
->;
+> & {
+  hasQueuedMessage?: boolean;
+  hasQueuedMessageError?: boolean;
+  hasQueuedTurnStart?: boolean;
+};
 
 export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): SidebarThreadStatus {
+  if (thread.hasQueuedMessageError) return "failed";
   if (thread.hasPendingApprovals) {
     return "approval";
   }
@@ -832,7 +858,11 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
   }
   // Background work outlives the turn: fleets read as working; monitoring
   // only when watch loops are the sole live work.
-  if (thread.backgroundLiveness === "working") {
+  if (
+    thread.hasQueuedMessage ||
+    thread.hasQueuedTurnStart ||
+    thread.backgroundLiveness === "working"
+  ) {
     return "working";
   }
   if (thread.backgroundLiveness === "monitoring") {
@@ -967,6 +997,15 @@ export function resolveThreadStatusPill(input: {
 }): ThreadStatusPill | null {
   const { thread } = input;
 
+  if (thread.hasQueuedMessageError || thread.session?.status === "error") {
+    return {
+      label: thread.hasQueuedMessageError ? "Queue Failed" : "Failed",
+      colorClass: "text-red-600 dark:text-red-300/90",
+      dotClass: "bg-red-500 dark:bg-red-300/90",
+      pulse: false,
+    };
+  }
+
   if (thread.hasPendingApprovals) {
     return {
       label: "Pending Approval",
@@ -985,7 +1024,11 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
-  if (thread.session?.status === "running") {
+  if (
+    thread.session?.status === "running" ||
+    ((thread.hasQueuedMessage || thread.hasQueuedTurnStart) &&
+      thread.session?.status !== "starting")
+  ) {
     return {
       label: "Working",
       colorClass: "text-sky-600 dark:text-sky-300/80",

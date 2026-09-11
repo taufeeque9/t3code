@@ -159,17 +159,27 @@ project-scoped.
 
 ### Composer: queue a message for the end of the turn
 
-Sending mid-turn interrupts the agent, and upstream offers no way to hold a
-message back. Client-side and web-only by choice: a server-side queued turn
-would work across surfaces but is a much larger orchestration change.
+Hold one text follow-up for an existing thread until its current turn finishes.
+The desktop/web client owns the queue and must stay open; delivery follows live
+thread updates across navigation and reconnects. Mobile's outbox is separate.
 
-- `apps/web/src/queuedMessageStore.ts` and its test
-- `apps/web/src/components/ChatView.tsx`: `queueCurrentPrompt`,
-  `editQueuedMessage`, the auto-send effect, the banner, the shortcut case
+- `apps/web/src/queuedMessageStore.ts`, `queuedMessageDispatch.ts`,
+  `components/QueuedMessageCoordinator.tsx`, and their tests
+- `apps/web/src/routes/__root.tsx`: mounts the dispatcher outside thread routes
+- `apps/web/src/components/ChatView.tsx`: enqueue, edit, discard, retry, and banner
+- `apps/web/src/components/Sidebar.logic.ts`, `Sidebar.tsx`, and `LegacySidebar.tsx`:
+  queued work keeps a thread active without an intermediate completion badge
 - `packages/contracts/src/keybindings.ts` (`composer.queue`),
   `packages/shared/src/keybindings.ts` (default `mod+shift+enter`)
 
-Text only; attachments stay with the composer draft.
+Enqueue captures the selected model, modes, and prompt effort. Attachments stay
+in the composer draft. Delivery keeps a stable command identity across uncertain
+failures and waits for the exact message in thread updates before clearing the
+queue. Failed delivery stays visible for retry.
+
+**On conflict:** compare with any upstream end-of-turn queue before retaining
+this client implementation. A server-owned queue could also deliver with the
+client closed and share pending work across devices.
 
 ### Chat: stop-hook follow-ups
 

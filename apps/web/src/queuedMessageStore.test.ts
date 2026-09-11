@@ -1,3 +1,4 @@
+import { ProviderInstanceId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
@@ -62,6 +63,23 @@ describe("queuedMessageStore", () => {
     useQueuedMessageStore.setState({ byThreadKey: {} });
     writeQueuedMessageStorageForTest(raw ?? "");
     expect(useQueuedMessageStore.getState().byThreadKey[THREAD]?.prompt).toBe("still here");
+  });
+
+  it("preserves settings and delivery identity across a reload after a failed send", () => {
+    const queue = useQueuedMessageStore.getState();
+    queue.queue(THREAD, "plan this", {
+      modelSelection: { instanceId: ProviderInstanceId.make("claude"), model: "opus" },
+      runtimeMode: "approval-required",
+      interactionMode: "plan",
+      text: "formatted plan this",
+    });
+    const sending = queue.beginSend(THREAD, "2026-09-11T20:00:00.000Z")!;
+    queue.failSend(THREAD, sending.id, "Disconnected");
+    const expected = useQueuedMessageStore.getState().byThreadKey[THREAD];
+    const raw = readQueuedMessageStorageForTest()!;
+    useQueuedMessageStore.setState({ byThreadKey: {} });
+    writeQueuedMessageStorageForTest(raw);
+    expect(useQueuedMessageStore.getState().byThreadKey[THREAD]).toEqual(expected);
   });
 
   it("ignores malformed persisted entries rather than failing to load", () => {

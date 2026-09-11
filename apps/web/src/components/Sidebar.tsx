@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { useQueuedMessageStore } from "../queuedMessageStore";
 import * as Schema from "effect/Schema";
 import {
   DndContext,
@@ -14,6 +15,7 @@ import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-
 import { CSS } from "@dnd-kit/utilities";
 import {
   canSnooze,
+  hasQueuedTurnStart,
   effectiveSnoozed,
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
@@ -155,6 +157,7 @@ import {
   resolveSidebarDropVerb,
   type SidebarDropVerb,
   resolveSidebarThreadStatus,
+  resolveSidebarThreadSection,
   searchSidebarThreadsByTitle,
   shouldCreateNewThreadInCurrentProject,
   shouldRecedeSidebarThread,
@@ -1037,6 +1040,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     [thread.environmentId, thread.id],
   );
   const threadKey = scopedThreadKey(threadRef);
+  const queuedMessage = useQueuedMessageStore((store) => store.byThreadKey[threadKey]);
   const { leaseLiveStatus, rowRef } = useSidebarRowSubscriptionLease(props.isActive);
   const isRegeneratingTitle = thread.titleRegeneration != null;
   const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
@@ -1084,8 +1088,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
 
   // Same semantics as the legacy sidebar (never-visited counts as read):
   // switching sidebars must not light up every historical thread as unread.
-  const isUnread = hasUnseenCompletion({ ...thread, lastVisitedAt });
-  const status = resolveSidebarThreadStatus(thread);
+  const threadStatusInput = {
+    ...thread,
+    hasQueuedMessage: !!queuedMessage,
+    hasQueuedMessageError: !!queuedMessage?.error,
+    hasQueuedTurnStart: hasQueuedTurnStart(thread, { now: new Date().toISOString() }),
+  };
+  const isUnread = hasUnseenCompletion({ ...threadStatusInput, lastVisitedAt });
+  const status = resolveSidebarThreadStatus(threadStatusInput);
   const isInFlight =
     status === "working" || status === "monitoring" || status === "approval" || status === "input";
   // A woken thread reappears at its original position (the sort is
@@ -2490,6 +2500,7 @@ export default function Sidebar() {
         override holds until all of them appear in canonical state. */
     readonly assignedKeys: ReadonlyMap<string, string>;
   } | null>(null);
+  const queuedMessagesByThreadKey = useQueuedMessageStore((store) => store.byThreadKey);
   const {
     pinnedThreads,
     draggableThreadKeys,
@@ -2549,15 +2560,17 @@ export default function Sidebar() {
             ? projected
             : { ...projected, snoozedAt: thread.snoozedAt, snoozedUntil: thread.snoozedUntil },
         );
-      } else if (supportsSnooze && effectiveSnoozed(thread, { now: preciseNow })) {
-        // Snooze outranks settlement and pinning until the thread wakes.
-        snoozed.push(thread);
-      } else if (supportsSettlement && thread.settledOverride === "settled") {
-        settled.push(thread);
-      } else if (thread.pinnedAt != null) {
-        pinned.push(thread);
       } else {
-        active.push(thread);
+        const queuedMessage = queuedMessagesByThreadKey[threadKey];
+        const section = resolveSidebarThreadSection({
+          isSnoozed: supportsSnooze && effectiveSnoozed(thread, { now: preciseNow }),
+          isSettled: supportsSettlement && thread.settledOverride === "settled",
+          isPinned: thread.pinnedAt != null,
+          hasQueuedWork: !!queuedMessage || hasQueuedTurnStart(thread, { now: preciseNow }),
+          hasQueueError: !!queuedMessage?.error,
+        });
+        const sections = { snoozed, settled, pinned, active };
+        sections[section].push(thread);
       }
     }
     // One shared rule on every platform (see sortPinnedThreadsByOrderKey):
@@ -2595,7 +2608,15 @@ export default function Sidebar() {
       settledThreads: sortSettledThreadsForSidebar(settled),
       snoozeNow: preciseNow,
     };
-  }, [nowMinute, optimisticDrop, scopedProjectKeys, serverConfigs, snoozeWakeTick, threads]);
+  }, [
+    nowMinute,
+    optimisticDrop,
+    queuedMessagesByThreadKey,
+    scopedProjectKeys,
+    serverConfigs,
+    snoozeWakeTick,
+    threads,
+  ]);
 
   const threadSearchInputRef = useRef<HTMLInputElement>(null);
   const [threadSearchQuery, setThreadSearchQuery] = useState("");

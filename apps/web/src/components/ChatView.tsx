@@ -1539,20 +1539,7 @@ export default function ChatView(props: ChatViewProps) {
   const queueMessage = useQueuedMessageStore((store) => store.queue);
   const takeQueuedMessage = useQueuedMessageStore((store) => store.take);
   const removeQueuedMessage = useQueuedMessageStore((store) => store.remove);
-
-  /**
-   * Moves the composer's draft into the queue, to be sent once the agent stops.
-   * Returns false when there is nothing to queue, so the shortcut can say so.
-   */
-  const queueCurrentPrompt = useCallback((): boolean => {
-    const prompt = promptRef.current;
-    if (prompt.trim().length === 0) return false;
-    if (!queueMessage(routeThreadKey, prompt)) return false;
-    promptRef.current = "";
-    setComposerDraftPrompt(composerDraftTarget, "");
-    composerRef.current?.resetCursorState();
-    return true;
-  }, [composerDraftTarget, queueMessage, routeThreadKey, setComposerDraftPrompt]);
+  const retryQueuedMessage = useQueuedMessageStore((store) => store.retry);
 
   /**
    * Returns the queued message to the composer so it can be reworded. Goes
@@ -1569,7 +1556,7 @@ export default function ChatView(props: ChatViewProps) {
     }
     // No editor mounted to take it, so the message stays queued rather than
     // vanishing into a composer that never showed it.
-    queueMessage(routeThreadKey, queued.prompt);
+    queueMessage(routeThreadKey, queued.prompt, queued.settings);
   }, [queueMessage, routeThreadKey, takeQueuedMessage]);
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
   const addComposerDraftFiles = useComposerDraftStore((store) => store.addFiles);
@@ -4626,6 +4613,51 @@ export default function ChatView(props: ChatViewProps) {
     ],
   );
 
+  /**
+   * Moves the composer's draft into the queue, to be sent once the agent stops.
+   * Returns false when there is nothing to queue, so the shortcut can say so.
+   */
+  const queueCurrentPrompt = useCallback((): boolean => {
+    if (!isServerThread) {
+      toastManager.add(
+        stackedThreadToast({ type: "info", title: "Start this thread before queuing a follow-up" }),
+      );
+      return true;
+    }
+    const context = composerRef.current?.getSendContext();
+    if (!context?.providerAvailable) return false;
+    const prompt = promptRef.current;
+    if (prompt.trim().length === 0) return false;
+    const text = formatOutgoingPrompt({
+      provider: context.selectedProvider,
+      model: context.selectedModel,
+      models: context.selectedProviderModels,
+      effort: context.selectedPromptEffort,
+      text: prompt.trim(),
+    });
+    if (composerRef.current?.validateProviderInput(text) === false) return true;
+    if (
+      !queueMessage(routeThreadKey, prompt, {
+        modelSelection: context.selectedModelSelection,
+        runtimeMode,
+        interactionMode: context.interactionMode,
+        text,
+      })
+    )
+      return false;
+    promptRef.current = "";
+    setComposerDraftPrompt(composerDraftTarget, "");
+    composerRef.current?.resetCursorState();
+    return true;
+  }, [
+    composerDraftTarget,
+    isServerThread,
+    queueMessage,
+    routeThreadKey,
+    runtimeMode,
+    setComposerDraftPrompt,
+  ]);
+
   // Debounce *showing* the scroll-to-bottom pill so it doesn't flash during
   // thread switches. LegendList fires scroll events with isAtEnd=false while
   // initialScrollAtEnd is settling; hiding is always immediate.
@@ -5837,20 +5869,41 @@ export default function ChatView(props: ChatViewProps) {
       // responding. This banner exists to be clicked.
       priority: "activity",
       icon: <ClockIcon />,
-      title: "Queued",
-      description: collapsed.length > 60 ? `${collapsed.slice(0, 60)}\u2026` : collapsed,
+      title: queuedMessage.error
+        ? "Queue delivery failed"
+        : queuedMessage.sentAt
+          ? "Sending queued message"
+          : "Queued",
+      description:
+        queuedMessage.error ??
+        (collapsed.length > 60 ? `${collapsed.slice(0, 60)}\u2026` : collapsed),
       actions: (
         <>
-          <Button size="xs" variant="ghost" onClick={editQueuedMessage}>
+          {queuedMessage.error ? (
+            <Button size="xs" variant="ghost" onClick={() => retryQueuedMessage(routeThreadKey)}>
+              Retry
+            </Button>
+          ) : null}
+          <Button
+            size="xs"
+            variant="ghost"
+            disabled={!!queuedMessage.sentAt && !queuedMessage.error}
+            onClick={editQueuedMessage}
+          >
             Edit
           </Button>
-          <Button size="xs" variant="ghost" onClick={() => removeQueuedMessage(routeThreadKey)}>
+          <Button
+            size="xs"
+            variant="ghost"
+            disabled={!!queuedMessage.sentAt && !queuedMessage.error}
+            onClick={() => removeQueuedMessage(routeThreadKey)}
+          >
             Discard
           </Button>
         </>
       ),
     };
-  }, [editQueuedMessage, queuedMessage, removeQueuedMessage, routeThreadKey]);
+  }, [editQueuedMessage, queuedMessage, removeQueuedMessage, retryQueuedMessage, routeThreadKey]);
 
   const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
     const backgroundLivenessItems =
@@ -5931,8 +5984,10 @@ export default function ChatView(props: ChatViewProps) {
     feedbackBannerItems,
     handleRestoreThreadBranch,
     isRestoringThreadBranch,
+    limitWarningBanner,
     localCheckoutBranchMismatch,
     parkedThreadBannerItem,
+    queuedMessageBannerItem,
     resumeCompactionBannerItem,
     showBranchMismatchBanner,
     systemComposerBannerItems,
@@ -7144,51 +7199,6 @@ export default function ChatView(props: ChatViewProps) {
       resetLocalDispatch();
     }
   };
-
-  // Send the queued message once the turn has actually finished. `isWorking`
-  // already folds in connecting, compaction and an in-flight local dispatch, so
-  // it going false is the thread being ready for another turn.
-  const queuedSendInFlightRef = useRef(false);
-  useEffect(() => {
-    if (!queuedMessage || isWorking || queuedSendInFlightRef.current) return;
-    if (!activeThread || isConnecting || !clientSettingsHydrated || threadDetailLoading) return;
-    queuedSendInFlightRef.current = true;
-    const taken = takeQueuedMessage(routeThreadKey);
-    if (!taken) {
-      queuedSendInFlightRef.current = false;
-      return;
-    }
-    // A draft typed while the message sat queued is restored afterwards, since
-    // sending the queue must not cost the user text they are still writing.
-    const pendingDraft = promptRef.current;
-    promptRef.current = taken.prompt;
-    setComposerDraftPrompt(composerDraftTarget, taken.prompt);
-    void onSend()
-      .catch(() => {
-        // A failed send puts the message back rather than dropping it.
-        queueMessage(routeThreadKey, taken.prompt);
-      })
-      .finally(() => {
-        if (pendingDraft.trim().length > 0) {
-          promptRef.current = pendingDraft;
-          setComposerDraftPrompt(composerDraftTarget, pendingDraft);
-        }
-        queuedSendInFlightRef.current = false;
-      });
-  }, [
-    activeThread,
-    clientSettingsHydrated,
-    composerDraftTarget,
-    isConnecting,
-    isWorking,
-    onSend,
-    queueMessage,
-    queuedMessage,
-    routeThreadKey,
-    setComposerDraftPrompt,
-    takeQueuedMessage,
-    threadDetailLoading,
-  ]);
 
   const onRespondToApproval = useCallback(
     async (requestId: ApprovalRequestId, decision: ProviderApprovalDecision) => {
