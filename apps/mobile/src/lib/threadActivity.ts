@@ -393,6 +393,11 @@ function deriveWorkLogEntries(
   const ordered = Arr.sort(activities, activityOrder);
   const entries: DerivedWorkLogEntry[] = [];
   for (const activity of ordered) {
+    if (
+      activity.kind === "reasoning.completed" &&
+      !asTrimmedString(asRecord(activity.payload)?.text)
+    )
+      continue;
     if (activity.tone !== "error" && isWorktreeSetupActivity(activity.kind)) continue;
     if (activity.kind === "tool.started") continue;
     // Like web: an agent's task.started row anchors its batch. It has a fixed
@@ -440,6 +445,17 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     activity.payload && typeof activity.payload === "object"
       ? (activity.payload as Record<string, unknown>)
       : null;
+  if (activity.kind === "reasoning.completed") {
+    return {
+      id: activity.id,
+      createdAt: activity.createdAt,
+      turnId: activity.turnId,
+      label: "Thinking",
+      detail: typeof payload?.text === "string" ? payload.text : undefined,
+      tone: "thinking",
+      sourceActivityKind: activity.kind,
+    };
+  }
   const commandPreview = extractToolCommand(payload);
   const changedFiles = extractChangedFiles(payload);
   const title = extractToolTitle(payload);
@@ -941,6 +957,7 @@ function workEntryIcon(entry: DerivedWorkLogEntry): ThreadFeedActivity["icon"] {
 }
 
 function buildWorkEntryExpandedBody(entry: WorkLogEntry): string | null {
+  if (entry.sourceActivityKind === "reasoning.completed") return entry.detail ?? null;
   if (entry.agentSpawn) return agentSpawnExpandedBody(entry.agentSpawn);
   const blocks: string[] = [];
   const visibleLabel = workEntryRowLabel(entry, true).trim();
@@ -987,6 +1004,10 @@ function stripShellWrapper(value: string): string {
 
 /** Expanded rows retain detail formatting; commands stay in the separate body. */
 export function workEntryRowLabel(entry: WorkLogEntry, expanded = false): string {
+  if (entry.sourceActivityKind === "reasoning.completed") {
+    const preview = entry.detail?.trim().split(/\r?\n/, 1)[0]?.slice(0, 160);
+    return expanded || !preview ? "Thinking" : `Thinking · ${preview}`;
+  }
   if (entry.agentSpawn) return agentSpawnLabel(entry.agentSpawn);
   const presentation = resolveWorkEntryToolPresentation(entry);
   if (presentation) return presentation.displayName;
@@ -1533,13 +1554,15 @@ function groupAdjacentActivities(entries: ReadonlyArray<RawThreadFeedEntry>): Th
       continue;
     }
 
-    const isCompaction = entry.activity.workEntry.sourceActivityKind === "context-compaction";
-    if (isCompaction || firstActivityEntry?.turnId !== entry.turnId) {
+    const standalone =
+      entry.activity.workEntry.sourceActivityKind === "context-compaction" ||
+      entry.activity.workEntry.sourceActivityKind === "reasoning.completed";
+    if (standalone || firstActivityEntry?.turnId !== entry.turnId) {
       flushGroup();
     }
     firstActivityEntry ??= entry;
     openGroupActivities.push(entry.activity);
-    if (isCompaction) {
+    if (standalone) {
       flushGroup();
     }
   }
@@ -1645,7 +1668,14 @@ function deriveThreadFeedTurnFolds(
       entries
         .filter(
           (entry) =>
-            entry.id !== firstAssistantMessageId && entry.id !== terminalAssistantMessageId,
+            entry.id !== firstAssistantMessageId &&
+            entry.id !== terminalAssistantMessageId &&
+            !(
+              entry.type === "activity-group" &&
+              entry.activities.some(
+                (activity) => activity.workEntry.sourceActivityKind === "reasoning.completed",
+              )
+            ),
         )
         .map((entry) => entry.id),
     );
@@ -1896,7 +1926,11 @@ function appendActivityGroupRows(
   };
   for (const activity of activities) {
     const spawn = activity.workEntry.agentSpawn;
-    if (activity.workEntry.tone !== "error" && spawn === undefined) {
+    if (
+      activity.workEntry.tone !== "error" &&
+      activity.workEntry.sourceActivityKind !== "reasoning.completed" &&
+      spawn === undefined
+    ) {
       groupableRun.push(activity);
       continue;
     }
@@ -2201,6 +2235,7 @@ function toThreadFeedActivityEntry(
   const detail = workEntryPreview(entry);
   const getFullDetail = memoizeValue(() => buildWorkEntryExpandedBody(entry));
   const getCopyText = memoizeValue(() => {
+    if (entry.sourceActivityKind === "reasoning.completed") return entry.detail ?? "";
     const copyLabel = capitalizePhrase(normalizeCompactToolLabel(entry.toolTitle || entry.label));
     const fullDetail = getFullDetail();
     if (entry.command) {

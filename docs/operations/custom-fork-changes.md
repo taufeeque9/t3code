@@ -48,6 +48,22 @@ message. Upstream has no equivalent.
 - `apps/web`: `hooks/useForkThread.ts`, plus fork entry points in `ChatView.tsx`,
   `Sidebar.tsx`, `MessagesTimeline.tsx`, `threadActionMenu.logic.ts`
 
+### Claude thinking in conversation history
+
+Claude sometimes puts an explanation in a thinking block without repeating it
+in its reply. Upstream discards those blocks. The fork preserves parent-session
+thinking as activities and shows expandable Thinking previews on web, desktop,
+and mobile, outside tool groups and settled-turn folds.
+
+The Claude adapter reconciles streamed blocks with completed snapshots and saves
+partial text on interruption. Each block keeps one identity; a late snapshot
+updates that activity. Ingestion preserves the full text, and clients render
+the body only when expanded. Existing historical logs are not backfilled.
+
+**On conflict:** compare with any upstream reasoning support before retaining
+this implementation. Retire it when upstream preserves snapshot-only blocks,
+partial output, and corrections with equivalent visibility across clients.
+
 ### Claude account sign-in from the Limits view
 
 Repairs an expired Claude credential without a terminal. Upstream reports the

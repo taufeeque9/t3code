@@ -3198,6 +3198,9 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   if (workEntry.agentSpawn) {
     return <AgentSpawnCtaRow workEntry={workEntry} />;
   }
+  if (workEntry.sourceActivityKind === "reasoning.completed") {
+    return <ReasoningWorkEntryRow workEntry={workEntry} workspaceRoot={workspaceRoot} />;
+  }
   return (
     <PlainWorkEntryRow
       workEntry={workEntry}
@@ -3206,6 +3209,55 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
       displayLabel={displayLabel}
       onToggleEntry={props.onToggleEntry}
     />
+  );
+});
+
+const ReasoningWorkEntryRow = memo(function ReasoningWorkEntryRow({
+  workEntry,
+  workspaceRoot,
+}: {
+  workEntry: TimelineWorkEntry;
+  workspaceRoot: string | undefined;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const { threadRef } = use(TimelineRowCtx);
+  const text = workEntry.detail ?? "";
+  const preview = text.trim().split(/\r?\n/, 1)[0];
+  if (!preview) {
+    return null;
+  }
+  return (
+    <div className="py-1">
+      <button
+        type="button"
+        aria-label="Thinking"
+        aria-expanded={expanded}
+        onClick={() => setExpanded(!expanded)}
+        className="flex w-full min-w-0 items-center gap-1.5 rounded-md px-0.5 py-1 text-left text-sm text-muted-foreground hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <BrainIcon aria-hidden className="size-4 shrink-0 opacity-70 light:brightness-[.6]" />
+        <span className="shrink-0">Thinking</span>
+        <span className="min-w-0 flex-1 truncate text-muted-foreground/80">
+          {expanded ? null : preview}
+        </span>
+        <ChevronRightIcon aria-hidden className={cn("size-3 shrink-0", expanded && "rotate-90")} />
+      </button>
+      {expanded ? (
+        <div className="ms-2 mt-1 border-l border-border ps-4">
+          <div className="flex justify-end">
+            <MessageCopyButton text={text} variant="ghost" />
+          </div>
+          <ChatMarkdown
+            text={text}
+            cwd={workspaceRoot}
+            threadRef={threadRef ?? undefined}
+            className="text-sm text-foreground/80"
+            lineBreaks
+            parseRawHtml={false}
+          />
+        </div>
+      ) : null}
+    </div>
   );
 });
 

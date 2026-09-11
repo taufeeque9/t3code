@@ -359,6 +359,39 @@ export function runtimeEventToActivities(
       ? { sequence: eventWithSequence.sessionSequence }
       : {};
   })();
+  if (
+    (event.type === "item.updated" || event.type === "item.completed") &&
+    event.payload.itemType === "reasoning"
+  ) {
+    const data = event.payload.data;
+    if (
+      !event.itemId ||
+      event.payload.agentId ||
+      event.payload.parentToolUseId ||
+      !data ||
+      typeof data !== "object" ||
+      !("text" in data) ||
+      typeof data.text !== "string" ||
+      data.text.trim().length === 0
+    ) {
+      return [];
+    }
+    return [
+      {
+        id: EventId.make(`reasoning:${event.threadId}:${event.turnId ?? ""}:${event.itemId}`),
+        createdAt:
+          "createdAt" in data && typeof data.createdAt === "string"
+            ? data.createdAt
+            : event.createdAt,
+        tone: "info",
+        kind: "reasoning.completed",
+        summary: "Thinking",
+        payload: { text: data.text, itemId: event.itemId },
+        turnId: toTurnId(event.turnId) ?? null,
+        ...maybeSequence,
+      },
+    ];
+  }
   switch (event.type) {
     case "request.opened": {
       if (event.payload.requestType === "tool_user_input") {
@@ -2135,7 +2168,7 @@ const make = Effect.gen(function* () {
               commandId,
               threadId: thread.id,
               activity,
-              createdAt: activity.createdAt,
+              createdAt: event.createdAt,
             }),
           ),
         ),

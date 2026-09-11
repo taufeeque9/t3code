@@ -21,6 +21,7 @@ import {
   ProjectId,
   ProviderItemId,
   RuntimeRequestId,
+  RuntimeItemId,
   type ServerSettings,
   ThreadId,
   TurnId,
@@ -1316,6 +1317,72 @@ describe("ProviderRuntimeIngestion", () => {
       harness.readModel,
       (thread) => thread.session?.status === "ready" && thread.session?.activeTurnId === null,
     );
+  });
+
+  it("preserves completed thinking in thread history without creating an assistant reply", async () => {
+    const harness = await createHarness();
+    const text = "The venv cache is reused.\n\n" + "Full reasoning is retained. ".repeat(400);
+    const event: ProviderRuntimeEvent = {
+      type: "item.completed",
+      eventId: asEventId("thinking-completed"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("thinking-turn"),
+      itemId: RuntimeItemId.make("thinking-block"),
+      payload: { itemType: "reasoning", status: "completed", data: { text } },
+    };
+    harness.emit(event);
+    await harness.drain();
+    const thread = (await harness.readModel()).threads.find((entry) => entry.id === "thread-1");
+    expect(
+      thread?.activities.filter((activity) => activity.kind === "reasoning.completed"),
+    ).toEqual([
+      expect.objectContaining({
+        summary: "Thinking",
+        turnId: "thinking-turn",
+        payload: { itemId: "thinking-block", text },
+      }),
+    ]);
+    expect(thread?.messages.some((message) => message.role === "assistant")).toBe(false);
+
+    const fullText = text + "\nThe snapshot includes the final explanation.";
+    const correctionTime = "2026-01-01T00:00:02.000Z";
+    harness.emit({
+      ...event,
+      type: "item.updated",
+      eventId: asEventId("thinking-snapshot"),
+      createdAt: correctionTime,
+      payload: { ...event.payload, data: { text: fullText, createdAt: event.createdAt } },
+    });
+    await harness.drain();
+    const corrected = (await harness.readModel()).threads.find((entry) => entry.id === "thread-1");
+    const thoughts = corrected?.activities.filter(
+      (activity) => activity.kind === "reasoning.completed",
+    );
+    expect(thoughts).toHaveLength(1);
+    expect(thoughts?.[0]?.id).toBe(
+      thread?.activities.find((activity) => activity.kind === "reasoning.completed")?.id,
+    );
+    expect(thoughts?.[0]?.payload).toEqual({ text: fullText, itemId: "thinking-block" });
+    expect(thoughts?.[0]?.createdAt).toBe(event.createdAt);
+    expect(corrected?.updatedAt).toBe(correctionTime);
+
+    harness.emit({
+      ...event,
+      eventId: asEventId("empty-thinking"),
+      payload: { itemType: "reasoning", data: { text: " \n" } },
+    });
+    harness.emit({
+      ...event,
+      eventId: asEventId("child-thinking"),
+      payload: { ...event.payload, parentToolUseId: "child-tool" },
+    });
+    await harness.drain();
+    const after = (await harness.readModel()).threads.find((entry) => entry.id === "thread-1");
+    expect(
+      after?.activities.filter((activity) => activity.kind === "reasoning.completed"),
+    ).toHaveLength(1);
   });
 
   it("ignores provider content deltas that cannot change thread state", async () => {

@@ -731,6 +731,7 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
   },
 ) {
   const { row, expanded } = props;
+  const isReasoning = row.workEntry.sourceActivityKind === "reasoning.completed";
   const canExpand = row.canExpand;
   const fullDetail = expanded ? row.getFullDetail() : null;
   const viewedImagePath = workEntryViewedImagePath(row.workEntry);
@@ -861,17 +862,23 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
               {props.renderImage({ href: viewedImagePath, alt: null, title: null })}
             </View>
           ) : null}
-          <ScrollView
-            nestedScrollEnabled
-            directionalLockEnabled
-            showsVerticalScrollIndicator
-            className="max-h-60"
-            contentContainerStyle={{ paddingRight: 8 }}
-          >
-            <Text selectable className="font-mono text-2xs leading-normal text-foreground-muted">
+          {isReasoning ? (
+            <Text selectable className="text-sm leading-relaxed text-foreground-muted">
               {fullDetail}
             </Text>
-          </ScrollView>
+          ) : (
+            <ScrollView
+              nestedScrollEnabled
+              directionalLockEnabled
+              showsVerticalScrollIndicator
+              className="max-h-60"
+              contentContainerStyle={{ paddingRight: 8 }}
+            >
+              <Text selectable className="font-mono text-2xs leading-normal text-foreground-muted">
+                {fullDetail}
+              </Text>
+            </ScrollView>
+          )}
         </Animated.View>
       ) : null}
     </Animated.View>

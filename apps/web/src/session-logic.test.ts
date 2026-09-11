@@ -450,6 +450,19 @@ describe("workEntryIndicatesToolNeutralStatus", () => {
 });
 
 describe("deriveWorkLogEntries", () => {
+  it("retains complete thinking text independently of tool detail limits", () => {
+    const text = "The venv cache is reused.\n\n" + "Full reasoning. ".repeat(500);
+    const [entry] = deriveWorkLogEntries([
+      makeActivity({
+        id: "reasoning",
+        kind: "reasoning.completed",
+        summary: "Thinking",
+        payload: { text, itemId: "reasoning-block" },
+      }),
+    ]);
+    expect(entry).toMatchObject({ label: "Thinking", tone: "thinking", detail: text });
+  });
+
   it("keeps the latest task progress without emitting plan-update log entries", () => {
     const activities = [
       makeActivity({ id: "before", kind: "tool.completed", summary: "Read files", sequence: 0 }),

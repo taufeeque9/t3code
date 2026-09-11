@@ -1481,7 +1481,7 @@ describe("ClaudeAdapterLive", () => {
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
-      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 11).pipe(
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 12).pipe(
         Stream.runCollect,
         Effect.forkChild,
       );
@@ -1597,6 +1597,7 @@ describe("ClaudeAdapterLive", () => {
           "turn.started",
           "thread.started",
           "content.delta",
+          "item.completed",
           "item.started",
           "item.updated",
           "item.updated",
@@ -5443,6 +5444,286 @@ describe("ClaudeAdapterLive", () => {
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
     );
+  });
+
+  describe("Claude thinking preservation", () => {
+    const stream = (event: unknown, parentToolUseId: string | null = null) =>
+      ({
+        type: "stream_event",
+        session_id: "sdk-thinking",
+        uuid: "stream-thinking",
+        parent_tool_use_id: parentToolUseId,
+        event,
+      }) as unknown as SDKMessage;
+    const snapshot = (
+      id: string,
+      uuid: string,
+      content: unknown[],
+      parentToolUseId: string | null = null,
+    ) =>
+      ({
+        type: "assistant",
+        session_id: "sdk-thinking",
+        uuid,
+        parent_tool_use_id: parentToolUseId,
+        message: { id, content },
+      }) as unknown as SDKMessage;
+    const thinking = (text: string) => ({ type: "thinking", thinking: text, signature: "sig" });
+    const start = (id: string) => stream({ type: "message_start", message: { id } });
+    const blockStart = (index = 0) =>
+      stream({ type: "content_block_start", index, content_block: thinking("") });
+    const delta = (text: string, index = 0) =>
+      stream({
+        type: "content_block_delta",
+        index,
+        delta: { type: "thinking_delta", thinking: text },
+      });
+    const stop = (index = 0) => stream({ type: "content_block_stop", index });
+
+    const cases = [
+      {
+        name: "preserves snapshot-only thinking and ignores empty or redacted blocks",
+        messages: [
+          snapshot("m1", "a1", [
+            thinking("Cached environments can be reused."),
+            thinking("  "),
+            { type: "redacted_thinking", data: "encrypted" },
+          ]),
+        ],
+        expected: ["Cached environments can be reused."],
+      },
+      {
+        name: "completes streaming thinking once when its snapshot follows the block stop",
+        messages: [
+          start("m1"),
+          blockStart(),
+          delta("Cached "),
+          delta("environments."),
+          stop(),
+          snapshot("m1", "a1", [thinking("Cached environments.")]),
+          snapshot("m1", "a1", [thinking("Cached environments.")]),
+        ],
+        expected: ["Cached environments."],
+      },
+      {
+        name: "uses the full snapshot if it arrives before the block stop",
+        messages: [
+          start("m1"),
+          blockStart(),
+          delta("Cached "),
+          snapshot("m1", "a1", [thinking("Cached environments.")]),
+          stop(),
+        ],
+        expected: ["Cached environments."],
+      },
+      {
+        name: "uses a fuller snapshot delivered after block stop without duplicating the partial text",
+        messages: [
+          start("m1"),
+          blockStart(),
+          delta("Cached "),
+          stop(),
+          snapshot("m1", "a1", [thinking("Cached environments.")]),
+        ],
+        expected: ["Cached environments."],
+      },
+      {
+        name: "ignores late deltas after an authoritative snapshot",
+        messages: [
+          start("m1"),
+          blockStart(),
+          delta("Cached "),
+          snapshot("m1", "a1", [thinking("Cached environments.")]),
+          delta("environments."),
+          stop(),
+        ],
+        expected: ["Cached environments."],
+      },
+      {
+        name: "updates the same reasoning item if a fuller snapshot arrives after the next message",
+        messages: [
+          start("m1"),
+          blockStart(),
+          delta("Cached "),
+          stop(),
+          start("m2"),
+          snapshot("m1", "a1", [thinking("Cached environments.")]),
+        ],
+        expected: ["Cached "],
+        updates: ["Cached environments."],
+      },
+      {
+        name: "keeps reused block indexes distinct across model messages",
+        messages: [
+          start("m1"),
+          blockStart(),
+          delta("First"),
+          stop(),
+          start("m2"),
+          blockStart(),
+          delta("Second"),
+          stop(),
+          snapshot("m1", "a1", [thinking("First")]),
+          snapshot("m2", "a2", [thinking("Second")]),
+        ],
+        expected: ["First", "Second"],
+      },
+      {
+        name: "matches individual SDK block snapshots sharing one API message ID",
+        messages: [
+          start("m1"),
+          blockStart(),
+          delta("First"),
+          stop(),
+          snapshot("m1", "a1", [thinking("First")]),
+          blockStart(1),
+          delta("Second", 1),
+          stop(1),
+          snapshot("m1", "a2", [thinking("Second")]),
+        ],
+        expected: ["First", "Second"],
+      },
+      {
+        name: "matches the later streamed block when an earlier block has no snapshot",
+        messages: [
+          start("m1"),
+          blockStart(),
+          delta("First"),
+          stop(),
+          blockStart(1),
+          delta("Second", 1),
+          stop(1),
+          snapshot("m1", "a2", [thinking("Second")]),
+        ],
+        expected: ["First", "Second"],
+      },
+      {
+        name: "preserves separate identical snapshot-only blocks in the same API message",
+        messages: [
+          snapshot("m1", "a1", [thinking("Check again")]),
+          snapshot("m1", "a2", [thinking("Check again")]),
+        ],
+        expected: ["Check again", "Check again"],
+      },
+      {
+        name: "flushes a partial block at an interrupted turn boundary",
+        messages: [start("m1"), blockStart(), delta("Partial explanation")],
+        expected: ["Partial explanation"],
+        interrupted: true,
+      },
+      {
+        name: "flushes partial thinking before the next model message",
+        messages: [
+          start("m1"),
+          blockStart(),
+          delta("First"),
+          start("m2"),
+          blockStart(),
+          delta("Second"),
+          stop(),
+        ],
+        expected: ["First", "Second"],
+      },
+      {
+        name: "excludes subagent thinking and ignores subagent block stops",
+        messages: [
+          start("m1"),
+          blockStart(),
+          delta("Parent "),
+          stream({ type: "message_start", message: { id: "child" } }, "tool-child"),
+          stream(
+            { type: "content_block_start", index: 0, content_block: thinking("") },
+            "tool-child",
+          ),
+          stream(
+            {
+              type: "content_block_delta",
+              index: 0,
+              delta: { type: "thinking_delta", thinking: "Child" },
+            },
+            "tool-child",
+          ),
+          stream({ type: "content_block_stop", index: 0 }, "tool-child"),
+          snapshot("child", "child1", [thinking("Child")], "tool-child"),
+          delta("explanation"),
+          stop(),
+        ],
+        expected: ["Parent explanation"],
+      },
+    ];
+    for (const scenario of cases) {
+      it.effect(scenario.name, () => {
+        const harness = makeHarness();
+        return Effect.gen(function* () {
+          const adapter = yield* ClaudeAdapter;
+          const eventsFiber = yield* adapter.streamEvents.pipe(
+            Stream.takeUntil((event) => event.type === "turn.completed"),
+            Stream.runCollect,
+            Effect.forkChild,
+          );
+          const session = yield* adapter.startSession({
+            threadId: THREAD_ID,
+            provider: ProviderDriverKind.make("claudeAgent"),
+            runtimeMode: "full-access",
+          });
+          const turn = yield* adapter.sendTurn({
+            threadId: session.threadId,
+            input: "Explain",
+            attachments: [],
+          });
+          for (const message of scenario.messages) harness.query.emit(message);
+          harness.query.emit({
+            type: "result",
+            subtype: scenario.interrupted ? "error_during_execution" : "success",
+            is_error: Boolean(scenario.interrupted),
+            errors: scenario.interrupted ? ["Request was aborted by user"] : [],
+            session_id: "sdk-thinking",
+            uuid: "result-thinking",
+          } as unknown as SDKMessage);
+          const events = Array.from(yield* Fiber.join(eventsFiber));
+          const completions = events
+            .filter((event) => event.type === "item.completed")
+            .filter((event) => event.payload.itemType === "reasoning");
+          assert.deepEqual(
+            completions.map((event) => (event.payload.data as { text: string }).text),
+            scenario.expected,
+          );
+          assert.equal(
+            new Set(completions.map((event) => event.itemId)).size,
+            scenario.expected.length,
+          );
+          const updates = events
+            .filter((event) => event.type === "item.updated")
+            .filter((event) => event.payload.itemType === "reasoning");
+          assert.deepEqual(
+            updates.map((event) => (event.payload.data as { text: string }).text),
+            scenario.updates ?? [],
+          );
+          for (const update of updates) {
+            const completion = completions.find((event) => event.itemId === update.itemId);
+            assert.isDefined(completion);
+            assert.equal(
+              (update.payload.data as { createdAt: string }).createdAt,
+              completion?.createdAt,
+            );
+          }
+          for (const event of completions) {
+            assert.equal(event.turnId, turn.turnId);
+            assert.equal(event.payload.title, "Thinking");
+            assert.equal(event.payload.status, "completed");
+          }
+          for (const event of events) {
+            if (event.type === "content.delta" && event.payload.streamKind === "reasoning_text") {
+              assert.isTrue(completions.some((completion) => completion.itemId === event.itemId));
+            }
+          }
+          assert.equal(events.at(-1)?.type, "turn.completed");
+        }).pipe(
+          Effect.provideService(Random.Random, makeDeterministicRandomService()),
+          Effect.provide(harness.layer),
+        );
+      });
+    }
   });
 
   it.effect("falls back to assistant payload text when stream deltas are absent", () => {

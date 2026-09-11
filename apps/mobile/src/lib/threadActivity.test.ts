@@ -274,6 +274,95 @@ function makeThread(
 }
 
 describe("buildThreadFeed", () => {
+  it("keeps completed thinking visible in order outside settled work folds and tool groups", () => {
+    const turnId = TurnId.make("thinking-turn");
+    const text = `  Check the cached environment first.\n\n${"Preserve this reasoning. ".repeat(250)}\n  `;
+    const thread = makeThread({
+      id: ThreadId.make("thinking-thread"),
+      projectId: ProjectId.make("project-1"),
+      title: "Preserved thinking",
+      latestTurn: {
+        turnId,
+        state: "completed",
+        requestedAt: "2026-04-01T00:00:00.000Z",
+        startedAt: "2026-04-01T00:00:00.000Z",
+        completedAt: "2026-04-01T00:00:04.000Z",
+        assistantMessageId: null,
+      },
+      activities: [
+        makeActivity({
+          id: EventId.make("tool-after"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Read environment",
+          createdAt: "2026-04-01T00:00:03.000Z",
+          turnId,
+          payload: { itemType: "file_read", status: "completed" },
+        }),
+        makeActivity({
+          id: EventId.make("reasoning"),
+          kind: "reasoning.completed",
+          summary: "Thinking",
+          createdAt: "2026-04-01T00:00:02.000Z",
+          turnId,
+          payload: { text, itemId: "reasoning-1" },
+        }),
+        makeActivity({
+          id: EventId.make("tool-before"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Find environments",
+          createdAt: "2026-04-01T00:00:01.000Z",
+          turnId,
+          payload: { itemType: "file_read", status: "completed" },
+        }),
+      ],
+    });
+    const feed = buildThreadFeed(thread);
+    expect(feed.map((entry) => entry.id)).toEqual(["tool-before", "reasoning", "tool-after"]);
+    const collapsed = deriveThreadFeedPresentation(feed, thread.latestTurn, new Set());
+    expect(collapsed.map((entry) => entry.id)).toEqual(["turn-fold:thinking-turn", "reasoning"]);
+    const row = collapsed[1];
+    expect(row?.type).toBe("activity-group");
+    if (row?.type !== "activity-group") throw new Error("Missing thinking row");
+    expect(row.activities).toHaveLength(1);
+    const thinking = row.activities[0]!;
+    expect(thinking.canExpand).toBe(true);
+    expect(thinking.toolLike).toBe(false);
+    expect(thinking.status).toBeNull();
+    expect(thinking.getFullDetail()).toBe(text);
+    expect(thinking.getCopyText()).toBe(text);
+    expect(workEntryRowLabel(thinking.workEntry)).toBe(
+      "Thinking · Check the cached environment first.",
+    );
+    expect(workEntryRowLabel(thinking.workEntry, true)).toBe("Thinking");
+    const expanded = deriveThreadFeedPresentation(feed, thread.latestTurn, new Set([turnId]));
+    expect(expanded.map((entry) => entry.id)).toEqual([
+      "turn-fold:thinking-turn",
+      "work-toggle:work-group:tool-before",
+      "reasoning",
+      "work-toggle:work-group:tool-after",
+    ]);
+  });
+
+  it.each([undefined, "", " \n\t"])("omits empty completed thinking: %j", (text) => {
+    const thread = makeThread({
+      id: ThreadId.make("empty-thinking-thread"),
+      projectId: ProjectId.make("project-1"),
+      title: "Empty thinking",
+      activities: [
+        makeActivity({
+          id: EventId.make("empty-reasoning"),
+          kind: "reasoning.completed",
+          summary: "Thinking",
+          createdAt: "2026-04-01T00:00:02.000Z",
+          payload: { text },
+        }),
+      ],
+    });
+    expect(buildThreadFeed(thread)).toEqual([]);
+  });
+
   it("reuses unchanged feed and presentation rows during an assistant text update", () => {
     const completedTurnId = TurnId.make("completed-turn");
     const activeTurnId = TurnId.make("active-turn");

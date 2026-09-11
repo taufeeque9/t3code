@@ -664,7 +664,12 @@ function deriveTurnFolds(input: {
       // Agent-spawn CTA rows never fold: workflows outlive their launching
       // turn (dynamic spawns, background execution), and folding the CTA
       // when the turn settles makes a still-running fleet invisible.
-      if (entry.kind === "work" && entry.entry.agentSpawn !== undefined) {
+      // Thinking rows expose their own preview and expansion outside the fold.
+      if (
+        entry.kind === "work" &&
+        (entry.entry.agentSpawn !== undefined ||
+          entry.entry.sourceActivityKind === "reasoning.completed")
+      ) {
         continue;
       }
       hiddenEntryIds.add(entry.id);
@@ -924,6 +929,7 @@ export function deriveMessagesTimelineRows(input: {
       entry.kind !== "work" ||
       entry.entry.agentSpawn !== undefined ||
       entry.entry.sourceActivityKind === "context-compaction" ||
+      entry.entry.sourceActivityKind === "reasoning.completed" ||
       entry.entry.tone === "error"
     ) {
       break;
@@ -1047,7 +1053,11 @@ export function deriveMessagesTimelineRows(input: {
     }
 
     if (timelineEntry.kind === "work") {
-      if (timelineEntry.entry.agentSpawn !== undefined || timelineEntry.entry.tone === "error") {
+      if (
+        timelineEntry.entry.agentSpawn !== undefined ||
+        timelineEntry.entry.tone === "error" ||
+        timelineEntry.entry.sourceActivityKind === "reasoning.completed"
+      ) {
         nextRows.push({
           kind: "work",
           id: timelineEntry.id,
@@ -1066,6 +1076,7 @@ export function deriveMessagesTimelineRows(input: {
           nextEntry.kind !== "work" ||
           nextEntry.entry.agentSpawn !== undefined ||
           nextEntry.entry.sourceActivityKind === "context-compaction" ||
+          nextEntry.entry.sourceActivityKind === "reasoning.completed" ||
           nextEntry.entry.tone === "error" ||
           activeWorkEntryIds.has(nextEntry.id) ||
           collapsedEntryIds.has(nextEntry.id) ||

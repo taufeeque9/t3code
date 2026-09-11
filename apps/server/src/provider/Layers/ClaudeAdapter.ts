@@ -164,6 +164,10 @@ interface ClaudeTurnState {
   readonly items: Array<unknown>;
   readonly assistantTextBlocks: Map<number, AssistantTextBlockState>;
   readonly assistantTextBlockOrder: Array<AssistantTextBlockState>;
+  readonly reasoningBlocks: Map<number, ReasoningBlockState>;
+  readonly reasoningBlockOrder: Array<ReasoningBlockState>;
+  readonly reasoningSnapshotUuids: Set<string>;
+  reasoningMessageId: string | undefined;
   readonly capturedProposedPlanKeys: Set<string>;
   latestAssistantUsage: unknown | undefined;
   compactedSinceLatestAssistantUsage: boolean;
@@ -181,6 +185,16 @@ interface AssistantTextBlockState {
   fallbackText: string;
   streamClosed: boolean;
   completionEmitted: boolean;
+}
+
+interface ReasoningBlockState {
+  readonly itemId: string;
+  readonly blockIndex: number;
+  messageId: string | undefined;
+  text: string;
+  snapshotReceived: boolean;
+  completionEmitted: boolean;
+  completedAt: string | undefined;
 }
 
 interface PendingApproval {
@@ -2413,6 +2427,100 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
   });
 
+  const ensureReasoningBlock = Effect.fn("ensureReasoningBlock")(function* (
+    context: ClaudeSessionContext,
+    blockIndex: number,
+  ) {
+    const turn = context.turnState;
+    if (!turn) return undefined;
+    const existing = turn.reasoningBlocks.get(blockIndex);
+    if (existing && !existing.completionEmitted) return existing;
+    const block: ReasoningBlockState = {
+      itemId: yield* randomUUIDv4,
+      blockIndex,
+      messageId: turn.reasoningMessageId,
+      text: "",
+      snapshotReceived: false,
+      completionEmitted: false,
+      completedAt: undefined,
+    };
+    turn.reasoningBlocks.set(blockIndex, block);
+    turn.reasoningBlockOrder.push(block);
+    return block;
+  });
+
+  const completeReasoningBlock = Effect.fn("completeReasoningBlock")(function* (
+    context: ClaudeSessionContext,
+    block: ReasoningBlockState,
+    snapshotChanged = false,
+  ) {
+    const turn = context.turnState;
+    if (!turn || (block.completionEmitted && !snapshotChanged) || block.text.trim().length === 0)
+      return;
+    const type = block.completionEmitted ? "item.updated" : "item.completed";
+    block.completionEmitted = true;
+    const stamp = yield* makeEventStamp();
+    block.completedAt ??= stamp.createdAt;
+    yield* offerRuntimeEvent({
+      type,
+      eventId: stamp.eventId,
+      provider: PROVIDER,
+      createdAt: stamp.createdAt,
+      threadId: context.session.threadId,
+      turnId: turn.turnId,
+      itemId: asRuntimeItemId(block.itemId),
+      payload: {
+        itemType: "reasoning",
+        status: "completed",
+        title: "Thinking",
+        data: { text: block.text, createdAt: block.completedAt },
+      },
+      providerRefs: nativeProviderRefs(context),
+    });
+  });
+
+  const backfillReasoningBlocksFromSnapshot = Effect.fn("backfillReasoningBlocksFromSnapshot")(
+    function* (context: ClaudeSessionContext, message: Extract<SDKMessage, { type: "assistant" }>) {
+      const turn = context.turnState;
+      if (!turn || turn.reasoningSnapshotUuids.has(message.uuid)) return;
+      turn.reasoningSnapshotUuids.add(message.uuid);
+      const content = message.message.content;
+      if (!Array.isArray(content)) return;
+      for (const [index, snapshot] of content.entries()) {
+        if (snapshot.type !== "thinking" || snapshot.thinking.trim().length === 0) continue;
+        // The SDK can emit one completed block per assistant envelope, sharing
+        // the API message ID. Match those to their streamed blocks in order.
+        const candidates = turn.reasoningBlockOrder.filter(
+          (block) =>
+            !block.snapshotReceived &&
+            (block.messageId === undefined || block.messageId === message.message.id) &&
+            (content.length === 1 || block.blockIndex === index),
+        );
+        const existing =
+          candidates.find((block) => block.text === snapshot.thinking) ??
+          candidates.find(
+            (block) => block.text.length > 0 && snapshot.thinking.startsWith(block.text),
+          ) ??
+          candidates[0];
+        const block = existing ?? {
+          itemId: yield* randomUUIDv4,
+          blockIndex: index,
+          messageId: message.message.id,
+          text: snapshot.thinking,
+          snapshotReceived: false,
+          completionEmitted: false,
+          completedAt: undefined,
+        };
+        if (!existing) turn.reasoningBlockOrder.push(block);
+        const snapshotChanged = block.text !== snapshot.thinking;
+        block.messageId = message.message.id;
+        block.snapshotReceived = true;
+        block.text = snapshot.thinking;
+        yield* completeReasoningBlock(context, block, snapshotChanged);
+      }
+    },
+  );
+
   const ensureThreadId = Effect.fn("ensureThreadId")(function* (
     context: ClaudeSessionContext,
     message: SDKMessage,
@@ -2732,6 +2840,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       return;
     }
 
+    for (const block of turnState.reasoningBlockOrder) {
+      yield* completeReasoningBlock(context, block);
+    }
+
     for (const [index, tool] of context.inFlightTools.entries()) {
       const toolStamp = yield* makeEventStamp();
       yield* offerRuntimeEvent({
@@ -2854,6 +2966,22 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       }
     }
 
+    if (event.type === "message_start" && !streamParentToolUseId && context.turnState) {
+      for (const block of context.turnState.reasoningBlocks.values()) {
+        yield* completeReasoningBlock(context, block);
+      }
+      context.turnState.reasoningMessageId = event.message.id;
+      context.turnState.reasoningBlocks.clear();
+      return;
+    }
+
+    if (event.type === "message_stop" && !streamParentToolUseId && context.turnState) {
+      for (const block of context.turnState.reasoningBlocks.values()) {
+        yield* completeReasoningBlock(context, block);
+      }
+      return;
+    }
+
     if (event.type === "message_delta") {
       if (message.parent_tool_use_id !== null && message.parent_tool_use_id !== undefined) {
         return;
@@ -2885,21 +3013,23 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         if (deltaText.length === 0) {
           return;
         }
+        if (
+          event.delta.type === "thinking_delta" &&
+          context.turnState.reasoningBlocks.get(event.index)?.snapshotReceived
+        )
+          return;
         const streamKind = streamKindFromDeltaType(event.delta.type);
+        const reasoningBlock =
+          event.delta.type === "thinking_delta"
+            ? yield* ensureReasoningBlock(context, event.index)
+            : undefined;
+        if (reasoningBlock) reasoningBlock.text += deltaText;
         const assistantBlockEntry =
           event.delta.type === "text_delta"
             ? yield* ensureAssistantTextBlock(context, event.index)
-            : context.turnState.assistantTextBlocks.get(event.index)
-              ? {
-                  blockIndex: event.index,
-                  block: context.turnState.assistantTextBlocks.get(
-                    event.index,
-                  ) as AssistantTextBlockState,
-                }
-              : undefined;
-        if (assistantBlockEntry?.block && event.delta.type === "text_delta") {
-          assistantBlockEntry.block.emittedTextDelta = true;
-        }
+            : undefined;
+        if (assistantBlockEntry) assistantBlockEntry.block.emittedTextDelta = true;
+        const itemId = reasoningBlock?.itemId ?? assistantBlockEntry?.block.itemId;
         const stamp = yield* makeEventStamp();
         yield* offerRuntimeEvent({
           type: "content.delta",
@@ -2908,11 +3038,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           createdAt: stamp.createdAt,
           threadId: context.session.threadId,
           turnId: context.turnState.turnId,
-          ...(assistantBlockEntry?.block
-            ? {
-                itemId: asRuntimeItemId(assistantBlockEntry.block.itemId),
-              }
-            : {}),
+          ...(itemId ? { itemId: asRuntimeItemId(itemId) } : {}),
           payload: {
             streamKind,
             delta: deltaText,
@@ -3032,7 +3158,18 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
     if (event.type === "content_block_start") {
       const { index, content_block: block } = event;
+      if (!streamParentToolUseId && context.turnState) {
+        for (const previous of context.turnState.reasoningBlocks.values()) {
+          yield* completeReasoningBlock(context, previous);
+        }
+      }
+      if (block.type === "thinking") {
+        const reasoningBlock = yield* ensureReasoningBlock(context, index);
+        if (reasoningBlock) reasoningBlock.text = block.thinking;
+        return;
+      }
       if (block.type === "text") {
+        context.turnState?.reasoningBlocks.delete(index);
         yield* ensureAssistantTextBlock(context, index, {
           fallbackText: extractContentBlockText(block),
         });
@@ -3114,6 +3251,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
     if (event.type === "content_block_stop") {
       const { index } = event;
+      if (!streamParentToolUseId) {
+        const reasoningBlock = context.turnState?.reasoningBlocks.get(index);
+        // Prefer the SDK snapshot that accompanies block_stop; subsequent
+        // block/message boundaries flush the streamed text if it never arrives.
+        if (reasoningBlock) return;
+      }
       const assistantBlock = context.turnState?.assistantTextBlocks.get(index);
       if (assistantBlock) {
         assistantBlock.streamClosed = true;
@@ -3343,6 +3486,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         items: [],
         assistantTextBlocks: new Map(),
         assistantTextBlockOrder: [],
+        reasoningBlocks: new Map(),
+        reasoningBlockOrder: [],
+        reasoningSnapshotUuids: new Set(),
+        reasoningMessageId: undefined,
         capturedProposedPlanKeys: new Set(),
         latestAssistantUsage: undefined,
         compactedSinceLatestAssistantUsage: false,
@@ -3431,6 +3578,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         context.turnState.latestAssistantUsage = message.message.usage;
         context.turnState.compactedSinceLatestAssistantUsage = false;
       }
+      yield* backfillReasoningBlocksFromSnapshot(context, message);
       yield* backfillAssistantTextBlocksFromSnapshot(context, message);
     }
 
@@ -5193,6 +5341,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         items: [],
         assistantTextBlocks: new Map(),
         assistantTextBlockOrder: [],
+        reasoningBlocks: new Map(),
+        reasoningBlockOrder: [],
+        reasoningSnapshotUuids: new Set(),
+        reasoningMessageId: undefined,
         capturedProposedPlanKeys: new Set(),
         latestAssistantUsage: undefined,
         compactedSinceLatestAssistantUsage: false,

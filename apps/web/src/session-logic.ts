@@ -501,6 +501,19 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     activity.payload && typeof activity.payload === "object"
       ? (activity.payload as Record<string, unknown>)
       : null;
+  if (activity.kind === "reasoning.completed" && typeof payload?.text === "string") {
+    const entry: DerivedWorkLogEntry = {
+      id: activity.id,
+      createdAt: activity.createdAt,
+      turnId: activity.turnId,
+      label: "Thinking",
+      tone: "thinking",
+      detail: payload.text,
+      sourceActivityKind: activity.kind,
+    };
+    derivedWorkLogEntryByActivity.set(activity, entry);
+    return entry;
+  }
   const commandPreview = extractToolCommand(payload);
   const changedFiles = extractChangedFiles(payload);
   const title = extractToolTitle(payload);

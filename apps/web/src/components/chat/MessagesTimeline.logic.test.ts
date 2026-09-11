@@ -36,10 +36,102 @@ import {
   createMessageAttachmentPreviewProjector,
   deriveTimelineEntries,
   deriveTimelineEntriesWithState,
+  deriveWorkLogEntries,
   type WorkLogEntry,
   type TimelineEntriesProjection,
 } from "../../session-logic";
 import { isImageAttachment, type ChatMessage, type TurnDiffSummary } from "../../types";
+
+describe("preserved thinking", () => {
+  it.each([
+    { isWorking: true, hasReply: true },
+    { isWorking: true, hasReply: false },
+    { isWorking: false, hasReply: true },
+    { isWorking: false, hasReply: false },
+  ])(
+    "keeps completed thoughts separate from tools and turn folds ($isWorking, reply=$hasReply)",
+    ({ isWorking, hasReply }) => {
+      const turnId = TurnId.make("reasoning-turn");
+      const at = (second: number) => `2026-09-11T22:13:0${second}.000Z`;
+      const text = "The venv cache is reused.\n\n" + "Full reasoning. ".repeat(500);
+      const work = deriveWorkLogEntries([
+        {
+          id: EventId.make("before"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Read cache",
+          payload: {
+            itemType: "command_execution",
+            toolCallId: "tool-before",
+            status: "completed",
+          },
+          turnId,
+          createdAt: at(1),
+        },
+        {
+          id: EventId.make("thought"),
+          kind: "reasoning.completed",
+          tone: "info",
+          summary: "Thinking",
+          payload: { text, itemId: "thought" },
+          turnId,
+          createdAt: at(2),
+        },
+        {
+          id: EventId.make("after"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Check cache",
+          payload: { itemType: "command_execution", toolCallId: "tool-after", status: "completed" },
+          turnId,
+          createdAt: at(3),
+        },
+      ]);
+      const messages: ChatMessage[] = [
+        {
+          id: MessageId.make("answer"),
+          role: "assistant",
+          text: "Checking the cache.",
+          turnId,
+          createdAt: at(4),
+          updatedAt: at(4),
+          streaming: false,
+        },
+      ];
+      const rows = deriveMessagesTimelineRows({
+        timelineEntries: deriveTimelineEntries(hasReply ? messages : [], [], work),
+        latestTurn: {
+          turnId,
+          state: isWorking ? "running" : "completed",
+          startedAt: at(0),
+          completedAt: isWorking ? null : at(5),
+        },
+        isWorking,
+        activeTurnStartedAt: isWorking ? at(0) : null,
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+      });
+      const thought = rows.find(
+        (row) => row.kind === "work" && row.groupedEntries.some((entry) => entry.id === "thought"),
+      );
+      expect(thought).toMatchObject({
+        kind: "work",
+        isExpandedToolGroup: false,
+        groupedEntries: [{ id: "thought", detail: text }],
+      });
+      if (hasReply)
+        expect(rows.findIndex((row) => row === thought)).toBeLessThan(
+          rows.findIndex((row) => row.kind === "message"),
+        );
+      expect(
+        rows
+          .filter((row) => row.kind === "work-live")
+          .flatMap((row) => row.groupedEntries)
+          .some((entry) => entry.id === "thought"),
+      ).toBe(false);
+    },
+  );
+});
 
 describe("streaming row projection", () => {
   function fixture(text = "") {
