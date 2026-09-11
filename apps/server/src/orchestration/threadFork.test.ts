@@ -55,6 +55,7 @@ function thread(running: boolean): OrchestrationThread {
     settledOverride: null,
     settledAt: null,
     deletedAt: null,
+    pullRequests: [],
     messages: [
       user("user-1", "first"),
       assistant("assistant-1", "answer", "turn-1"),

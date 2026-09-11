@@ -41,7 +41,7 @@ export const ProviderLoginErrorReason = Schema.Literals([
 ]);
 export type ProviderLoginErrorReason = typeof ProviderLoginErrorReason.Type;
 
-export class ProviderLoginError extends Schema.TaggedErrorClass<ProviderLoginError>()(
+export class ProviderLoginError extends Schema.TaggedError<ProviderLoginError>()(
   "ProviderLoginError",
   {
     reason: ProviderLoginErrorReason,

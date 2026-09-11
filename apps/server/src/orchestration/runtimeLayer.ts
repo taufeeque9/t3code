@@ -9,16 +9,16 @@ import { layer as ThreadSearchIndexLive } from "./Layers/threadSearchIndex.ts";
 import * as ThreadBackgroundLiveness from "./ThreadBackgroundLiveness.ts";
 import * as ThreadPlanProgress from "./ThreadPlanProgress.ts";
 
-export const OrchestrationEventInfrastructureLayerLive = Layer.mergeAll(
+const OrchestrationEventInfrastructureLayerLive = Layer.mergeAll(
   OrchestrationEventStoreLive,
   OrchestrationCommandReceiptRepositoryLive,
 );
 
-export const OrchestrationProjectionPipelineLayerLive = OrchestrationProjectionPipelineLive.pipe(
+const OrchestrationProjectionPipelineLayerLive = OrchestrationProjectionPipelineLive.pipe(
   Layer.provide(OrchestrationEventStoreLive),
 );
 
-export const OrchestrationInfrastructureLayerLive = Layer.mergeAll(
+const OrchestrationInfrastructureLayerLive = Layer.mergeAll(
   OrchestrationProjectionSnapshotQueryLive,
   ThreadSearchIndexLive,
   OrchestrationEventInfrastructureLayerLive,

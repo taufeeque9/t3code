@@ -41,6 +41,7 @@ function sourceReadModel(): OrchestrationReadModel {
         snoozedUntil: null,
         snoozedAt: null,
         deletedAt: null,
+        pullRequests: [],
         messages: [
           {
             id: MessageId.make("user-1"),

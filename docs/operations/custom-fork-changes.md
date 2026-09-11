@@ -152,6 +152,10 @@ messages, is not scoped to a project, and backs the command palette rather than
 the sidebar. It is left untouched; the fork adds a parallel path.
 
 - `apps/server/src/persistence/Migrations/050_ProjectionThreadSearchUnits.ts`
+- `Migrations.ts` keeps the shipped search migration at ID 50. Upstream's
+  `050_ProjectionThreadPullRequests.ts` runs at ID 51 in this fork; its upgrade
+  tests start from the existing search database. Keep these IDs stable and
+  assign future migrations unused IDs when upstream numbering overlaps.
 - `apps/server/src/orchestration/Layers/threadSearchIndex.ts` and its test —
   its own service, not a method on `ProjectionSnapshotQuery`, whose shape a
   dozen upstream tests stub
