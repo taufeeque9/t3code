@@ -124,11 +124,17 @@ with no warning. This warns in the thread at 95% of a session or weekly window.
 - `apps/web/src/components/usage/limitWarning.ts` and its test
 - `apps/web/src/components/ChatView.tsx`: the `limitWarning` memo and its banner
 
-Scoped to the account the thread actually sends through, not the pool: a pool
-with room elsewhere does not help a turn about to be refused. Reads the same
-live provider statuses the on-demand panel uses, so it costs no extra request.
-Dismissal is keyed on the window's reset time, so it lapses on rollover. The
-banner states the number and nothing else; advisory copy is unwanted here.
+The web/desktop warning follows the composer's selected account and model.
+Model-specific windows only warn for that model; shared windows always apply.
+The banner names other accounts with quota, ranked by their tightest applicable
+window, or says when every reported account is exhausted. Missing or failed
+reads remain unknown, and a passed reset needs fresh data before it counts as
+available. Comparisons use providers and hubs in the thread's environment.
+Reads the existing config stream without extra requests. Dismissals lapse on
+rollover and when usage reaches 100%.
+
+**On conflict:** retain model filtering and account availability on top of an
+upstream warning if it lacks them; compare before retiring this implementation.
 
 ### Limits bars: per-instance colour and short names
 

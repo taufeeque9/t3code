@@ -293,6 +293,7 @@ import {
   finalizePromotedDraftThreadByRef,
   markPromotedDraftThreadByRef,
   useComposerDraftStore,
+  useEffectiveComposerModelState,
   DraftId,
 } from "../composerDraftStore";
 import {
@@ -2656,6 +2657,15 @@ export default function ChatView(props: ChatViewProps) {
   const selectedProvider = selectedProviderEntry?.driverKind ?? requestedDriverKind;
   const activeProviderInstanceId = selectedProviderEntry?.instanceId ?? null;
   const activeProviderStatus = selectedProviderEntry?.snapshot ?? null;
+  const { selectedModel: limitWarningModel } = useEffectiveComposerModelState({
+    threadRef: composerDraftTarget,
+    providers: providerStatuses,
+    selectedProvider,
+    selectedInstanceId: activeProviderInstanceId ?? NO_PROVIDER_MODEL_SELECTION.instanceId,
+    threadModelSelection: activeThread?.modelSelection,
+    projectModelSelection: activeProjectDefaultModelSelection,
+    settings,
+  });
   const { enabled: interactionModeEnabled, interactionMode } = resolveComposerInteractionMode({
     planModeEnabled: settings.planModeEnabled,
     provider: activeProviderStatus,
@@ -6183,8 +6193,23 @@ export default function ChatView(props: ChatViewProps) {
               Date.parse(`${nowMinute}:00.000Z`),
             ),
         activeProviderInstanceId,
+        limitWarningModel,
+        providerStatuses.some(
+          (provider) =>
+            provider.driver === selectedProvider &&
+            provider.enabled &&
+            provider.installed &&
+            provider.usageLimits === undefined,
+        ),
       ),
-    [activeProviderInstanceId, nowMinute, providerStatuses, usageLimitSources],
+    [
+      activeProviderInstanceId,
+      limitWarningModel,
+      nowMinute,
+      providerStatuses,
+      selectedProvider,
+      usageLimitSources,
+    ],
   );
   const [limitWarningDismissTick, setLimitWarningDismissTick] = useState(0);
   const limitWarningBanner = useMemo<ComposerBannerStackItem | null>(() => {
@@ -6196,6 +6221,7 @@ export default function ChatView(props: ChatViewProps) {
       priority: "urgent",
       icon: <TriangleAlertIcon />,
       title: `${limitWarning.accountLabel}: ${limitWarning.usedPercent}% of ${limitWarning.windowLabel} used`,
+      children: <p className="text-xs text-muted-foreground">{limitWarning.availability}</p>,
       dismissLabel: "Dismiss limit warning",
       onDismiss: () => {
         dismissLimitWarning(limitWarning.key);
