@@ -136,6 +136,21 @@ rollover and when usage reaches 100%.
 **On conflict:** retain model filtering and account availability on top of an
 upstream warning if it lacks them; compare before retiring this implementation.
 
+### Model picker: remaining quota
+
+Web, desktop, and mobile model rows show remaining weekly quota. Fable uses its
+own bucket; other Claude models use the shared weekly allowance. Claude account
+selectors show session quota separately. Codex model rows show weekly quota,
+with no session figure in the account selector. Low balances use warning text;
+expired or failed readings show an unknown balance until refreshed.
+
+The picker uses the environment's existing provider snapshots, including in
+Settings and new-thread pickers. Selection and formatting live in
+`packages/shared/src/modelPickerQuota.ts` so clients agree.
+
+**On conflict:** compare quota selection and account placement before replacing
+this with upstream's picker. Retire the helper when upstream covers both clients.
+
 ### Limits bars: per-instance colour and short names
 
 Upstream paints every account in a pool with one hardcoded driver colour and

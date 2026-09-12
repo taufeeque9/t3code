@@ -14,6 +14,12 @@ import {
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
+import {
+  formatPickerQuota,
+  resolveAccountPickerQuota,
+  resolveModelPickerQuota,
+  type PickerQuota,
+} from "@t3tools/shared/modelPickerQuota";
 import { useNavigation, useRoute, type RouteProp } from "@react-navigation/native";
 import {
   createNativeStackNavigator,
@@ -49,6 +55,7 @@ import {
   nativeHeaderScrollEdgeEffects,
 } from "../../native/StackHeader";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
+import { useEnvironmentServerConfig } from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useNewTaskFlow } from "./new-task-flow-provider";
@@ -98,8 +105,27 @@ const THREAD_SETTINGS_HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects
   Platform.OS,
   Platform.Version,
 );
+function PickerQuotaText(props: { readonly quota: PickerQuota; readonly session?: boolean }) {
+  return (
+    <Text
+      accessibilityLabel={`${props.quota.label}, ${props.quota.remainingPercent === null ? "awaiting updated usage" : formatPickerQuota(props.quota)}`}
+      className={cn(
+        "shrink-0 text-xs tabular-nums text-foreground-muted",
+        props.quota.remainingPercent !== null &&
+          props.quota.remainingPercent <= 5 &&
+          "text-warning-foreground",
+      )}
+      numberOfLines={1}
+    >
+      {props.session ? "Session " : ""}
+      {formatPickerQuota(props.quota)}
+    </Text>
+  );
+}
+
 function ModelRow(props: {
   readonly option: ModelOption;
+  readonly quota: PickerQuota | null;
   readonly selected: boolean;
   readonly onPress: () => void;
   readonly isFirst: boolean;
@@ -109,7 +135,15 @@ function ModelRow(props: {
   const selectedMaterialRow = materialYouStyleLayoutActive && props.selected;
   return (
     <Pressable
-      accessibilityLabel={[props.option.label, props.option.subtitle].filter(Boolean).join(", ")}
+      accessibilityLabel={[
+        props.option.label,
+        props.option.subtitle,
+        props.quota
+          ? `${props.quota.label}, ${props.quota.remainingPercent === null ? "awaiting updated usage" : formatPickerQuota(props.quota)}`
+          : null,
+      ]
+        .filter(Boolean)
+        .join(", ")}
       accessibilityRole="radio"
       accessibilityState={{
         checked: props.selected,
@@ -152,15 +186,18 @@ function ModelRow(props: {
           </Text>
         ) : null}
       </View>
-      {props.selected ? (
-        <SymbolView
-          name="checkmark"
-          size={16}
-          tintColorClassName={"accent-icon"}
-          type="monochrome"
-          weight="semibold"
-        />
-      ) : null}
+      {props.quota ? <PickerQuotaText quota={props.quota} /> : null}
+      <View className="w-4">
+        {props.selected ? (
+          <SymbolView
+            name="checkmark"
+            size={16}
+            tintColorClassName={"accent-icon"}
+            type="monochrome"
+            weight="semibold"
+          />
+        ) : null}
+      </View>
     </Pressable>
   );
 }
@@ -172,15 +209,22 @@ function ProviderHeader(props: {
   readonly collapsible: boolean;
   readonly collapsed: boolean;
   readonly modelCount: number;
+  readonly quota: PickerQuota | null;
   readonly onToggle: () => void;
 }) {
   const content = (
     <>
       <ProviderIcon provider={props.driver} size={15} />
-      <Text className="text-sm font-t3-medium text-foreground-muted">{props.label}</Text>
+      <Text
+        className="min-w-0 shrink text-sm font-t3-medium text-foreground-muted"
+        numberOfLines={1}
+      >
+        {props.label}
+      </Text>
+      <View className="flex-1" />
+      {props.quota ? <PickerQuotaText quota={props.quota} session /> : null}
       {props.collapsible ? (
         <>
-          <View className="flex-1" />
           {props.collapsed ? (
             <Text className="text-2xs font-t3-medium text-foreground-muted">
               {props.modelCount}
@@ -200,7 +244,15 @@ function ProviderHeader(props: {
   if (props.collapsible) {
     return (
       <Pressable
-        accessibilityLabel={`${props.label}, ${props.modelCount} models`}
+        accessibilityLabel={[
+          props.label,
+          `${props.modelCount} models`,
+          props.quota
+            ? `${props.quota.label}, ${props.quota.remainingPercent === null ? "awaiting updated usage" : formatPickerQuota(props.quota)}`
+            : null,
+        ]
+          .filter(Boolean)
+          .join(", ")}
         accessibilityRole="button"
         accessibilityState={{ expanded: !props.collapsed }}
         className="mx-4 mt-1 min-h-11 flex-row items-center gap-2 rounded-xl px-1 pt-2 active:opacity-60"
@@ -376,6 +428,8 @@ type ThreadSettingsSessionValue = {
   readonly runtimeMode: RuntimeMode;
   readonly onUpdateRuntimeMode: (mode: RuntimeMode) => void;
   readonly displayedDescriptors: ReadonlyArray<ProviderOptionDescriptor>;
+  readonly modelQuotas: ReadonlyMap<string, PickerQuota>;
+  readonly accountQuotas: ReadonlyMap<string, PickerQuota>;
   readonly providerExpansionOverrides: ReadonlySet<string>;
   readonly hasLegacyModels: boolean;
   readonly pendingModel: ModelOption | null;
@@ -399,6 +453,31 @@ const ThreadSettingsSessionContext = createContext<ThreadSettingsSessionValue | 
 function ThreadSettingsSessionProvider(
   props: ThreadSettingsSessionProps & { readonly children: ReactNode },
 ) {
+  const serverConfig = useEnvironmentServerConfig(props.environmentId);
+  const [quotaNow, setQuotaNow] = useState(Date.now);
+  useEffect(() => {
+    const interval = setInterval(() => setQuotaNow(Date.now()), 60_000);
+    return () => clearInterval(interval);
+  }, []);
+  const { modelQuotas, accountQuotas } = useMemo(() => {
+    const providers = new Map(
+      serverConfig?.providers.map((provider) => [provider.instanceId, provider]),
+    );
+    const modelQuotas = new Map<string, PickerQuota>();
+    const accountQuotas = new Map<string, PickerQuota>();
+    for (const group of props.providerGroups) {
+      const instanceId = group.models[0]?.selection.instanceId;
+      const provider = instanceId ? providers.get(instanceId) : undefined;
+      if (!provider) continue;
+      const accountQuota = resolveAccountPickerQuota(provider, quotaNow);
+      if (accountQuota) accountQuotas.set(group.providerKey, accountQuota);
+      for (const option of group.models) {
+        const quota = resolveModelPickerQuota(provider, option.selection.model, quotaNow);
+        if (quota) modelQuotas.set(option.key, quota);
+      }
+    }
+    return { modelQuotas, accountQuotas };
+  }, [props.providerGroups, quotaNow, serverConfig?.providers]);
   const [showLegacyToggle, setShowLegacyToggle] = useState(false);
   const [providerFilter, setProviderFilter] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -504,6 +583,8 @@ function ThreadSettingsSessionProvider(
       runtimeMode: props.runtimeMode,
       onUpdateRuntimeMode: props.onUpdateRuntimeMode,
       displayedDescriptors,
+      modelQuotas,
+      accountQuotas,
       providerExpansionOverrides,
       hasLegacyModels,
       pendingModel,
@@ -524,6 +605,8 @@ function ThreadSettingsSessionProvider(
       applyOptionChange,
       commitPendingModel,
       displayedDescriptors,
+      modelQuotas,
+      accountQuotas,
       providerExpansionOverrides,
       hasLegacyModels,
       isApplied,
@@ -606,6 +689,7 @@ function ThreadSettingsModelListRow(props: {
       isLast={props.isLast}
       onPress={onPress}
       option={props.option}
+      quota={session.modelQuotas.get(props.option.key) ?? null}
       selected={session.isDisplayed(props.option)}
     />
   );
@@ -627,6 +711,7 @@ function ThreadSettingsProviderListHeader(props: {
       driver={props.provider.driver}
       label={props.provider.label}
       modelCount={props.provider.modelCount}
+      quota={session.accountQuotas.get(props.provider.key) ?? null}
       onToggle={onToggle}
     />
   );

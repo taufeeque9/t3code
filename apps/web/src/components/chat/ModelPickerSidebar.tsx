@@ -1,8 +1,10 @@
 import { type ProviderInstanceId } from "@t3tools/contracts";
+import { resolveAccountPickerQuota, formatPickerQuota } from "@t3tools/shared/modelPickerQuota";
 import { memo, useLayoutEffect, useRef, useState } from "react";
 import { SparklesIcon, StarIcon } from "lucide-react";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { useNowMinute } from "../../hooks/useNowMinute";
 import { cn } from "~/lib/utils";
 import {
   isProviderInstancePickerReady,
@@ -68,6 +70,11 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
     props.onSelectInstance(instanceId);
   };
   const showFavorites = props.showFavorites ?? true;
+  const nowMinute = useNowMinute();
+  const quotaNow = Date.parse(`${nowMinute}:00.000Z`);
+  const showSessionQuotas = props.instanceEntries.some(
+    (entry) => resolveAccountPickerQuota(entry.snapshot, quotaNow) !== null,
+  );
   const [hoveredInstanceId, setHoveredInstanceId] = useState<ProviderInstanceId | null>(null);
   const sidebarContentRef = useRef<HTMLDivElement>(null);
   const [selectedIndicatorTop, setSelectedIndicatorTop] = useState<number | null>(null);
@@ -146,18 +153,26 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
             const showNewBadge = props.newBadgeInstanceIds?.has(entry.instanceId) ?? false;
             const showInstanceBadge = shouldShowInstanceBadge(entry, props.instanceEntries);
 
-            const tooltip = isUnavailable
+            const quota = resolveAccountPickerQuota(entry.snapshot, quotaNow);
+            const quotaDescription = quota
+              ? `${quota.label}: ${quota.remainingPercent === null ? "awaiting updated usage" : formatPickerQuota(quota)}`
+              : null;
+            const statusTooltip = isUnavailable
               ? describeUnavailableInstance(entry)
               : isContextDisabled
                 ? (props.getDisabledInstanceTooltip?.(entry) ?? entry.displayName)
                 : showNewBadge
                   ? `${entry.displayName} — New`
                   : entry.displayName;
+            const tooltip = quotaDescription
+              ? `${statusTooltip} · ${quotaDescription}`
+              : statusTooltip;
 
             const button = (
               <button
                 className={cn(
                   "relative isolate flex w-full cursor-pointer aspect-square items-center justify-center rounded-md transition-colors hover:bg-[color-mix(in_srgb,var(--popover)_90%,var(--contrast-foreground))] focus-visible:bg-[color-mix(in_srgb,var(--popover)_90%,var(--contrast-foreground))] focus-visible:outline-none",
+                  showSessionQuotas && "aspect-auto h-12 flex-col gap-0.5",
                   isDisabled && "opacity-50 cursor-not-allowed hover:bg-transparent",
                 )}
                 data-provider-accent-color={entry.accentColor}
@@ -172,13 +187,7 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
                 }
                 disabled={isDisabled}
                 type="button"
-                aria-label={
-                  isUnavailable || isContextDisabled
-                    ? tooltip
-                    : showNewBadge
-                      ? `${entry.displayName}, new`
-                      : entry.displayName
-                }
+                aria-label={tooltip}
               >
                 <ProviderInstanceIcon
                   driverKind={entry.driverKind}
@@ -198,6 +207,19 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
                     ? { badgeClassName: "h-3 min-w-3 px-0.5 text-[7px]" }
                     : {})}
                 />
+                {quota ? (
+                  <span
+                    aria-hidden="true"
+                    className={cn(
+                      "text-[10px] leading-3 tabular-nums text-muted-foreground",
+                      quota.remainingPercent !== null &&
+                        quota.remainingPercent <= 5 &&
+                        "text-warning",
+                    )}
+                  >
+                    {formatPickerQuota(quota).replace(" left", "")}
+                  </span>
+                ) : null}
                 {showNewBadge ? (
                   <span className={NEW_BADGE_CLASS} aria-hidden>
                     <SparklesIcon className="size-2" />

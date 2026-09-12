@@ -4,6 +4,7 @@ import {
   type ProviderDriverKind,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
+import { resolveModelPickerQuota } from "@t3tools/shared/modelPickerQuota";
 import { resolveSelectableModel } from "@t3tools/shared/model";
 import { useAtomValue } from "@effect/atom-react";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
@@ -35,6 +36,7 @@ import {
   resolveShortcutCommand,
   shortcutLabelForCommand,
 } from "../../keybindings";
+import { useNowMinute } from "../../hooks/useNowMinute";
 import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
 import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
@@ -672,9 +674,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     }
     return mapping.size > 0 ? mapping : EMPTY_MODEL_JUMP_LABELS;
   }, [keybindings, modelJumpCommandByKey, modelJumpShortcutContext]);
+  const nowMinute = useNowMinute();
+  const quotaNow = Date.parse(`${nowMinute}:00.000Z`);
   const modelListExtraData = useMemo(
-    () => ({ favoritesSet, modelJumpLabelByKey }),
-    [favoritesSet, modelJumpLabelByKey],
+    () => ({ favoritesSet, modelJumpLabelByKey, entryByInstanceId, quotaNow }),
+    [favoritesSet, modelJumpLabelByKey, entryByInstanceId, quotaNow],
   );
 
   useEffect(() => {
@@ -880,6 +884,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                     }
                     const disabledReason =
                       getModelDisabledReason?.(model.instanceId, model.slug) ?? null;
+                    const entry = entryByInstanceId.get(model.instanceId);
                     return (
                       <ModelListRow
                         key={modelKey}
@@ -889,6 +894,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                         driverKind={model.driverKind}
                         providerDisplayName={model.instanceDisplayName}
                         providerAccentColor={model.instanceAccentColor}
+                        quota={
+                          entry
+                            ? resolveModelPickerQuota(entry.snapshot, model.slug, quotaNow)
+                            : null
+                        }
                         isFavorite={favoritesSet.has(
                           providerModelKey(model.instanceId, model.slug),
                         )}

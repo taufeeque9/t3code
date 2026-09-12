@@ -1,4 +1,5 @@
 import { type ProviderDriverKind, type ProviderInstanceId } from "@t3tools/contracts";
+import { formatPickerQuota, type PickerQuota } from "@t3tools/shared/modelPickerQuota";
 import { memo } from "react";
 import { StarIcon } from "lucide-react";
 import {
@@ -29,6 +30,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
    */
   providerDisplayName: string;
   providerAccentColor?: string | undefined;
+  quota?: PickerQuota | null;
   isFavorite: boolean;
   isSelected: boolean;
   showProvider: boolean;
@@ -94,6 +96,31 @@ export const ModelListRow = memo(function ModelListRow(props: {
       </div>
 
       <div className="flex shrink-0 items-center gap-1.5">
+        {props.quota ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <span
+                  className={cn(
+                    "text-[10px] tabular-nums text-muted-foreground",
+                    props.quota.remainingPercent !== null &&
+                      props.quota.remainingPercent <= 5 &&
+                      "text-warning",
+                  )}
+                  aria-label={`${props.quota.label}: ${props.quota.remainingPercent === null ? "awaiting updated usage" : formatPickerQuota(props.quota)}`}
+                />
+              }
+            >
+              {formatPickerQuota(props.quota)}
+            </TooltipTrigger>
+            <TooltipPopup side="top">
+              {props.quota.label}:{" "}
+              {props.quota.remainingPercent === null
+                ? "Awaiting updated usage"
+                : formatPickerQuota(props.quota)}
+            </TooltipPopup>
+          </Tooltip>
+        ) : null}
         {props.jumpLabel ? (
           <Kbd className="h-4 min-w-0 rounded-sm px-1.5 text-[10px]">{props.jumpLabel}</Kbd>
         ) : null}
