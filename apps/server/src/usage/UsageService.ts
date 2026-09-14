@@ -16,6 +16,8 @@ import * as NodeOS from "node:os";
 
 import {
   ClaudeSettings,
+  CodexSettings,
+  type ProviderInstanceConfig,
   USAGE_CONTRACT_VERSION,
   type ServerSettings as ServerSettingsValue,
   type UsageProviderKind,
@@ -43,9 +45,8 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ServerConfig } from "../config.ts";
 import { expandHomePath } from "../pathExpansion.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
-import { deriveProviderInstanceConfigMap } from "../provider/Layers/ProviderInstanceRegistryHydration.ts";
+import { mergeProviderInstanceEnvironment } from "../provider/ProviderInstanceEnvironment.ts";
 import { UsageAggregator } from "./usageAggregation.ts";
 import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
@@ -81,6 +82,9 @@ const MAX_HOURLY_WINDOW_MS = 24 * 60 * 60 * 1000;
 /** Longest window the UI offers, plus slack. Older entries are pruned. */
 const CACHE_RETENTION_DAYS = 90;
 
+const decodeCodexSettings = Schema.decodeOption(CodexSettings);
+const decodeClaudeSettings = Schema.decodeOption(ClaudeSettings);
+
 /** On-disk shape of the rate snapshot. */
 const RatesCacheFile = Schema.Struct({
   fetchedAtMs: Schema.Number,
@@ -92,8 +96,6 @@ const decodeRatesCache = Schema.decodeUnknownEffect(
 const encodeRatesCache = Schema.encodeEffect(
   Schema.fromJsonString(RatesCacheFile as unknown as Schema.Codec<typeof RatesCacheFile.Type>),
 );
-
-const decodeClaudeSettings = Schema.decodeUnknownEffect(ClaudeSettings);
 
 /** The scan cache is narrowed by hand in `usageScanCache`, so JSON is enough here. */
 const ScanCacheJson = Schema.fromJsonString(Schema.Unknown as unknown as Schema.Codec<unknown>);
@@ -224,26 +226,6 @@ export const make = Effect.gen(function* () {
     Effect.withSpan("UsageService.refreshRates"),
   );
 
-  /**
-   * Claude's config dir is the home itself when overridden, but a default
-   * install nests transcripts under `~/.claude/projects`. Probe both.
-   */
-  const resolveClaudeTranscriptDir = (homePath: string) =>
-    Effect.gen(function* () {
-      const nested = path.join(homePath, ".claude", "projects");
-      const nestedExists = yield* fileSystem
-        .exists(nested)
-        .pipe(Effect.catchCause(() => Effect.succeed(false)));
-      return nestedExists ? nested : path.join(homePath, "projects");
-    });
-
-  interface TranscriptDir {
-    readonly provider: UsageProviderKind;
-    readonly dir: string;
-    /** Only this file name is scanned when set; otherwise every `.jsonl`. */
-    readonly fileName?: string;
-  }
-
   // A settings failure must not silently discard custom rates or transcript homes.
   const readSettings = settingsService.getSettings.pipe(
     Effect.catchCause(
@@ -260,42 +242,54 @@ export const make = Effect.gen(function* () {
   const resolveTranscriptDirs = Effect.fn("UsageService.resolveTranscriptDirs")(function* (
     settings: ServerSettingsValue,
   ) {
-    // Every Claude instance owns a home, and several instances can share one
-    // transcript tree through symlinks, so each home resolves to its real
-    // transcript directory and duplicates collapse to a single scan.
-    const claudeDirs = new Set<string>();
-    for (const instance of Object.values(deriveProviderInstanceConfigMap(settings))) {
-      if (instance.driver !== "claudeAgent") continue;
-      const claudeSettings = yield* decodeClaudeSettings(instance.config).pipe(
-        Effect.mapError(
-          (cause) =>
-            new UsageReadError({
-              reason: "scanFailed",
-              detail: "Claude provider settings could not be read.",
-              cause,
-            }),
-        ),
-      );
-      const claudeHome = yield* resolveClaudeHomePath(claudeSettings);
-      const claudeDir = yield* resolveClaudeTranscriptDir(claudeHome);
-      claudeDirs.add(
-        yield* fileSystem.realPath(claudeDir).pipe(Effect.orElseSucceed(() => claudeDir)),
-      );
+    const dirs: Array<{ provider: UsageProviderKind; dir: string; fileName?: string }> = [];
+    const seen = new Set<string>();
+    for (const driver of ["claudeAgent", "codex", "grok"] as const) {
+      // Disabled accounts still have history. Explicit default slots replace
+      // the legacy settings, just as they do in the provider registry.
+      const instances: Array<Pick<ProviderInstanceConfig, "config" | "environment">> =
+        Object.values(settings.providerInstances).filter((instance) => instance.driver === driver);
+      if (!Object.hasOwn(settings.providerInstances, driver)) {
+        instances.push({ config: settings.providers[driver] });
+      }
+      for (const instance of instances) {
+        const environment = mergeProviderInstanceEnvironment(instance.environment, hostEnvironment);
+        const provider = driver === "claudeAgent" ? "claude" : driver;
+        let home: string;
+        if (driver === "codex") {
+          const decoded = decodeCodexSettings(instance.config ?? {});
+          if (Option.isNone(decoded)) continue;
+          const config = decoded.value;
+          const environmentHome = environment.CODEX_HOME?.trim();
+          const layout = yield* resolveCodexHomeLayout(
+            !config.homePath.trim() && !config.shadowHomePath.trim() && environmentHome
+              ? { ...config, homePath: environmentHome }
+              : config,
+          );
+          home = layout.sharedHomePath;
+        } else if (driver === "claudeAgent") {
+          const decoded = decodeClaudeSettings(instance.config ?? {});
+          if (Option.isNone(decoded)) continue;
+          const configured = decoded.value.homePath.trim();
+          home = configured
+            ? expandHomePath(configured)
+            : environment.CLAUDE_CONFIG_DIR?.trim() || path.join(NodeOS.homedir(), ".claude");
+        } else {
+          home = expandHomePath(
+            environment.GROK_HOME?.trim() || path.join(NodeOS.homedir(), ".grok"),
+          );
+        }
+        const directory = path.resolve(home, provider === "claude" ? "projects" : "sessions");
+        // Account aliases and Codex auth overlays can share the same history.
+        const dir = yield* fileSystem
+          .realPath(directory)
+          .pipe(Effect.orElseSucceed(() => directory));
+        const key = `${provider}\0${dir}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        dirs.push({ provider, dir, ...(provider === "grok" ? { fileName: "updates.jsonl" } : {}) });
+      }
     }
-    const codexLayout = yield* resolveCodexHomeLayout(settings.providers.codex);
-    // Grok Settings only expose the binary path; home is `$GROK_HOME` or `~/.grok`.
-    // Empty/whitespace GROK_HOME must fall back: coalescing alone would scan cwd.
-    const grokHomeEnv = hostEnvironment["GROK_HOME"]?.trim() ?? "";
-    const grokHome =
-      grokHomeEnv.length > 0
-        ? path.resolve(expandHomePath(grokHomeEnv))
-        : path.join(NodeOS.homedir(), ".grok");
-
-    const dirs: TranscriptDir[] = [...claudeDirs].map((dir) => ({ provider: "claude", dir }));
-    dirs.push(
-      { provider: "codex", dir: path.join(codexLayout.sharedHomePath, "sessions") },
-      { provider: "grok", dir: path.join(grokHome, "sessions"), fileName: "updates.jsonl" },
-    );
     return dirs;
   });
 

@@ -90,17 +90,18 @@ notices. Retire the whole thing if upstream ever offers a Claude sign-in.
 
 ### Claude multi-account support
 
-Several Claude accounts as separate provider instances, each with its own
-`CLAUDE_CONFIG_DIR`.
+Switch between Claude accounts in the same thread while preserving the provider
+session. Each account remains a separate provider instance with its own
+`CLAUDE_CONFIG_DIR`, while compatible accounts can share one transcript tree.
 
 - `apps/server/src/provider/Drivers/ClaudeHome.ts` keys session continuation on the
   resolved `projects` path, so accounts sharing a transcript tree share continuation.
   Upstream keys on the home directory instead.
 - `apps/server/src/provider/Layers/ProviderService.ts` allows switching instances
   within a provider when continuation identity matches (`reusePersistedState`)
-- `apps/server/src/usage/UsageService.ts` scans every configured Claude instance home
-  and collapses symlinked duplicates. Upstream still scans only
-  `providers.claudeAgent`.
+
+Upstream now scans every configured Claude, Codex, and Grok instance for usage
+history and collapses aliased homes. That behavior is no longer fork-owned.
 
 ### Claude extra usage credits
 

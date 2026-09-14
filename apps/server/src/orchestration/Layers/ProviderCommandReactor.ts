@@ -14,6 +14,7 @@ import {
 } from "@t3tools/contracts";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import { DEFAULT_WORKTREE_BRANCH_PREFIX, isTemporaryWorktreeBranch } from "@t3tools/shared/git";
+import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
@@ -1558,7 +1559,13 @@ const make = Effect.gen(function* () {
     }
     const sendTurnRequest = yield* buildSendTurnRequestForThread({
       threadId: event.payload.threadId,
-      messageText: withForkContext(message.text, event.payload.forkContext !== undefined),
+      messageText: withForkContext(
+        projectComposerContextForProvider({
+          text: message.text,
+          records: message.context?.records ?? [],
+        }),
+        event.payload.forkContext !== undefined,
+      ),
       ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
       ...(event.payload.modelSelection !== undefined
         ? { modelSelection: event.payload.modelSelection }
