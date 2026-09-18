@@ -61,6 +61,7 @@ import {
   resolveMockUpdateServerPort,
   resolveMockUpdateServerUrl,
   resolvePackageManagerUserAgent,
+  readWorkspaceConfig,
   stageLinuxIconSize,
   stageDesktopDmgBackground,
   stageResourceMonitor,
@@ -530,6 +531,13 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       },
     );
   });
+
+  it.effect("keeps every workspace allowBuilds entry boolean", () =>
+    Effect.gen(function* () {
+      const workspace = yield* readWorkspaceConfig();
+      assert.equal(workspace.allowBuilds?.["msgpackr-extract"], true);
+    }),
+  );
 
   it("limits Electron locales and excludes separately packaged resources", () => {
     assert.deepStrictEqual(DESKTOP_ELECTRON_LANGUAGES, ["en-US"]);
