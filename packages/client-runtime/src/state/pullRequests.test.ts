@@ -1203,12 +1203,16 @@ it.effect("updates cached assignees after successful edits without rereading the
       let refuse = false;
       const octocat = { login: "octocat", name: "Octo Cat", avatarUrl: "https://a/octocat" };
       const hubot = { login: "hubot", name: null, avatarUrl: null };
+      const departed = { login: "departed", name: null, avatarUrl: null };
       const client = {
         [WS_METHODS.pullRequestsSubscribeRefreshes]: () => Stream.never,
-        [WS_METHODS.pullRequestsDetail]: () =>
+        [WS_METHODS.pullRequestsDetail]: (input: { number: number }) =>
           Effect.sync(() => {
             detailReads++;
-            return { title: "keep this title", assignees: [octocat] };
+            return {
+              title: "keep this title",
+              assignees: input.number === 1 ? [octocat] : [octocat, departed],
+            };
           }),
         [WS_METHODS.pullRequestsAssigneeCandidates]: () =>
           Effect.sync(() => {
@@ -1269,6 +1273,32 @@ it.effect("updates cached assignees after successful edits without rereading the
       ]);
       expect(detailReads).toBe(1);
       expect(candidateReads).toBe(1);
+
+      // Taking off somebody the candidates do not carry needs only their login; putting on
+      // somebody they do not carry has no face or name to show, so the host is read again.
+      const unopened = { ...target, input: { ...target.input, number: 2 } };
+      const unopenedDetail = atoms.detail(unopened);
+      registry.mount(unopenedDetail);
+      yield* AtomRegistry.getResult(registry, unopenedDetail, { suspendOnWaiting: true });
+      expect(detailReads).toBe(2);
+      const changeUnopened = (login: string, assigned: boolean) =>
+        Effect.promise(() =>
+          atoms.setAssignees.run(registry, {
+            ...unopened,
+            input: { ...unopened.input, assignees: [login], assigned },
+          }),
+        );
+
+      expect((yield* changeUnopened("departed", false))._tag).toBe("Success");
+      expect(
+        (yield* AtomRegistry.getResult(registry, unopenedDetail, { suspendOnWaiting: true }))
+          .assignees,
+      ).toEqual([octocat]);
+      expect(detailReads).toBe(2);
+
+      expect((yield* changeUnopened("stranger", true))._tag).toBe("Success");
+      yield* AtomRegistry.getResult(registry, unopenedDetail, { suspendOnWaiting: true });
+      expect(detailReads).toBe(3);
     }),
   ),
 );

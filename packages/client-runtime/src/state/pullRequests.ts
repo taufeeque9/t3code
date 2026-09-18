@@ -517,7 +517,9 @@ export function createPullRequestEnvironmentAtoms<R, E>(
                   : current.filter((actor) => !logins.has(actor.login.toLowerCase())),
               };
             },
-            selected.length < assignees.length,
+            // Taking somebody off needs only their login; putting them on needs the face and
+            // name a candidate carries, so an unknown one is read back from the host.
+            assigned && selected.length < assignees.length,
           );
         }),
     }),

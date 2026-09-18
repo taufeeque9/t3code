@@ -58,7 +58,8 @@ export function PullRequestAssignees({
             <PullRequestActorLabel
               key={actor.login}
               actor={actor}
-              className="relative gap-0 hover:z-10 [&>img]:ring-2 [&>img]:ring-background [&>span:first-child]:ring-2 [&>span:first-child]:ring-background [&>span:last-child]:sr-only"
+              labelClassName="sr-only"
+              className="relative gap-0 hover:z-10 [&>img]:ring-2 [&>img]:ring-background [&>span:first-child]:ring-2 [&>span:first-child]:ring-background"
             />
           ))}
         </span>
