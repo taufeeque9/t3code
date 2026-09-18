@@ -1245,7 +1245,8 @@ export type PullRequestLabelChangeInput = typeof PullRequestLabelChangeInput.Typ
 
 /**
  * Assigning and unassigning are one operation with `assigned` turned around, like a label change.
- * Named by login, which is how GitHub addresses an assignee, and capped at the ten it allows.
+ * Named by login, which is how GitHub addresses an assignee. It allows ten on a change request in
+ * all, so no one change can name more.
  */
 export const PullRequestAssigneeChangeInput = Schema.Struct({
   ...PullRequestRef.fields,

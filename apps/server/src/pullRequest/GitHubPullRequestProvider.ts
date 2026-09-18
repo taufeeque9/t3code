@@ -102,7 +102,8 @@ export function gitHubViewerPermissions(access: GitHubViewerAccess): PullRequest
     ...(access.canUpdateBranch === true ? { updateMethods: CAPABILITIES.updateMethods } : {}),
     // Triage is the one role that labels without writing, which is what triage is for.
     labels: access.canTriage,
-    // Assigning is triage work on GitHub too, gated the same way.
+    // GitHub's role table gives assigning to triage while its REST reference says push; the
+    // write checks what GitHub answered, so a role it ignores is told so rather than misled.
     assignees: access.canTriage,
   };
 }

@@ -3657,6 +3657,27 @@ layer("GitHubPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("fails an assignee change GitHub answered 2xx for and then ignored", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValue(Effect.succeed(output('{"assignees":[{"login":"octocat"}]}')));
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      const target = { cwd: "/w", repository: "acme/web", host: "github.com", number: 7 };
+
+      const ignored = yield* Effect.flip(
+        cli.setAssignees({ ...target, assignees: ["octocat", "hubot"], assigned: true }),
+      );
+      assert.strictEqual(ignored._tag, "GitHubAssigneeChangeIgnoredError");
+      assert.strictEqual(ignored.detail, "GitHub did not assign hubot.");
+
+      const stillThere = yield* Effect.flip(
+        cli.setAssignees({ ...target, assignees: ["octocat"], assigned: false }),
+      );
+      assert.strictEqual(stillThere.detail, "GitHub left octocat assigned.");
+
+      yield* cli.setAssignees({ ...target, assignees: ["octocat"], assigned: true });
+    }),
+  );
+
   it.effect("assigns and unassigns through the issue's assignees, with one body for both", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValue(Effect.succeed(output("{}")));

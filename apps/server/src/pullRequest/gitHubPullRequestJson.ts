@@ -2488,6 +2488,33 @@ export function buildAssigneeRequestJson(assignees: ReadonlyArray<string>): stri
   return encodeAssigneeRequest({ assignees });
 }
 
+const RawAssigneeChangeSchema = Schema.Struct({
+  assignees: Schema.optional(Schema.NullOr(Schema.Array(Schema.Struct({ login: Schema.String })))),
+});
+
+const decodeAssigneeChange = decodeJsonResult(RawAssigneeChangeSchema);
+
+/**
+ * The logins an assignee change did not take for. GitHub answers 2xx while silently ignoring
+ * anyone it will not set — no push access, not assignable, past the ten it allows — so the issue
+ * it returns is the only evidence. Empty where that issue does not say who is assigned.
+ */
+export function decodeIgnoredAssigneesJson(
+  raw: string,
+  change: { readonly assignees: ReadonlyArray<string>; readonly assigned: boolean },
+): Result.Result<ReadonlyArray<string>, DecodeFailure> {
+  const decoded = decodeAssigneeChange(raw);
+  if (!Result.isSuccess(decoded)) {
+    return Result.fail(decoded.failure);
+  }
+  const after = decoded.success.assignees;
+  if (after == null) return Result.succeed([]);
+  const logins = new Set(after.map((assignee) => assignee.login.toLowerCase()));
+  return Result.succeed(
+    change.assignees.filter((login) => logins.has(login.toLowerCase()) !== change.assigned),
+  );
+}
+
 /**
  * Everything GitHub says about what the signed-in account may do here. `canWrite` is about the
  * repository, the other two about this pull request in particular — which is why an author with

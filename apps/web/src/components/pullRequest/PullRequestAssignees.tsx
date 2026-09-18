@@ -67,6 +67,7 @@ export function PullRequestAssignees({
         <PullRequestAssigneePicker
           environmentId={environmentId}
           reference={reference}
+          assignees={assignees}
           allowed={allowed}
         />
       ) : null}
@@ -77,10 +78,17 @@ export function PullRequestAssignees({
 function PullRequestAssigneePicker({
   environmentId,
   reference,
+  assignees,
   allowed,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
+  /**
+   * Who is assigned according to the detail, which decides which way a press goes. The candidates
+   * carry the same fact as of when the menu was read, and the detail is what a change made from
+   * another client refreshes.
+   */
+  assignees: ReadonlyArray<PullRequestActor>;
   /** False where the host would refuse this account's change. Disabled with the reason rather
    * than hidden, like the reviewer control above it. */
   allowed: boolean;
@@ -102,18 +110,26 @@ function PullRequestAssigneePicker({
     [candidatesQuery.data, query],
   );
 
+  const assignedLogins = useMemo(
+    () => new Set(assignees.map((actor) => actor.login.toLowerCase())),
+    [assignees],
+  );
+  const isAssigned = (candidate: PullRequestAssigneeCandidate) =>
+    assignedLogins.has(candidate.login.toLowerCase());
+
   const toggle = async (candidate: PullRequestAssigneeCandidate) => {
     if (pending !== null) return;
+    const wasAssigned = isAssigned(candidate);
     setPending(candidate.login);
     const result = await setAssignees({
       environmentId,
-      input: { ...reference, assignees: [candidate.login], assigned: !candidate.isAssigned },
+      input: { ...reference, assignees: [candidate.login], assigned: !wasAssigned },
     });
     setPending(null);
     if (result._tag === "Failure") {
       toastManager.add({
         type: "error",
-        title: candidate.isAssigned
+        title: wasAssigned
           ? `Could not unassign ${candidate.login}`
           : `Could not assign ${candidate.login}`,
         description: readableFailure(squashAtomCommandFailure(result), "The host refused it."),
@@ -147,7 +163,7 @@ function PullRequestAssigneePicker({
       {(candidate) => (
         <>
           <PullRequestActorLabel actor={candidate} className="min-w-0 flex-1 truncate" />
-          {candidate.isAssigned ? (
+          {isAssigned(candidate) ? (
             <CheckIcon aria-label="Assigned" className="size-3.5 shrink-0" />
           ) : null}
         </>

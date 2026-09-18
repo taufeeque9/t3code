@@ -18,6 +18,7 @@ import {
   decodePullRequestStacksJson,
   decodeLabelCandidatesJson,
   decodeAssigneeCandidatesJson,
+  decodeIgnoredAssigneesJson,
   buildAssigneeRequestJson,
   decodeRepositoryAccessJson,
   decodeReviewerCandidatesJson,
@@ -1026,6 +1027,39 @@ describe("assignee candidate decoding", () => {
     expect(expectSuccess(decodeAssigneeCandidatesJson(raw)).candidates).toEqual([
       { login: "hubot", name: null, avatarUrl: null, isAssigned: false },
     ]);
+  });
+});
+
+describe("assignee change verification", () => {
+  const issue = (logins: ReadonlyArray<string>) =>
+    JSON.stringify({ number: 7, assignees: logins.map((login) => ({ login })) });
+
+  it("names whoever GitHub answered 2xx for and did not assign", () => {
+    expect(
+      expectSuccess(
+        decodeIgnoredAssigneesJson(issue(["Octocat"]), {
+          assignees: ["octocat", "hubot"],
+          assigned: true,
+        }),
+      ),
+    ).toEqual(["hubot"]);
+  });
+
+  it("names whoever is still assigned after being taken off", () => {
+    expect(
+      expectSuccess(
+        decodeIgnoredAssigneesJson(issue(["octocat", "hubot"]), {
+          assignees: ["hubot", "departed"],
+          assigned: false,
+        }),
+      ),
+    ).toEqual(["hubot"]);
+  });
+
+  it("claims nothing where the answer does not say who is assigned", () => {
+    expect(
+      expectSuccess(decodeIgnoredAssigneesJson("{}", { assignees: ["octocat"], assigned: true })),
+    ).toEqual([]);
   });
 });
 

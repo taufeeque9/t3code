@@ -60,6 +60,7 @@ import {
   buildLabelRequestJson,
   LABEL_CANDIDATES_GRAPHQL_QUERY,
   decodeAssigneeCandidatesJson,
+  decodeIgnoredAssigneesJson,
   buildAssigneeRequestJson,
   ASSIGNEE_CANDIDATES_GRAPHQL_QUERY,
   decodeReviewDismissalsJson,
@@ -132,6 +133,26 @@ export class GitHubPullRequestReadError extends Schema.TaggedError<GitHubPullReq
 
   override get message(): string {
     return `GitHub CLI failed in ${this.operation}: ${this.detail}`;
+  }
+}
+
+/** GitHub answered 2xx and left the assignees as they were, which it does rather than refuse. */
+export class GitHubAssigneeChangeIgnoredError extends Schema.TaggedError<GitHubAssigneeChangeIgnoredError>()(
+  "GitHubAssigneeChangeIgnoredError",
+  {
+    command: Schema.Literal("gh"),
+    cwd: Schema.String,
+    logins: Schema.Array(Schema.String),
+    assigned: Schema.Boolean,
+  },
+) {
+  get detail(): string {
+    const names = this.logins.join(", ");
+    return this.assigned ? `GitHub did not assign ${names}.` : `GitHub left ${names} assigned.`;
+  }
+
+  override get message(): string {
+    return `GitHub CLI failed in setAssignees: ${this.detail}`;
   }
 }
 
@@ -355,6 +376,7 @@ export type GitHubPullRequestCliError =
   | GitHubStackActionError
   | GitHubCli.GitHubCliError
   | GitHubPullRequestReadError
+  | GitHubAssigneeChangeIgnoredError
   | GitHubDiffCursorError
   | GitHubDiffCommitError
   | GitHubDiffRevisionsUnavailableError
@@ -2439,7 +2461,38 @@ export const make = Effect.gen(function* () {
           ],
           stdin: buildAssigneeRequestJson(input.assignees),
         })
-        .pipe(Effect.asVoid);
+        .pipe(
+          Effect.flatMap(
+            (
+              result,
+            ): Effect.Effect<
+              void,
+              GitHubPullRequestReadError | GitHubAssigneeChangeIgnoredError
+            > => {
+              const ignored = decodeIgnoredAssigneesJson(result.stdout.trim(), input);
+              if (!Result.isSuccess(ignored)) {
+                return Effect.fail(
+                  new GitHubPullRequestReadError({
+                    command: "gh",
+                    cwd: input.cwd,
+                    operation: "setAssignees",
+                    cause: ignored.failure,
+                  }),
+                );
+              }
+              return ignored.success.length === 0
+                ? Effect.void
+                : Effect.fail(
+                    new GitHubAssigneeChangeIgnoredError({
+                      command: "gh",
+                      cwd: input.cwd,
+                      logins: ignored.success,
+                      assigned: input.assigned,
+                    }),
+                  );
+            },
+          ),
+        );
     },
 
     runPullRequestAction: (input) => {
