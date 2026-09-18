@@ -16,6 +16,7 @@ import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import {
   query as claudeQuery,
   type Options as ClaudeQueryOptions,
+  type ApiKeySource,
   type SlashCommand as ClaudeSlashCommand,
   type SDKControlGetUsageResponse,
   type SDKUserMessage,
@@ -119,6 +120,10 @@ function normalizeClaudeAuthMethod(authMethod: string | undefined): string | und
   return undefined;
 }
 
+function hasClaudeApiKeySource(apiKeySource: ApiKeySource | undefined): boolean {
+  return apiKeySource !== undefined && apiKeySource !== "none";
+}
+
 function formatClaudeSubscriptionAuthLabel(subscriptionType: string): string {
   const subscriptionLabel =
     claudeSubscriptionLabel(subscriptionType) ?? toTitleCaseWords(subscriptionType);
@@ -139,8 +144,12 @@ function formatClaudeSubscriptionAuthLabel(subscriptionType: string): string {
 function claudeAuthMetadata(input: {
   readonly subscriptionType: string | undefined;
   readonly authMethod: string | undefined;
+  readonly apiKeySource: ApiKeySource | undefined;
 }): { readonly type: string; readonly label: string } | undefined {
-  if (normalizeClaudeAuthMethod(input.authMethod) === "apiKey") {
+  if (
+    normalizeClaudeAuthMethod(input.authMethod) === "apiKey" ||
+    hasClaudeApiKeySource(input.apiKeySource)
+  ) {
     return {
       type: "apiKey",
       label: "Claude API Key",
@@ -161,6 +170,16 @@ function apiProviderAuthMetadata(
   apiProvider: string | undefined,
 ): { readonly type: string; readonly label: string } | undefined {
   return apiProvider === "bedrock" ? { type: "bedrock", label: "Amazon Bedrock" } : undefined;
+}
+
+function hasClaudeAccount(capabilities: ClaudeCapabilitiesProbe): boolean {
+  return Boolean(
+    capabilities.email?.trim() ||
+    capabilities.subscriptionType?.trim() ||
+    normalizeClaudeAuthMethod(capabilities.tokenSource) ||
+    hasClaudeApiKeySource(capabilities.apiKeySource) ||
+    (capabilities.apiProvider && capabilities.apiProvider !== "firstParty"),
+  );
 }
 
 // ── SDK capability probe ────────────────────────────────────────────
@@ -228,6 +247,7 @@ type ClaudeCapabilitiesProbe = {
   readonly email: string | undefined;
   readonly subscriptionType: string | undefined;
   readonly tokenSource: string | undefined;
+  readonly apiKeySource: ApiKeySource | undefined;
   /**
    * Active API backend reported by the SDK's `AccountInfo`. Anthropic OAuth
    * login only applies when `"firstParty"`; for Amazon Bedrock (`"bedrock"`)
@@ -377,6 +397,7 @@ const probeClaudeCapabilities = (
               readonly email?: string;
               readonly subscriptionType?: string;
               readonly tokenSource?: string;
+              readonly apiKeySource?: ApiKeySource;
               readonly apiProvider?: string;
             }
           | undefined;
@@ -384,6 +405,7 @@ const probeClaudeCapabilities = (
           email: account?.email,
           subscriptionType: account?.subscriptionType,
           tokenSource: account?.tokenSource,
+          apiKeySource: account?.apiKeySource,
           apiProvider: account?.apiProvider,
           slashCommands: parseClaudeInitializationCommands(init.commands),
           ...(usage ? { usage } : {}),
@@ -555,10 +577,29 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     });
   }
 
+  if (!hasClaudeAccount(capabilities)) {
+    return buildServerProvider({
+      presentation: CLAUDE_PRESENTATION,
+      enabled: claudeSettings.enabled,
+      checkedAt,
+      models,
+      slashCommands: dedupedSlashCommands,
+      skills,
+      probe: {
+        installed: true,
+        version: parsedVersion,
+        status: "error",
+        auth: { status: "unauthenticated" },
+        message: "Claude is not authenticated. Sign in and try again.",
+      },
+    });
+  }
+
   const authMetadata =
     claudeAuthMetadata({
       subscriptionType: capabilities.subscriptionType,
       authMethod: capabilities.tokenSource,
+      apiKeySource: capabilities.apiKeySource,
     }) ?? apiProviderAuthMetadata(capabilities.apiProvider);
   const usageLimits = !capabilities.usage
     ? makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" })

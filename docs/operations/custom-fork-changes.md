@@ -82,7 +82,9 @@ through `collectLimitNotices`, which returns plain strings with no provider
 identity, and drops an account whose probe reported nothing at all — which is
 exactly what an unusable credential looks like. The fork collects those accounts
 separately rather than widening that function, so upstream's notices and their
-tests stay untouched.
+tests stay untouched. It also treats an SDK initialization with no account
+identity as signed out; otherwise Claude reports the expired login as a working
+account with unsupported limits and the repair action disappears after refresh.
 
 **On conflict:** the collection is fork-owned; only the one render line sits in
 an upstream file. Re-apply that line wherever upstream's limits view puts its

@@ -48,10 +48,17 @@ export function collectClaudeSignIns(
     for (const provider of presentation.serverConfig?.providers ?? []) {
       if (provider.driver !== "claudeAgent") continue;
       if (!provider.enabled || !provider.installed || !isProviderAvailable(provider)) continue;
-      if (provider.usageLimits?.unavailable?.reason === "unsupported") continue;
-      const notice = provider.usageLimits
-        ? limitsNotice(provider.usageLimits)
-        : "Could not read this account's limits.";
+      const signedOut = provider.auth.status === "unauthenticated";
+      if (!signedOut && provider.usageLimits?.unavailable?.reason === "unsupported") continue;
+
+      let notice: string | null;
+      if (signedOut) {
+        notice = "Sign-in expired.";
+      } else if (provider.usageLimits) {
+        notice = limitsNotice(provider.usageLimits);
+      } else {
+        notice = "Could not read this account's limits.";
+      }
       if (notice === null) continue;
       candidates.push({
         key: `${environmentId}:${provider.instanceId}`,
@@ -59,7 +66,7 @@ export function collectClaudeSignIns(
         instanceId: provider.instanceId,
         displayName: provider.displayName?.trim() || String(provider.driver),
         notice,
-        listedInNotices: provider.usageLimits !== undefined,
+        listedInNotices: !signedOut && provider.usageLimits !== undefined,
       });
     }
   }
