@@ -197,7 +197,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       );
 
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
-      const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<ClaudeSettings>>({
+      const managedSnapshot = yield* makeManagedServerProvider<
+        ProviderSnapshotSettings<ClaudeSettings>
+      >({
         resolveMaintenance,
         getSettings: snapshotSettings.getSettings,
         streamSettings: snapshotSettings.streamSettings,
@@ -231,6 +233,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
             }),
         ),
       );
+      // Manual refreshes may follow login, so bypass the TTL cache. Background
+      // health checks still share cached capabilities to avoid unnecessary CLI work.
+      const snapshot = {
+        ...managedSnapshot,
+        refresh: Cache.invalidate(capabilitiesProbeCache, capabilitiesCacheKey).pipe(
+          Effect.andThen(managedSnapshot.refresh),
+        ),
+      } satisfies typeof managedSnapshot;
       const snapshotForCwd = (cwd: string) =>
         !effectiveConfig.enabled
           ? snapshot.getSnapshot

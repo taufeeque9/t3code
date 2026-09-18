@@ -70,6 +70,8 @@ Repairs an expired Claude credential without a terminal. Upstream reports the
 broken account but offers no way to fix it.
 
 - `apps/server/src/limits/ProviderLoginService.ts` and its test
+- `apps/server/src/provider/Layers/ClaudeProvider.ts` and its provider-registry test
+- `apps/server/src/provider/Drivers/ClaudeDriver.ts` and its instance-registry test
 - `packages/contracts/src/limits.ts` (sign-in contracts only), the two
   `server.*ProviderLogin` RPCs, their `ws.ts` handlers and auth scopes
 - `apps/web/src/components/usage/ProviderLoginDialog.tsx`,
@@ -85,10 +87,14 @@ separately rather than widening that function, so upstream's notices and their
 tests stay untouched. It also treats an SDK initialization with no account
 identity as signed out; otherwise Claude reports the expired login as a working
 account with unsupported limits and the repair action disappears after refresh.
+Explicit provider refreshes invalidate Claude's short-lived capability cache so
+the refresh following a successful sign-in observes the new credential immediately.
 
-**On conflict:** the collection is fork-owned; only the one render line sits in
-an upstream file. Re-apply that line wherever upstream's limits view puts its
-notices. Retire the whole thing if upstream ever offers a Claude sign-in.
+**On conflict:** the collection is fork-owned, while the render line and the two
+server status/cache patches sit in upstream-owned files. Re-apply the smallest
+patches until upstream both recognizes expired Claude authentication and refreshes
+capabilities immediately after sign-in. Retire the whole thing once upstream
+offers an equivalent Claude sign-in flow.
 
 ### Claude multi-account support
 

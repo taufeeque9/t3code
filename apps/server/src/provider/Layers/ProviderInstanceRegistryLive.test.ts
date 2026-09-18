@@ -155,6 +155,7 @@ const makeTildeProviderFixtures = Effect.fn(
   const codexPath = path.join(fixtureDir, "codex");
   const claudePath = path.join(fixtureDir, "claude");
   const claudeHomePath = path.join(fixtureDir, "claude-home");
+  const claudeAccountPath = path.join(fixtureDir, "claude-account-state");
   const codexScriptPath = path.join(fixtureDir, "codex-script.json");
   const codexFixtureDir = path.join(import.meta.dirname, "../testFixtures");
 
@@ -178,6 +179,7 @@ const makeTildeProviderFixtures = Effect.fn(
     claudePath,
     [
       "#!/usr/bin/env node",
+      'import { readFileSync } from "node:fs";',
       'import * as NodeReadline from "node:readline";',
       'if (process.argv.includes("--version")) {',
       '  process.stdout.write("claude 2.1.219\\n");',
@@ -186,19 +188,28 @@ const makeTildeProviderFixtures = Effect.fn(
       "const lines = NodeReadline.createInterface({ input: process.stdin });",
       'lines.on("line", (line) => {',
       "  const message = JSON.parse(line);",
-      '  if (message.type !== "control_request" || message.request?.subtype !== "initialize") return;',
-      "  process.stdout.write(JSON.stringify({",
+      '  if (message.type !== "control_request") return;',
+      "  const reply = (response) => process.stdout.write(JSON.stringify({",
       '    type: "control_response",',
-      "    response: {",
-      '      subtype: "success",',
-      "      request_id: message.request_id,",
-      "      response: {",
-      "        commands: [], agents: [], models: [],",
-      '        output_style: "default", available_output_styles: ["default"],',
-      '        account: { email: "test@example.com", subscriptionType: "pro", tokenSource: "oauth" },',
-      "      },",
-      "    },",
+      '    response: { subtype: "success", request_id: message.request_id, response },',
       '  }) + "\\n");',
+      '  if (message.request?.subtype === "initialize") {',
+      `    const signedIn = readFileSync(${JSON.stringify(claudeAccountPath)}, "utf8").trim() === "authenticated";`,
+      "    reply({",
+      "      commands: [], agents: [], models: [],",
+      '      output_style: "default", available_output_styles: ["default"],',
+      "      account: signedIn",
+      '        ? { email: "test@example.com", subscriptionType: "pro", tokenSource: "oauth" }',
+      '        : { apiProvider: "firstParty", tokenSource: "none", apiKeySource: "none" },',
+      "    });",
+      "  }",
+      '  if (message.request?.subtype === "get_usage") {',
+      "    reply({",
+      "      session: {}, subscription_type: null, rate_limits_available: true,",
+      '      rate_limits: { five_hour: { utilization: 12, resets_at: "2026-09-18T12:00:00Z" } },',
+      "      behaviors: null,",
+      "    });",
+      "  }",
       "});",
       "setInterval(() => {}, 1_000);",
       "",
@@ -206,12 +217,14 @@ const makeTildeProviderFixtures = Effect.fn(
   );
   yield* fileSystem.chmod(claudePath, 0o755);
   yield* fileSystem.makeDirectory(claudeHomePath);
+  yield* fileSystem.writeFileString(claudeAccountPath, "authenticated");
 
   const asTildePath = (filePath: string) => `~/${path.relative(homePath, filePath)}`;
   return {
     codexBinaryPath: asTildePath(codexPath),
     claudeBinaryPath: asTildePath(claudePath),
     claudeHomePath,
+    claudeAccountPath,
     codexScriptPath,
   };
 });
@@ -389,6 +402,42 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
         installed: true,
         version: "2.1.219",
       });
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("manual Claude refresh invalidates cached capabilities after login", () =>
+    Effect.gen(function* () {
+      if (yield* isHostWindows) return;
+
+      const fixtures = yield* makeTildeProviderFixtures();
+      const fileSystem = yield* FileSystem.FileSystem;
+      yield* fileSystem.writeFileString(fixtures.claudeAccountPath, "signed-out");
+
+      const claudeId = ProviderInstanceId.make("claude_login_refresh");
+      const { registry } = yield* makeProviderInstanceRegistry({
+        drivers: [ClaudeDriver],
+        configMap: {
+          [claudeId]: {
+            driver: ProviderDriverKind.make("claudeAgent"),
+            enabled: true,
+            config: makeClaudeConfig({
+              enabled: true,
+              binaryPath: fixtures.claudeBinaryPath,
+              homePath: fixtures.claudeHomePath,
+            }),
+          },
+        },
+      });
+      const claude = yield* registry.getInstance(claudeId);
+      expect(claude).toBeDefined();
+
+      const signedOut = yield* claude!.snapshot.refresh;
+      expect(signedOut.auth.status).toBe("unauthenticated");
+
+      yield* fileSystem.writeFileString(fixtures.claudeAccountPath, "authenticated");
+      const signedIn = yield* claude!.snapshot.refresh;
+      expect(signedIn.auth.status).toBe("authenticated");
+      expect(signedIn.usageLimits?.windows).toHaveLength(1);
     }).pipe(Effect.provide(testLayer)),
   );
 
