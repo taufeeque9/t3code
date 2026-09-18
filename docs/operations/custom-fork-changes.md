@@ -48,22 +48,6 @@ message. Upstream has no equivalent.
 - `apps/web`: `hooks/useForkThread.ts`, plus fork entry points in `ChatView.tsx`,
   `Sidebar.tsx`, `MessagesTimeline.tsx`, `threadActionMenu.logic.ts`
 
-### Claude thinking in conversation history
-
-Claude sometimes puts an explanation in a thinking block without repeating it
-in its reply. Upstream discards those blocks. The fork preserves parent-session
-thinking as activities and shows expandable Thinking previews on web, desktop,
-and mobile, outside tool groups and settled-turn folds.
-
-The Claude adapter reconciles streamed blocks with completed snapshots and saves
-partial text on interruption. Each block keeps one identity; a late snapshot
-updates that activity. Ingestion preserves the full text, and clients render
-the body only when expanded. Existing historical logs are not backfilled.
-
-**On conflict:** compare with any upstream reasoning support before retaining
-this implementation. Retire it when upstream preserves snapshot-only blocks,
-partial output, and corrections with equivalent visibility across clients.
-
 ### Claude account sign-in from the Limits view
 
 Repairs an expired Claude credential without a terminal. Upstream reports the
@@ -184,8 +168,9 @@ the sidebar. It is left untouched; the fork adds a parallel path.
 - `apps/server/src/persistence/Migrations/050_ProjectionThreadSearchUnits.ts`
 - `Migrations.ts` keeps the shipped search migration at ID 50. Upstream's
   `050_ProjectionThreadPullRequests.ts` runs at ID 51 in this fork; its upgrade
-  tests start from the existing search database. Keep these IDs stable and
-  assign future migrations unused IDs when upstream numbering overlaps.
+  tests start from the existing search database. Upstream migrations 51–53
+  consequently run at IDs 52–54. Keep these IDs stable and assign future
+  migrations unused IDs when upstream numbering overlaps.
 - `apps/server/src/orchestration/Layers/threadSearchIndex.ts` and its test —
   its own service, not a method on `ProjectionSnapshotQuery`, whose shape a
   dozen upstream tests stub
@@ -207,34 +192,28 @@ no projection write path is fork-owned.
 points listed above. Retire it if upstream ever makes its own search fuzzy and
 project-scoped.
 
-### Composer: queue a message for the end of the turn
+### Composer: end-of-turn queue semantics
 
-Hold one text follow-up for an existing thread until its current turn finishes.
-The desktop/web client owns the queue and must stay open; delivery follows live
-thread updates across navigation and reconnects. Mobile's outbox is separate.
+Upstream owns the multi-message queue, full draft snapshots (attachments and
+contexts), inline controls, and the queue-versus-steer setting. The fork keeps
+two behavior refinements:
 
-- `apps/web/src/queuedMessageStore.ts`, `queuedMessageDispatch.ts`,
-  `components/QueuedMessageCoordinator.tsx`, and their tests
-- `apps/web/src/routes/__root.tsx`: mounts the dispatcher outside thread routes
-- `apps/web/src/components/ChatView.tsx`: enqueue, edit, discard, retry, and banner
-- `apps/web/src/components/Sidebar.logic.ts`, `Sidebar.tsx`, and `LegacySidebar.tsx`:
-  queued work keeps a thread active without an intermediate completion badge
-- `packages/contracts/src/keybindings.ts` (`composer.queue`),
-  `packages/shared/src/keybindings.ts` (default `mod+shift+enter`)
+- automatic delivery waits until the active turn finishes; **Send now** remains
+  the explicit way to steer during a turn;
+- each queued draft captures its model, runtime mode, interaction mode, and
+  prompt effort instead of inheriting whatever the composer selects later.
 
-Enqueue captures the selected model, modes, and prompt effort. Attachments stay
-in the composer draft. Delivery keeps a stable command identity across uncertain
-failures and waits for the exact message in thread updates before clearing the
-queue. Failed delivery stays visible for retry.
+`queuedMessageStore.ts` and its test own the timing rule and captured settings;
+`ChatView.tsx` records and replays them. `Sidebar.tsx`, `LegacySidebar.tsx`, and
+`Sidebar.logic.ts` keep threads with queued work visible as active.
 
-**On conflict:** compare with any upstream end-of-turn queue before retaining
-this client implementation. A server-owned queue could also deliver with the
-client closed and share pending work across devices.
+The old fork queue, its reload persistence, root-level coordinator, and dedicated
+keybinding were retired when upstream's richer queue landed. Full drafts contain
+live attachment uploads, so persisting or dispatching them outside `ChatView`
+would risk replaying stale files.
 
-### Chat: stop-hook follow-ups
-
-`MessagesTimeline.logic.ts` keeps a turn expanded through a stop-hook warning and
-the self-check reply that follows it.
+**On conflict:** retire these refinements when upstream waits for turn completion
+and snapshots the queued draft's provider settings.
 
 ## Reassess on the next upstream change
 
@@ -255,6 +234,19 @@ keeping only while the setting is actually used.
 This one touches the most files of any fork feature and conflicts on most merges.
 
 ## Retired: superseded by upstream
+
+### Claude thinking in conversation history
+
+Retired on 2026-09-18 when upstream shipped provider thinking traces across
+Claude, Cursor, and Grok with web/mobile rendering, snapshot-only backfill,
+partial-stream completion, and subagent filtering. The fork's parallel activity
+model also supported late correction of a completed Claude snapshot, but keeping
+two reasoning projections for that rare case was not worth the duplication.
+
+### Chat stop-hook follow-ups
+
+Retired on 2026-09-18 because upstream now keeps stop-hook warnings and their
+self-check replies outside the preceding turn fold with equivalent behavior.
 
 Removed on 2026-09-05 when upstream shipped its own limits view. Do not revive.
 

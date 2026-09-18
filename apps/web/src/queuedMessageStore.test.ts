@@ -1,102 +1,155 @@
-import { ProviderInstanceId } from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
-  readQueuedMessageStorageForTest,
+  isQueuedMessageDue,
+  latestCompletedToolActivityId,
   useQueuedMessageStore,
-  writeQueuedMessageStorageForTest,
+  type QueuedComposerMessage,
 } from "./queuedMessageStore";
 
-const THREAD = "env-1:thread-1";
-
-// This test environment has no `localStorage`, so the store runs on its
-// in-memory fallback; the reload test round-trips through that instead.
-beforeEach(() => {
-  writeQueuedMessageStorageForTest("{}");
-  useQueuedMessageStore.setState({ byThreadKey: {} });
-});
+function makeMessage(prompt: string): Omit<QueuedComposerMessage, "id"> {
+  return {
+    prompt,
+    images: [],
+    files: [],
+    terminalContexts: [],
+    previewAnnotations: [],
+    reviewComments: [],
+    submissionIntent: "foreground",
+    queuedAfterToolActivityId: null,
+    createdAt: "2026-09-11T00:00:00.000Z",
+  };
+}
 
 describe("queuedMessageStore", () => {
-  it("queues one message per thread, replacing an earlier one", () => {
-    const { queue } = useQueuedMessageStore.getState();
-    expect(queue(THREAD, "first")).toBe(true);
-    expect(queue(THREAD, "second")).toBe(true);
-    expect(useQueuedMessageStore.getState().byThreadKey[THREAD]?.prompt).toBe("second");
+  beforeEach(() => {
+    useQueuedMessageStore.setState({ queuesByThreadKey: {}, drainGeneration: 0 });
   });
 
-  it("keeps threads independent", () => {
-    const { queue } = useQueuedMessageStore.getState();
-    queue(THREAD, "for one");
-    queue("env-1:thread-2", "for the other");
-    const state = useQueuedMessageStore.getState().byThreadKey;
-    expect(state[THREAD]?.prompt).toBe("for one");
-    expect(state["env-1:thread-2"]?.prompt).toBe("for the other");
+  it("keeps messages in submission order per thread", () => {
+    const { enqueue } = useQueuedMessageStore.getState();
+    enqueue("thread-a", makeMessage("first"));
+    enqueue("thread-a", makeMessage("second"));
+    enqueue("thread-b", makeMessage("other"));
+
+    const queues = useQueuedMessageStore.getState().queuesByThreadKey;
+    expect(queues["thread-a"]?.map((message) => message.prompt)).toEqual(["first", "second"]);
+    expect(queues["thread-b"]?.map((message) => message.prompt)).toEqual(["other"]);
   });
 
-  it("refuses an empty or whitespace-only prompt", () => {
-    const { queue } = useQueuedMessageStore.getState();
-    expect(queue(THREAD, "   \n ")).toBe(false);
-    expect(useQueuedMessageStore.getState().byThreadKey[THREAD]).toBeUndefined();
+  it("keeps the provider settings captured when the message was queued", () => {
+    const sendSettings = {
+      selectedProvider: ProviderDriverKind.make("claudeAgent"),
+      selectedModel: "claude-fable-5-1",
+      selectedProviderModels: [],
+      selectedPromptEffort: "high",
+      selectedModelSelection: {
+        instanceId: ProviderInstanceId.make("claude-work"),
+        model: "claude-fable-5-1",
+        options: [],
+      },
+      interactionMode: "plan" as const,
+      interactionModeEnabled: true,
+      runtimeMode: "full-access" as const,
+    };
+
+    const queued = useQueuedMessageStore
+      .getState()
+      .enqueue("thread-a", { ...makeMessage("later"), sendSettings });
+
+    expect(queued.sendSettings).toBe(sendSettings);
   });
 
-  it("trims the stored prompt", () => {
-    useQueuedMessageStore.getState().queue(THREAD, "  padded  ");
-    expect(useQueuedMessageStore.getState().byThreadKey[THREAD]?.prompt).toBe("padded");
+  it("take hands the message to exactly one caller", () => {
+    const { enqueue, take } = useQueuedMessageStore.getState();
+    const entry = enqueue("thread-a", makeMessage("first"));
+
+    expect(take("thread-a", entry.id, null)?.prompt).toBe("first");
+    expect(take("thread-a", entry.id, null)).toBeNull();
+    expect(useQueuedMessageStore.getState().queuesByThreadKey["thread-a"]).toBeUndefined();
   });
 
-  it("take removes the message so it cannot be sent twice", () => {
-    useQueuedMessageStore.getState().queue(THREAD, "only once");
-    expect(useQueuedMessageStore.getState().take(THREAD)?.prompt).toBe("only once");
-    expect(useQueuedMessageStore.getState().take(THREAD)).toBeNull();
+  it("take re-anchors the remaining messages to the current tool boundary", () => {
+    const { enqueue, take } = useQueuedMessageStore.getState();
+    const first = enqueue("thread-a", makeMessage("first"));
+    enqueue("thread-a", makeMessage("second"));
+
+    take("thread-a", first.id, "tool-2");
+
+    const [second] = useQueuedMessageStore.getState().queuesByThreadKey["thread-a"] ?? [];
+    expect(second?.queuedAfterToolActivityId).toBe("tool-2");
+    expect(isQueuedMessageDue({ message: second!, phase: "running" })).toBe(false);
   });
 
-  it("remove clears without returning anything", () => {
-    useQueuedMessageStore.getState().queue(THREAD, "discard me");
-    useQueuedMessageStore.getState().remove(THREAD);
-    expect(useQueuedMessageStore.getState().byThreadKey[THREAD]).toBeUndefined();
+  it("remove keeps the other messages' anchors", () => {
+    const { enqueue, remove } = useQueuedMessageStore.getState();
+    const first = enqueue("thread-a", { ...makeMessage("first"), queuedAfterToolActivityId: "t1" });
+    const second = enqueue("thread-a", makeMessage("second"));
+
+    expect(remove("thread-a", second.id)?.prompt).toBe("second");
+    expect(remove("thread-a", second.id)).toBeNull();
+    expect(useQueuedMessageStore.getState().queuesByThreadKey["thread-a"]).toEqual([first]);
   });
 
-  it("survives a reload through localStorage", () => {
-    useQueuedMessageStore.getState().queue(THREAD, "still here");
-    const raw = readQueuedMessageStorageForTest();
-    expect(raw).toBeTruthy();
-    useQueuedMessageStore.setState({ byThreadKey: {} });
-    writeQueuedMessageStorageForTest(raw ?? "");
-    expect(useQueuedMessageStore.getState().byThreadKey[THREAD]?.prompt).toBe("still here");
+  it("holdAtFront returns a failed message to the head, held", () => {
+    const { enqueue, take, holdAtFront } = useQueuedMessageStore.getState();
+    const first = enqueue("thread-a", makeMessage("first"));
+    enqueue("thread-a", makeMessage("second"));
+    const taken = take("thread-a", first.id, "t1")!;
+
+    holdAtFront("thread-a", taken);
+
+    const queue = useQueuedMessageStore.getState().queuesByThreadKey["thread-a"] ?? [];
+    expect(queue.map((message) => message.prompt)).toEqual(["first", "second"]);
+    expect(queue[0]?.holdUntilUserAction).toBe(true);
+    expect(isQueuedMessageDue({ message: queue[0]!, phase: "ready" })).toBe(false);
   });
 
-  it("preserves settings and delivery identity across a reload after a failed send", () => {
-    const queue = useQueuedMessageStore.getState();
-    queue.queue(THREAD, "plan this", {
-      modelSelection: { instanceId: ProviderInstanceId.make("claude"), model: "opus" },
-      runtimeMode: "approval-required",
-      interactionMode: "plan",
-      text: "formatted plan this",
-    });
-    const sending = queue.beginSend(THREAD, "2026-09-11T20:00:00.000Z")!;
-    queue.failSend(THREAD, sending.id, "Disconnected");
-    const expected = useQueuedMessageStore.getState().byThreadKey[THREAD];
-    const raw = readQueuedMessageStorageForTest()!;
-    useQueuedMessageStore.setState({ byThreadKey: {} });
-    writeQueuedMessageStorageForTest(raw);
-    expect(useQueuedMessageStore.getState().byThreadKey[THREAD]).toEqual(expected);
+  it("drain empties one thread's queue in order", () => {
+    const { enqueue, drain } = useQueuedMessageStore.getState();
+    enqueue("thread-a", makeMessage("first"));
+    enqueue("thread-a", makeMessage("second"));
+    enqueue("thread-b", makeMessage("other"));
+
+    expect(drain("thread-a").map((message) => message.prompt)).toEqual(["first", "second"]);
+    expect(useQueuedMessageStore.getState().drainGeneration).toBe(1);
+    expect(drain("thread-a")).toEqual([]);
+    expect(useQueuedMessageStore.getState().drainGeneration).toBe(1);
+    expect(useQueuedMessageStore.getState().queuesByThreadKey["thread-b"]).toHaveLength(1);
+  });
+});
+
+describe("queued message dispatch timing", () => {
+  const activities = [
+    { id: "a1", kind: "tool.started", sequence: 1, createdAt: "2026-01-01T00:00:01Z" },
+    { id: "a2", kind: "tool.completed", sequence: 2, createdAt: "2026-01-01T00:00:02Z" },
+    { id: "a3", kind: "tool.updated", sequence: 3, createdAt: "2026-01-01T00:00:03Z" },
+  ];
+
+  it("finds the newest completed tool call by sequence, not position", () => {
+    expect(latestCompletedToolActivityId(activities)).toBe("a2");
+    expect(latestCompletedToolActivityId([])).toBeNull();
+    expect(
+      latestCompletedToolActivityId([
+        { id: "late", kind: "tool.completed", sequence: 9, createdAt: "2026-01-01T00:00:09Z" },
+        { id: "early", kind: "tool.completed", sequence: 4, createdAt: "2026-01-01T00:00:04Z" },
+      ]),
+    ).toBe("late");
   });
 
-  it("ignores malformed persisted entries rather than failing to load", () => {
-    writeQueuedMessageStorageForTest(
-      JSON.stringify({
-        good: { prompt: "kept", queuedAt: "2026-09-07T00:00:00.000Z" },
-        missingPrompt: { queuedAt: "2026-09-07T00:00:00.000Z" },
-        emptyPrompt: { prompt: "", queuedAt: "2026-09-07T00:00:00.000Z" },
-        notAnObject: 5,
-      }),
-    );
-    const state = useQueuedMessageStore.getState().byThreadKey;
-    expect(Object.keys(state)).toEqual(["good"]);
+  it("waits for the current turn to finish", () => {
+    expect(isQueuedMessageDue({ message: {}, phase: "running" })).toBe(false);
   });
 
-  it("recovers from unparseable storage", () => {
-    writeQueuedMessageStorageForTest("{not json");
-    expect(useQueuedMessageStore.getState().byThreadKey).toEqual({});
+  it("never auto-sends a message held for user action", () => {
+    const message = { holdUntilUserAction: true };
+    expect(isQueuedMessageDue({ message, phase: "ready" })).toBe(false);
+  });
+
+  it("is due as soon as the turn is over, but not while a send is connecting", () => {
+    const message = {};
+    expect(isQueuedMessageDue({ message, phase: "ready" })).toBe(true);
+    expect(isQueuedMessageDue({ message, phase: "connecting" })).toBe(false);
   });
 });

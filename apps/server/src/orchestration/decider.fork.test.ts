@@ -1,5 +1,6 @@
 import {
   CommandId,
+  ComposerContextId,
   MessageId,
   ProjectId,
   ProviderInstanceId,
@@ -47,6 +48,22 @@ function sourceReadModel(): OrchestrationReadModel {
             id: MessageId.make("user-1"),
             role: "user",
             text: "first",
+            context: {
+              version: 1,
+              records: [
+                {
+                  version: 1,
+                  kind: "terminal",
+                  contextId: ComposerContextId.make("terminal-1"),
+                  label: "build",
+                  terminalId: "terminal-1",
+                  terminalLabel: "Build",
+                  lineStart: 7,
+                  lineEnd: 7,
+                  text: "compiled successfully",
+                },
+              ],
+            },
             turnId: null,
             streaming: false,
             createdAt: NOW,
@@ -107,6 +124,12 @@ it.layer(NodeServices.layer)("thread fork decider", (it) => {
         event.type === "thread.message-sent" ? [event.payload.text] : [],
       );
       expect(copiedText).toEqual(["first", "answer"]);
+      const copiedContext = events.find(
+        (event) => event.type === "thread.message-sent" && event.payload.text === "first",
+      );
+      expect(
+        copiedContext?.type === "thread.message-sent" ? copiedContext.payload.context : null,
+      ).toMatchObject({ records: [{ contextId: "terminal-1", text: "compiled successfully" }] });
       const created = events[0];
       expect(created?.type === "thread.created" ? created.payload.title : null).toBe(
         "Original (fork)",

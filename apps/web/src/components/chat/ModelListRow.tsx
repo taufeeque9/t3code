@@ -1,7 +1,7 @@
 import { type ProviderDriverKind, type ProviderInstanceId } from "@t3tools/contracts";
 import { formatPickerQuota, type PickerQuota } from "@t3tools/shared/modelPickerQuota";
 import { memo } from "react";
-import { StarIcon } from "lucide-react";
+import { CheckIcon, StarIcon } from "lucide-react";
 import {
   getDisplayModelName,
   getTriggerDisplayModelLabel,
@@ -33,6 +33,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
   quota?: PickerQuota | null;
   isFavorite: boolean;
   isSelected: boolean;
+  showSelection?: boolean;
   showProvider: boolean;
   preferShortName?: boolean;
   useTriggerLabel?: boolean;
@@ -120,6 +121,9 @@ export const ModelListRow = memo(function ModelListRow(props: {
                 : formatPickerQuota(props.quota)}
             </TooltipPopup>
           </Tooltip>
+        ) : null}
+        {props.showSelection && props.isSelected ? (
+          <CheckIcon className="size-3.5" aria-hidden="true" />
         ) : null}
         {props.jumpLabel ? (
           <Kbd className="h-4 min-w-0 rounded-sm px-1.5 text-[10px]">{props.jumpLabel}</Kbd>

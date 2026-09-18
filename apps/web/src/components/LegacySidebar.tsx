@@ -1,5 +1,4 @@
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
-import { GitPullRequestIcon } from "lucide-react";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
 import { Spinner } from "~/components/ui/spinner";
 import {
@@ -216,6 +215,7 @@ import {
   type SidebarProjectGroupMember,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
+import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 const SIDEBAR_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
   updated_at: "Last user message",
   created_at: "Created at",
@@ -385,7 +385,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   } = props;
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const threadKey = scopedThreadKey(threadRef);
-  const queuedMessage = useQueuedMessageStore((store) => store.byThreadKey[threadKey]);
+  const queuedMessage = useQueuedMessageStore((store) => store.queuesByThreadKey[threadKey]?.[0]);
   const [isFileDragOver, setIsFileDragOver] = useState(false);
   const fileDropHandlers = useMemo(
     () =>
@@ -394,6 +394,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         addFiles: (files) => {
           onFileDropThreads(threadRef, files);
         },
+        addFolders: () => {},
       }),
     [onFileDropThreads, threadRef],
   );
@@ -468,7 +469,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       ...thread,
       lastVisitedAt,
       hasQueuedMessage: !!queuedMessage,
-      hasQueuedMessageError: !!queuedMessage?.error,
+      hasQueuedMessageError: queuedMessage?.holdUntilUserAction === true,
       hasQueuedTurnStart: hasQueuedTurnStart(thread, { now: new Date().toISOString() }),
     },
   });
@@ -763,7 +764,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               className="text-muted-foreground"
               aria-label={`PR #${currentLinkedPr.number}, status pending`}
             >
-              <GitPullRequestIcon className="size-3" />
+              <PullRequestGlyph.pullRequest className="size-3" />
             </a>
           ) : null}
           {threadStatus && <ThreadStatusLabel status={threadStatus} />}
@@ -1169,7 +1170,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     isManualProjectSorting,
     dragHandleProps,
   } = props;
-  const queuedMessagesByThreadKey = useQueuedMessageStore((store) => store.byThreadKey);
+  const queuedMessagesByThreadKey = useQueuedMessageStore((store) => store.queuesByThreadKey);
   const environmentMachine = project.allRemoteMembersAreWsl
     ? "linux"
     : project.allRemoteMembersAreDesktopLocal
@@ -1334,12 +1335,14 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
       );
       const queuedMessage =
-        queuedMessagesByThreadKey[scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))];
+        queuedMessagesByThreadKey[
+          scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))
+        ]?.[0];
       return resolveThreadStatusPill({
         thread: {
           ...thread,
           hasQueuedMessage: !!queuedMessage,
-          hasQueuedMessageError: !!queuedMessage?.error,
+          hasQueuedMessageError: queuedMessage?.holdUntilUserAction === true,
           hasQueuedTurnStart: hasQueuedTurnStart(thread, { now: new Date().toISOString() }),
           ...(lastVisitedAt !== null && lastVisitedAt !== undefined ? { lastVisitedAt } : {}),
         },
@@ -1391,12 +1394,14 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
       );
       const queuedMessage =
-        queuedMessagesByThreadKey[scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))];
+        queuedMessagesByThreadKey[
+          scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))
+        ]?.[0];
       return resolveThreadStatusPill({
         thread: {
           ...thread,
           hasQueuedMessage: !!queuedMessage,
-          hasQueuedMessageError: !!queuedMessage?.error,
+          hasQueuedMessageError: queuedMessage?.holdUntilUserAction === true,
           hasQueuedTurnStart: hasQueuedTurnStart(thread, { now: new Date().toISOString() }),
           ...(lastVisitedAt !== null && lastVisitedAt !== undefined ? { lastVisitedAt } : {}),
         },

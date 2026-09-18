@@ -11,8 +11,17 @@ import { resolveMediaSource } from "@t3tools/client-runtime/media-source";
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 
+/**
+ * Activities the worktree setup card already represents. The settled record
+ * is rendered by the card on web and mobile, never as a
+ * worklog entry, so it is hidden from the activity feed even when it failed.
+ */
 export function isWorktreeSetupActivity(kind: string): boolean {
-  return kind === "setup-script.requested" || kind === "setup-script.started";
+  return (
+    kind === "setup-script.requested" ||
+    kind === "setup-script.started" ||
+    kind === "worktree-setup"
+  );
 }
 
 export type WorkLogToolLifecycleStatus = RuntimeItemStatus | "stopped";
@@ -352,7 +361,6 @@ export function commandDetailRepeatsCommand(input: {
 }
 
 export function workLogEntryIsToolLike(entry: WorkLogPresentationEntry): boolean {
-  if (entry.sourceActivityKind === "reasoning.completed") return false;
   if (entry.tone === "tool" || entry.tone === "thinking" || entry.tone === "error") return true;
   if (entry.command !== undefined && entry.command.trim().length > 0) return true;
   if (entry.requestKind !== undefined) return true;

@@ -1,211 +1,213 @@
-/**
- * One message per thread, held back until the agent finishes its turn.
- *
- * Sending mid-turn interrupts the agent; waiting means watching for the turn to
- * end. Queuing lets the next instruction be written the moment it is thought of
- * and delivered when the thread is actually ready for it.
- *
- * Text only, and deliberately one slot: a queue of many is a different feature,
- * and attachments belong to the composer draft that still holds them.
- *
- * @module queuedMessageStore
- */
-import { ModelSelection, RuntimeMode, ProviderInteractionMode } from "@t3tools/contracts";
-import * as Schema from "effect/Schema";
+import type {
+  ModelSelection,
+  PreviewAnnotationPayload,
+  ProviderDriverKind,
+  ProviderInteractionMode,
+  RuntimeMode,
+  ServerProvider,
+} from "@t3tools/contracts";
 import { create } from "zustand";
 
+import type { ComposerSubmissionIntent } from "./composer-logic";
+import type { ComposerFileAttachment, ComposerImageAttachment } from "./composerDraftStore";
+import type { TerminalContextDraft } from "./lib/terminalContext";
 import { randomUUID } from "./lib/utils";
+import type { ReviewCommentContext } from "./reviewCommentContext";
 
-export const QUEUED_MESSAGE_STORAGE_KEY = "t3code:queued-message:v1";
-
-/** Matches the composer's own prompt ceiling closely enough to be no new limit. */
-const MAX_QUEUED_PROMPT_CHARS = 100_000;
-
-export const QueuedMessageSettings = Schema.Struct({
-  modelSelection: ModelSelection,
-  runtimeMode: RuntimeMode,
-  interactionMode: ProviderInteractionMode,
-  text: Schema.String,
-});
-export type QueuedMessageSettings = typeof QueuedMessageSettings.Type;
-const isQueuedMessageSettings = Schema.is(QueuedMessageSettings);
-
-export interface QueuedMessage {
-  readonly prompt: string;
-  readonly queuedAt: string;
-  readonly id: string;
-  readonly sentAt?: string;
-  readonly error?: string;
-  readonly settings?: QueuedMessageSettings;
+/**
+ * A composer submission held back while the thread's turn is running. It
+ * carries the full draft snapshot so the send path can dispatch it later with
+ * the same text, attachments, and contexts the user pressed Enter on.
+ */
+export interface QueuedComposerMessage {
+  id: string;
+  prompt: string;
+  images: ComposerImageAttachment[];
+  files: ComposerFileAttachment[];
+  terminalContexts: TerminalContextDraft[];
+  previewAnnotations: PreviewAnnotationPayload[];
+  reviewComments: ReviewCommentContext[];
+  submissionIntent: ComposerSubmissionIntent;
+  sendSettings?: {
+    selectedProvider: ProviderDriverKind;
+    selectedModel: string;
+    selectedProviderModels: ReadonlyArray<ServerProvider["models"][number]>;
+    selectedPromptEffort: string | null;
+    selectedModelSelection: ModelSelection;
+    interactionMode: ProviderInteractionMode;
+    interactionModeEnabled: boolean;
+    runtimeMode: RuntimeMode;
+  };
+  /**
+   * The newest completed tool activity at queue time. Remaining messages are
+   * re-anchored when an earlier message leaves the queue.
+   */
+  queuedAfterToolActivityId: string | null;
+  /**
+   * Set when the message was created by Stop or a failed restore, not by the
+   * user pressing send. It waits for Send now instead of leaving on its own.
+   */
+  holdUntilUserAction?: boolean;
+  createdAt: string;
 }
 
 interface QueuedMessageStoreState {
-  readonly byThreadKey: Readonly<Record<string, QueuedMessage>>;
-  /** Queues or replaces a message unless delivery is pending. */
-  readonly queue: (threadKey: string, prompt: string, settings?: QueuedMessageSettings) => boolean;
-  /** Removes and returns an editable queued message. */
-  readonly take: (threadKey: string) => QueuedMessage | null;
-  readonly remove: (threadKey: string) => void;
-  readonly beginSend: (threadKey: string, createdAt: string) => QueuedMessage | null;
-  readonly failSend: (threadKey: string, id: string, error: string, rejected?: boolean) => void;
-  readonly completeSend: (threadKey: string, id: string) => void;
-  readonly retry: (threadKey: string) => void;
+  queuesByThreadKey: Record<string, QueuedComposerMessage[]>;
+  /**
+   * Bumped by `drain`. A send that took a message before a drain and finishes
+   * its upload after it compares this to the value it captured and gives up,
+   * so Stop cannot be followed by a queued message starting a new turn.
+   */
+  drainGeneration: number;
+  enqueue: (threadKey: string, message: Omit<QueuedComposerMessage, "id">) => QueuedComposerMessage;
+  /**
+   * Removes one message and returns it, or null when another caller already
+   * took it. The remaining messages are re-anchored to `toolActivityId`.
+   */
+  take: (
+    threadKey: string,
+    id: string,
+    toolActivityId: string | null,
+  ) => QueuedComposerMessage | null;
+  /** Removes one message without touching the others' anchors. Null when already gone. */
+  remove: (threadKey: string, id: string) => QueuedComposerMessage | null;
+  /**
+   * Puts a message back at the head, held for user action. Used when its
+   * send failed: the queue keeps its order and nothing behind it overtakes.
+   */
+  holdAtFront: (threadKey: string, message: QueuedComposerMessage) => void;
+  /** Removes and returns every queued message for the thread, oldest first. */
+  drain: (threadKey: string) => QueuedComposerMessage[];
 }
 
-/** The subset of `Storage` this module uses, so the fallback stays small. */
-interface QueueStorage {
-  getItem: (key: string) => string | null;
-  setItem: (key: string, value: string) => void;
-}
+const EMPTY_QUEUE: QueuedComposerMessage[] = [];
 
-function createMemoryStorage(): QueueStorage {
-  const entries = new Map<string, string>();
-  return {
-    getItem: (key) => entries.get(key) ?? null,
-    setItem: (key, value) => {
-      entries.set(key, value);
-    },
-  };
-}
-
-/**
- * Reading the `localStorage` property itself can throw when storage is blocked
- * by policy or the page is sandboxed, so the access is guarded rather than just
- * the calls on it. The in-memory fallback keeps the queue working for the
- * session; only surviving a reload is lost.
- */
-function resolveStorage(): QueueStorage {
-  try {
-    if (typeof localStorage !== "undefined") return localStorage;
-  } catch {
-    // Fall through to the in-memory store.
-  }
-  return createMemoryStorage();
-}
-
-const storage = resolveStorage();
-
-function readStorage(): QueueStorage {
-  return storage;
-}
-
-function readPersisted(): Record<string, QueuedMessage> {
-  const storage = readStorage();
-  try {
-    const raw = storage.getItem(QUEUED_MESSAGE_STORAGE_KEY);
-    if (!raw) return {};
-    const parsed: unknown = JSON.parse(raw);
-    if (typeof parsed !== "object" || parsed === null) return {};
-    const entries: Array<[string, QueuedMessage]> = [];
-    for (const [threadKey, value] of Object.entries(parsed as Record<string, unknown>)) {
-      if (typeof value !== "object" || value === null) continue;
-      const candidate = value as Partial<Record<keyof QueuedMessage, unknown>>;
-      if (typeof candidate.prompt !== "string" || candidate.prompt.length === 0) continue;
-      if (typeof candidate.queuedAt !== "string") continue;
-      entries.push([
-        threadKey,
-        {
-          prompt: candidate.prompt,
-          queuedAt: candidate.queuedAt,
-          id: typeof candidate.id === "string" ? candidate.id : randomUUID(),
-          ...(typeof candidate.sentAt === "string" ? { sentAt: candidate.sentAt } : {}),
-          ...(typeof candidate.error === "string" ? { error: candidate.error } : {}),
-          ...(isQueuedMessageSettings(candidate.settings) ? { settings: candidate.settings } : {}),
-        },
-      ]);
-    }
-    return Object.fromEntries(entries);
-  } catch {
-    return {};
-  }
-}
-
-function persist(byThreadKey: Record<string, QueuedMessage>): void {
-  const storage = readStorage();
-  try {
-    storage.setItem(QUEUED_MESSAGE_STORAGE_KEY, JSON.stringify(byThreadKey));
-  } catch {
-    // A full or blocked quota must not stop the message from being queued in
-    // memory; it only means a reload will not find it.
-  }
-}
-
+/** In-memory only: a queued message is a live intent, not a draft worth persisting. */
 export const useQueuedMessageStore = create<QueuedMessageStoreState>()((set, get) => ({
-  byThreadKey: readPersisted(),
-  queue: (threadKey, prompt, settings) => {
-    const existing = get().byThreadKey[threadKey];
-    if (existing?.sentAt && !existing.error) return false;
-    const trimmed = prompt.trim();
-    if (trimmed.length === 0 || trimmed.length > MAX_QUEUED_PROMPT_CHARS) return false;
-    const next = {
-      ...get().byThreadKey,
-      [threadKey]: {
-        prompt: trimmed,
-        queuedAt: new Date().toISOString(),
-        id: randomUUID(),
-        ...(settings ? { settings } : {}),
+  queuesByThreadKey: {},
+  drainGeneration: 0,
+  enqueue: (threadKey, message) => {
+    const entry: QueuedComposerMessage = { ...message, id: randomUUID() };
+    set((state) => ({
+      queuesByThreadKey: {
+        ...state.queuesByThreadKey,
+        [threadKey]: [...(state.queuesByThreadKey[threadKey] ?? EMPTY_QUEUE), entry],
       },
-    };
-    set({ byThreadKey: next });
-    persist(next);
-    return true;
+    }));
+    return entry;
   },
-  take: (threadKey) => {
-    const existing = get().byThreadKey[threadKey];
-    if (!existing || (existing.sentAt && !existing.error)) return null;
-    const { [threadKey]: _removed, ...rest } = get().byThreadKey;
-    set({ byThreadKey: rest });
-    persist(rest);
-    return existing;
+  take: (threadKey, id, toolActivityId) => {
+    const queue = get().queuesByThreadKey[threadKey];
+    const entry = queue?.find((message) => message.id === id);
+    if (!queue || !entry) {
+      return null;
+    }
+    set((state) => {
+      const remaining = (state.queuesByThreadKey[threadKey] ?? EMPTY_QUEUE)
+        .filter((message) => message.id !== id)
+        .map((message) =>
+          message.queuedAfterToolActivityId === toolActivityId
+            ? message
+            : { ...message, queuedAfterToolActivityId: toolActivityId },
+        );
+      const queuesByThreadKey = { ...state.queuesByThreadKey };
+      if (remaining.length === 0) {
+        delete queuesByThreadKey[threadKey];
+      } else {
+        queuesByThreadKey[threadKey] = remaining;
+      }
+      return { queuesByThreadKey };
+    });
+    return entry;
   },
-  beginSend: (threadKey, createdAt) => {
-    const existing = get().byThreadKey[threadKey];
-    if (!existing || existing.error) return null;
-    const message = { ...existing, sentAt: existing.sentAt ?? createdAt };
-    const next = { ...get().byThreadKey, [threadKey]: message };
-    set({ byThreadKey: next });
-    persist(next);
-    return message;
+  remove: (threadKey, id) => {
+    const queue = get().queuesByThreadKey[threadKey];
+    const entry = queue?.find((message) => message.id === id);
+    if (!queue || !entry) {
+      return null;
+    }
+    set((state) => {
+      const remaining = (state.queuesByThreadKey[threadKey] ?? EMPTY_QUEUE).filter(
+        (message) => message.id !== id,
+      );
+      const queuesByThreadKey = { ...state.queuesByThreadKey };
+      if (remaining.length === 0) {
+        delete queuesByThreadKey[threadKey];
+      } else {
+        queuesByThreadKey[threadKey] = remaining;
+      }
+      return { queuesByThreadKey };
+    });
+    return entry;
   },
-  failSend: (threadKey, id, error, rejected = false) => {
-    const existing = get().byThreadKey[threadKey];
-    if (existing?.id !== id) return;
-    const { sentAt: _sentAt, ...unsent } = existing;
-    const failed = rejected ? { ...unsent, id: randomUUID(), error } : { ...existing, error };
-    const next = { ...get().byThreadKey, [threadKey]: failed };
-    set({ byThreadKey: next });
-    persist(next);
+  holdAtFront: (threadKey, message) => {
+    set((state) => {
+      const rest = (state.queuesByThreadKey[threadKey] ?? EMPTY_QUEUE).filter(
+        (entry) => entry.id !== message.id,
+      );
+      return {
+        queuesByThreadKey: {
+          ...state.queuesByThreadKey,
+          [threadKey]: [{ ...message, holdUntilUserAction: true }, ...rest],
+        },
+      };
+    });
   },
-  completeSend: (threadKey, id) => {
-    if (get().byThreadKey[threadKey]?.id !== id) return;
-    const { [threadKey]: _removed, ...rest } = get().byThreadKey;
-    set({ byThreadKey: rest });
-    persist(rest);
-  },
-  retry: (threadKey) => {
-    const existing = get().byThreadKey[threadKey];
-    if (!existing?.error) return;
-    const { error: _error, ...message } = existing;
-    const next = { ...get().byThreadKey, [threadKey]: message };
-    set({ byThreadKey: next });
-    persist(next);
-  },
-  remove: (threadKey) => {
-    const existing = get().byThreadKey[threadKey];
-    if (!existing || (existing.sentAt && !existing.error)) return;
-    const { [threadKey]: _removed, ...rest } = get().byThreadKey;
-    set({ byThreadKey: rest });
-    persist(rest);
+  drain: (threadKey) => {
+    const queue = get().queuesByThreadKey[threadKey];
+    if (!queue || queue.length === 0) {
+      return EMPTY_QUEUE;
+    }
+    set((state) => {
+      const queuesByThreadKey = { ...state.queuesByThreadKey };
+      delete queuesByThreadKey[threadKey];
+      return { queuesByThreadKey, drainGeneration: state.drainGeneration + 1 };
+    });
+    return queue;
   },
 }));
 
-/** Test seam: reads persisted state without needing a real `localStorage`. */
-export function readQueuedMessageStorageForTest(): string | null {
-  return readStorage().getItem(QUEUED_MESSAGE_STORAGE_KEY);
+/**
+ * The newest finished tool call used to anchor queued messages. Live arrays
+ * are sorted, but a snapshot loaded from the database is not, so pick by
+ * sequence rather than position.
+ */
+export function latestCompletedToolActivityId(
+  activities: ReadonlyArray<{
+    readonly id: string;
+    readonly kind: string;
+    readonly sequence?: number | undefined;
+    readonly createdAt: string;
+  }>,
+): string | null {
+  let latest: (typeof activities)[number] | null = null;
+  for (const activity of activities) {
+    if (activity.kind !== "tool.completed") continue;
+    if (
+      latest === null ||
+      (activity.sequence ?? -1) > (latest.sequence ?? -1) ||
+      ((activity.sequence ?? -1) === (latest.sequence ?? -1) &&
+        activity.createdAt > latest.createdAt)
+    ) {
+      latest = activity;
+    }
+  }
+  return latest?.id ?? null;
 }
 
-/** Test seam: replaces persisted state without needing a real `localStorage`. */
-export function writeQueuedMessageStorageForTest(raw: string): void {
-  readStorage().setItem(QUEUED_MESSAGE_STORAGE_KEY, raw);
-  useQueuedMessageStore.setState({ byThreadKey: readPersisted() });
+/**
+ * A queued message leaves automatically only after the current turn finishes.
+ * Sending during a tool boundary steers the active turn instead; that remains
+ * available through the queued row's explicit Send now action.
+ */
+export function isQueuedMessageDue(input: {
+  message: Pick<QueuedComposerMessage, "holdUntilUserAction">;
+  phase: "connecting" | "running" | "ready" | "disconnected";
+}): boolean {
+  if (input.message.holdUntilUserAction) return false;
+  return input.phase === "ready" || input.phase === "disconnected";
+}
+
+export function useQueuedMessages(threadKey: string): QueuedComposerMessage[] {
+  return useQueuedMessageStore((state) => state.queuesByThreadKey[threadKey] ?? EMPTY_QUEUE);
 }

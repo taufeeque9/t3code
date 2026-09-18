@@ -194,6 +194,7 @@ const makeTildeProviderFixtures = Effect.fn(
       '    response: { subtype: "success", request_id: message.request_id, response },',
       '  }) + "\\n");',
       '  if (message.request?.subtype === "initialize") {',
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - embeds a known filesystem path in the executable fixture.
       `    const signedIn = readFileSync(${JSON.stringify(claudeAccountPath)}, "utf8").trim() === "authenticated";`,
       "    reply({",
       "      commands: [], agents: [], models: [],",
