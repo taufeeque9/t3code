@@ -30,9 +30,13 @@ The reason the fork exists: an independently branded, self-installing build.
 - `.gitignore` ignores those generated `scripts/lib/*.d.ts`
 - `.github/workflows/custom-ci.yml`, `.github/workflows/custom-upstream-sync.yml`
 - `.github/workflows/ci.yml` restricts upstream's CI to `main` so fork branches do not run it
+- `pnpm-workspace.yaml` keeps `allowBuilds.msgpackr-extract` boolean; upstream's
+  dependency bump accidentally committed a placeholder string, which prevents
+  the desktop artifact pipeline from decoding the workspace configuration
 
 **On conflict:** keep the fork's values. Take upstream's structural changes to
-the build script and re-apply the identity constants on top.
+the build script and re-apply the identity constants on top. Drop the
+`msgpackr-extract` override once upstream restores a boolean value.
 
 ### Native conversation forks
 
