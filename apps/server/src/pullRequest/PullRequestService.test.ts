@@ -2983,6 +2983,107 @@ it.effect("hands a label change to the host, and reads the labels back for the m
   }),
 );
 
+it.effect("refuses an assignee change the host or this viewer cannot make", () =>
+  Effect.gen(function* () {
+    let changed = false;
+    const setAssignees = () => {
+      changed = true;
+      return Effect.void;
+    };
+    const change = {
+      projectId: "p1" as ProjectId,
+      repository: "acme/web",
+      number: 1,
+      assignees: ["octocat"],
+      assigned: true,
+    };
+    const projects = [
+      project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+    ];
+
+    // The method is there; the capability that would let it be called is not.
+    const incapable = yield* makeService({
+      projects,
+      providers: [fakeProvider("github", { setAssignees })],
+    });
+    const unsupported = yield* Effect.flip(incapable.setAssignees(change));
+    assert.include(unsupported.message, "cannot change who a change request is assigned to");
+
+    const forbidden = yield* makeService({
+      projects,
+      providers: [
+        fakeProvider("github", {
+          capabilities: { ...fakeProvider("github").capabilities, assignees: true },
+          getViewerPermissions: () =>
+            Effect.succeed({
+              actions: [],
+              comment: true,
+              resolve: false,
+              verdicts: ["comment"],
+              requestReviewers: false,
+              assignees: false,
+            }),
+          listAssigneeCandidates: () => Effect.die("must not be called"),
+          setAssignees,
+        }),
+      ],
+    });
+    const listError = yield* Effect.flip(
+      forbidden.assigneeCandidates({
+        projectId: "p1" as ProjectId,
+        repository: "acme/web",
+        number: 1,
+      }),
+    );
+    assert.include(listError.message, "You need triage access on this repository");
+    const error = yield* Effect.flip(forbidden.setAssignees(change));
+    assert.include(error.message, "You need triage access on this repository");
+    assert.isFalse(changed);
+  }),
+);
+
+it.effect("hands an assignee change to the host, and reads the candidates for the menu", () =>
+  Effect.gen(function* () {
+    let received: { assignees: ReadonlyArray<string>; assigned: boolean } | null = null;
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          capabilities: { ...fakeProvider("github").capabilities, assignees: true },
+          listAssigneeCandidates: () =>
+            Effect.succeed({
+              candidates: [{ login: "octocat", name: null, avatarUrl: null, isAssigned: true }],
+              truncated: false,
+            }),
+          setAssignees: (input) => {
+            received = { assignees: input.assignees, assigned: input.assigned };
+            return Effect.void;
+          },
+        }),
+      ],
+    });
+
+    const list = yield* service.assigneeCandidates({
+      projectId: "p1" as ProjectId,
+      repository: "acme/web",
+      number: 4,
+    });
+    assert.deepStrictEqual(
+      list.candidates.map((candidate) => candidate.login),
+      ["octocat"],
+    );
+
+    yield* service.setAssignees({
+      projectId: "p1" as ProjectId,
+      repository: "acme/web",
+      number: 4,
+      assignees: ["octocat"],
+      assigned: false,
+    });
+    assert.deepStrictEqual(received, { assignees: ["octocat"], assigned: false });
+  }),
+);
+
 it.effect("answers a repeated listing from cache, and concurrent readers share one request", () =>
   Effect.gen(function* () {
     let hostCalls = 0;

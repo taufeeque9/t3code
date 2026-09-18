@@ -215,6 +215,23 @@ would risk replaying stale files.
 **On conflict:** retire these refinements when upstream waits for turn completion
 and snapshots the queued draft's provider settings.
 
+### Pull request assignees (GitHub)
+
+An **Assignees** row under Reviewers on the pull request summary: who is assigned,
+and a menu to assign or unassign anyone GitHub counts assignable. Upstream reads and
+changes reviewers and labels but not assignees.
+
+It follows upstream's label feature layer for layer: an optional `assignees`
+capability and viewer permission (triage access), an optional `assignees` list on
+`PullRequestDetail`, two RPCs (`pullRequests.assigneeCandidates`,
+`pullRequests.setAssignees`), optional provider methods, and a cache update in
+`client-runtime`. Only the GitHub provider implements it; assignees ride the existing
+`gh pr view` call, so the detail costs no extra request. The UI lives in the
+fork-owned `PullRequestAssignees.tsx`; `PullRequestSummaryTab.tsx` only mounts it.
+
+**On conflict:** the edits to upstream files are additions next to the label code, so
+keep both sides. If upstream ships assignees, take theirs and delete this.
+
 ## Reassess on the next upstream change
 
 ### Configurable worktree branch prefix

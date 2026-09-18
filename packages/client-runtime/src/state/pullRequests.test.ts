@@ -1195,6 +1195,84 @@ it.effect("updates cached labels after successful edits without rereading the ho
   ),
 );
 
+it.effect("updates cached assignees after successful edits without rereading the host", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      let detailReads = 0;
+      let candidateReads = 0;
+      let refuse = false;
+      const octocat = { login: "octocat", name: "Octo Cat", avatarUrl: "https://a/octocat" };
+      const hubot = { login: "hubot", name: null, avatarUrl: null };
+      const client = {
+        [WS_METHODS.pullRequestsSubscribeRefreshes]: () => Stream.never,
+        [WS_METHODS.pullRequestsDetail]: () =>
+          Effect.sync(() => {
+            detailReads++;
+            return { title: "keep this title", assignees: [octocat] };
+          }),
+        [WS_METHODS.pullRequestsAssigneeCandidates]: () =>
+          Effect.sync(() => {
+            candidateReads++;
+            return {
+              candidates: [
+                { ...octocat, isAssigned: true },
+                { ...hubot, isAssigned: false },
+              ],
+              truncated: false,
+            };
+          }),
+        [WS_METHODS.pullRequestsSetAssignees]: () =>
+          refuse ? Effect.fail(new MutationRefused()) : Effect.void,
+      } as unknown as WsRpcProtocolClient;
+      const { atoms, registry } = yield* makeTestRuntime(client);
+      const target = {
+        environmentId: TARGET.environmentId,
+        input: {
+          projectId: ProjectId.make("project-1"),
+          repository: "acme/web",
+          number: 1,
+          host: "github.example.com",
+        },
+      };
+      const detail = atoms.detail(target);
+      const candidates = atoms.assigneeCandidates(target);
+      registry.mount(detail);
+      registry.mount(candidates);
+      yield* AtomRegistry.getResult(registry, detail, { suspendOnWaiting: true });
+      yield* AtomRegistry.getResult(registry, candidates, { suspendOnWaiting: true });
+
+      const change = (login: string, assigned: boolean) =>
+        Effect.promise(() =>
+          atoms.setAssignees.run(registry, {
+            ...target,
+            input: { ...target.input, assignees: [login], assigned },
+          }),
+        );
+
+      // The host's casing of a login is not always the page's.
+      expect(AsyncResult.isSuccess(yield* change("HUBOT", true))).toBe(true);
+      expect(yield* AtomRegistry.getResult(registry, detail)).toEqual({
+        title: "keep this title",
+        assignees: [octocat, hubot],
+      });
+
+      refuse = true;
+      expect((yield* change("hubot", false))._tag).toBe("Failure");
+      expect((yield* AtomRegistry.getResult(registry, detail)).assignees).toEqual([octocat, hubot]);
+
+      refuse = false;
+      expect((yield* change("octocat", false))._tag).toBe("Success");
+      expect((yield* AtomRegistry.getResult(registry, detail)).assignees).toEqual([hubot]);
+      expect((yield* AtomRegistry.getResult(registry, candidates)).candidates).toMatchObject([
+        { login: "octocat", isAssigned: false },
+        { login: "hubot", isAssigned: true },
+      ]);
+      expect(detailReads).toBe(1);
+      expect(candidateReads).toBe(1);
+    }),
+  ),
+);
+
 it.effect("updates reviewer requests and enriched reviewers without rereading the host", () =>
   Effect.scoped(
     Effect.gen(function* () {

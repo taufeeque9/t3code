@@ -35,6 +35,7 @@ const reads = new Set<string>([
   WS_METHODS.pullRequestsFilesViewed,
   WS_METHODS.pullRequestsReviewerCandidates,
   WS_METHODS.pullRequestsLabelCandidates,
+  WS_METHODS.pullRequestsAssigneeCandidates,
 ]);
 const writes = new Set<string>([
   WS_METHODS.pullRequestsSetFilesViewed,
@@ -48,6 +49,7 @@ const writes = new Set<string>([
   WS_METHODS.pullRequestsSetThreadResolution,
   WS_METHODS.pullRequestsRequestReviewers,
   WS_METHODS.pullRequestsSetLabels,
+  WS_METHODS.pullRequestsSetAssignees,
 ]);
 const isRef = Schema.is(PullRequestRef);
 const isInvalidation = Schema.is(PullRequestInvalidateInput);

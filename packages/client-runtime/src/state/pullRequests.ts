@@ -184,6 +184,14 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       staleTimeMs: 60_000,
     }),
   );
+  const assigneeCandidates = writableQueryFamily(
+    createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:pull-requests:assignee-candidates",
+      tag: WS_METHODS.pullRequestsAssigneeCandidates,
+      execute: (input) => routedRequest(WS_METHODS.pullRequestsAssigneeCandidates, input),
+      staleTimeMs: 60_000,
+    }),
+  );
   const reviewerCandidates = writableQueryFamily(
     createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:pull-requests:reviewer-candidates",
@@ -460,6 +468,57 @@ export function createPullRequestEnvironmentAtoms<R, E>(
                 ]
               : value.labels.filter((label) => !names.has(label.name)),
           }));
+        }),
+    }),
+    /** Read when the assignee menu opens, and kept for a minute, like the reviewer candidates. */
+    assigneeCandidates,
+    setAssignees: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:pull-requests:set-assignees",
+      tag: WS_METHODS.pullRequestsSetAssignees,
+      execute: (input) => routedRequest(WS_METHODS.pullRequestsSetAssignees, input),
+      scheduler: commandScheduler,
+      concurrency: serialPerEnvironment,
+      onSuccess: (target, registry) =>
+        Effect.sync(() => {
+          const { assignees, assigned } = target.input;
+          const candidatesAtom = assigneeCandidates(target);
+          const candidates = Option.getOrNull(AsyncResult.value(registry.get(candidatesAtom)));
+          const logins = new Set(assignees.map((login) => login.toLowerCase()));
+          const selected =
+            candidates?.candidates.filter((candidate) =>
+              logins.has(candidate.login.toLowerCase()),
+            ) ?? [];
+          updateCached(registry, candidatesAtom, (value) => ({
+            ...value,
+            candidates: value.candidates.map((candidate) =>
+              selected.includes(candidate) ? { ...candidate, isAssigned: assigned } : candidate,
+            ),
+          }));
+          updateCached(
+            registry,
+            detail(target),
+            (value) => {
+              const current = value.assignees ?? [];
+              return {
+                ...value,
+                assignees: assigned
+                  ? [
+                      ...current,
+                      ...selected
+                        .filter(
+                          (candidate) =>
+                            !current.some(
+                              (actor) =>
+                                actor.login.toLowerCase() === candidate.login.toLowerCase(),
+                            ),
+                        )
+                        .map(({ login, name, avatarUrl }) => ({ login, name, avatarUrl })),
+                    ]
+                  : current.filter((actor) => !logins.has(actor.login.toLowerCase())),
+              };
+            },
+            selected.length < assignees.length,
+          );
         }),
     }),
     setThreadResolution: createEnvironmentRpcCommand(runtime, {

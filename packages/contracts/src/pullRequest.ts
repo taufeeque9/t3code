@@ -309,6 +309,21 @@ export const PullRequestLabelCandidateList = Schema.Struct({
 });
 export type PullRequestLabelCandidateList = typeof PullRequestLabelCandidateList.Type;
 
+/** Somebody the change request may be assigned to, with whether it already is. */
+export const PullRequestAssigneeCandidate = Schema.Struct({
+  ...PullRequestActor.fields,
+  isAssigned: Schema.Boolean,
+});
+export type PullRequestAssigneeCandidate = typeof PullRequestAssigneeCandidate.Type;
+
+export const PullRequestAssigneeCandidateList = Schema.Struct({
+  /** Includes the author, unlike the reviewer list: assigning a change to whoever wrote it is usual. */
+  candidates: Schema.Array(PullRequestAssigneeCandidate),
+  /** The host has more assignable people than the read asked for; the list is not all of them. */
+  truncated: Schema.Boolean,
+});
+export type PullRequestAssigneeCandidateList = typeof PullRequestAssigneeCandidateList.Type;
+
 export const PullRequestCommit = Schema.Struct({
   oid: TrimmedNonEmptyString,
   messageHeadline: Schema.String,
@@ -440,6 +455,11 @@ export const PullRequestCapabilities = Schema.Struct({
    * to change them, which is what every server before this field was.
    */
   labels: Schema.optional(Schema.Boolean),
+  /**
+   * The assignable people can be listed, and one assigned to a change request or taken off it.
+   * Optional like `labels`: a server that says nothing about assignees cannot change them.
+   */
+  assignees: Schema.optional(Schema.Boolean),
 });
 export type PullRequestCapabilities = typeof PullRequestCapabilities.Type;
 
@@ -477,6 +497,8 @@ export const PullRequestViewerPermissions = Schema.Struct({
    * changed on this host at all.
    */
   labels: Schema.optional(Schema.Boolean),
+  /** This viewer may assign somebody to the change request, and take them off. Absent is granted. */
+  assignees: Schema.optional(Schema.Boolean),
 });
 export type PullRequestViewerPermissions = typeof PullRequestViewerPermissions.Type;
 
@@ -830,6 +852,8 @@ export const PullRequestDetail = Schema.Struct({
   mergedAt: Schema.NullOr(IsoDateTime),
   closedAt: Schema.NullOr(IsoDateTime),
   reviewers: Schema.Array(PullRequestActor),
+  /** Absent from a host whose provider does not read them, which is not the same as nobody. */
+  assignees: Schema.optional(Schema.Array(PullRequestActor)),
   labels: Schema.Array(PullRequestLabel),
   checks: Schema.Array(PullRequestCheck),
   mergeCapabilities: PullRequestMergeCapabilities,
@@ -1218,6 +1242,20 @@ export const PullRequestLabelChangeInput = Schema.Struct({
   applied: Schema.Boolean,
 });
 export type PullRequestLabelChangeInput = typeof PullRequestLabelChangeInput.Type;
+
+/**
+ * Assigning and unassigning are one operation with `assigned` turned around, like a label change.
+ * Named by login, which is how GitHub addresses an assignee, and capped at the ten it allows.
+ */
+export const PullRequestAssigneeChangeInput = Schema.Struct({
+  ...PullRequestRef.fields,
+  assignees: Schema.Array(TrimmedNonEmptyString).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(10),
+  ),
+  assigned: Schema.Boolean,
+});
+export type PullRequestAssigneeChangeInput = typeof PullRequestAssigneeChangeInput.Type;
 
 export const PullRequestUnavailableReason = Schema.Literals([
   "cli-missing",

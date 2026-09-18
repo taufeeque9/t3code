@@ -28,6 +28,8 @@ import type {
   PullRequestReviewerKind,
   PullRequestLabelCandidate,
   PullRequestLabelCandidateList,
+  PullRequestAssigneeCandidate,
+  PullRequestAssigneeCandidateList,
   PullRequestState,
   PullRequestThreadComment,
 } from "@t3tools/contracts";
@@ -393,6 +395,7 @@ const RawDetailSchema = Schema.Struct({
   body: Schema.optional(Schema.String),
   changedFiles: Schema.optional(Schema.Int),
   closedAt: Schema.optional(Schema.NullOr(Schema.String)),
+  assignees: Schema.optional(Schema.Array(RawActorSchema)),
   /** The standing instruction and strategy GitHub will use once its requirements are met. */
   autoMergeRequest: Schema.optional(
     Schema.NullOr(Schema.Struct({ mergeMethod: Schema.optional(Schema.NullOr(Schema.String)) })),
@@ -643,7 +646,7 @@ export function decodeActorAvatarsJson(
 export const PULL_REQUEST_LIST_JSON_FIELDS =
   "number,title,url,author,headRefName,baseRefName,state,isDraft,mergeable,reviewDecision,additions,deletions,createdAt,updatedAt,mergedAt,reviewRequests,labels,statusCheckRollup";
 
-export const PULL_REQUEST_DETAIL_JSON_FIELDS = `${PULL_REQUEST_LIST_JSON_FIELDS},body,changedFiles,closedAt,isCrossRepository,headRepositoryOwner,headRefOid,autoMergeRequest`;
+export const PULL_REQUEST_DETAIL_JSON_FIELDS = `${PULL_REQUEST_LIST_JSON_FIELDS},body,changedFiles,closedAt,isCrossRepository,headRepositoryOwner,headRefOid,autoMergeRequest,assignees`;
 export const PULL_REQUEST_ACTIVITY_JSON_FIELDS = "author,comments,reviews,commits";
 
 /** GitHub's own ceiling on a connection page, which is what both thread reads ask for. */
@@ -1079,6 +1082,8 @@ export interface GitHubPullRequestDetail extends GitHubPullRequestListItem {
   readonly changedFiles: number;
   readonly mergedAt: string | null;
   readonly closedAt: string | null;
+  /** Absent where `gh` was not asked for them. */
+  readonly assignees?: ReadonlyArray<PullRequestActor>;
   readonly checks: ReadonlyArray<PullRequestCheck>;
   /** Absent where `gh` did not answer for auto-merge at all, which is not the same as off. */
   readonly autoMergeEnabled?: boolean;
@@ -1461,6 +1466,10 @@ function toDetail(raw: Schema.Schema.Type<typeof RawDetailSchema>): GitHubPullRe
     changedFiles: raw.changedFiles ?? 0,
     mergedAt: trimmed(raw.mergedAt),
     closedAt: trimmed(raw.closedAt),
+    assignees: (raw.assignees ?? []).flatMap((assignee) => {
+      const actor = toActor(assignee);
+      return actor === null ? [] : [actor];
+    }),
     checks: toChecks(raw.statusCheckRollup),
     // A JSON null is GitHub saying "nobody armed this"; a missing key is GitHub not saying, and
     // the difference survives here rather than being flattened into false.
@@ -2403,6 +2412,80 @@ const encodeLabelRequest = Schema.encodeSync(Schema.fromJsonString(LabelRequestS
 
 export function buildLabelRequestJson(labels: ReadonlyArray<string>): string {
   return encodeLabelRequest({ labels });
+}
+
+export const ASSIGNEE_CANDIDATES_GRAPHQL_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    assignableUsers(first: ${GRAPHQL_PAGE_SIZE}) {
+      pageInfo { hasNextPage }
+      nodes { login name avatarUrl }
+    }
+    pullRequest(number: $number) {
+      assignees(first: ${GRAPHQL_PAGE_SIZE}) { nodes { login name avatarUrl } }
+    }
+  }
+}`;
+
+const RawAssigneeCandidatesSchema = Schema.Struct({
+  data: Schema.Struct({
+    repository: Schema.Struct({
+      assignableUsers: Schema.Struct({
+        pageInfo: Schema.optional(RawPageInfoSchema),
+        nodes: Schema.Array(Schema.NullOr(RawActorSchema)),
+      }),
+      /** Null for a number that names no pull request the viewer can see. */
+      pullRequest: Schema.NullOr(
+        Schema.Struct({
+          assignees: Schema.optional(
+            Schema.NullOr(Schema.Struct({ nodes: Schema.Array(Schema.NullOr(RawActorSchema)) })),
+          ),
+        }),
+      ),
+    }),
+  }),
+});
+
+const decodeAssigneeCandidates = decodeJsonResult(RawAssigneeCandidatesSchema);
+
+/**
+ * The people this pull request may be assigned to, with whoever is already on it marked. Whoever
+ * is assigned leads the list even where GitHub no longer counts them assignable — access removed
+ * since, or past the page — because an assignment that cannot be seen cannot be taken off.
+ */
+export function decodeAssigneeCandidatesJson(
+  raw: string,
+): Result.Result<PullRequestAssigneeCandidateList, DecodeFailure> {
+  const decoded = decodeAssigneeCandidates(raw);
+  if (!Result.isSuccess(decoded)) {
+    return Result.fail(decoded.failure);
+  }
+  const repository = decoded.success.data.repository;
+  const candidates = new Map<string, PullRequestAssigneeCandidate>();
+  const collect = (
+    nodes: ReadonlyArray<Schema.Schema.Type<typeof RawActorSchema> | null>,
+    isAssigned: boolean,
+  ) => {
+    for (const node of nodes) {
+      const actor = toActor(node);
+      if (actor === null || candidates.has(actor.login)) continue;
+      candidates.set(actor.login, { ...actor, isAssigned });
+    }
+  };
+  collect(repository.pullRequest?.assignees?.nodes ?? [], true);
+  collect(repository.assignableUsers.nodes, false);
+  return Result.succeed({
+    candidates: [...candidates.values()],
+    truncated: repository.assignableUsers.pageInfo?.hasNextPage === true,
+  });
+}
+
+/** The body of `POST`/`DELETE /repos/{owner}/{repo}/issues/{number}/assignees`, one for both. */
+const AssigneeRequestSchema = Schema.Struct({ assignees: Schema.Array(Schema.String) });
+
+const encodeAssigneeRequest = Schema.encodeSync(Schema.fromJsonString(AssigneeRequestSchema));
+
+export function buildAssigneeRequestJson(assignees: ReadonlyArray<string>): string {
+  return encodeAssigneeRequest({ assignees });
 }
 
 /**

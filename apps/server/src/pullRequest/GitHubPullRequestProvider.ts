@@ -52,6 +52,7 @@ const CAPABILITIES: PullRequestCapabilities = {
   stacks: true,
   stackActions: true,
   labels: true,
+  assignees: true,
 };
 
 /**
@@ -101,6 +102,8 @@ export function gitHubViewerPermissions(access: GitHubViewerAccess): PullRequest
     ...(access.canUpdateBranch === true ? { updateMethods: CAPABILITIES.updateMethods } : {}),
     // Triage is the one role that labels without writing, which is what triage is for.
     labels: access.canTriage,
+    // Assigning is triage work on GitHub too, gated the same way.
+    assignees: access.canTriage,
   };
 }
 
@@ -423,6 +426,9 @@ export const make = Effect.gen(function* () {
             name: null,
             avatarUrl: null,
           })),
+          assignees: (detail.pullRequest.assignees ?? []).map(
+            (assignee) => withAvatar(assignee, new Map<string, string>(), input.host) ?? assignee,
+          ),
           mergeCapabilities: repository.mergeCapabilities,
           viewerPermissions: gitHubViewerPermissions({
             ...viewerAccess,
@@ -612,6 +618,21 @@ export const make = Effect.gen(function* () {
           applied: input.applied,
         })
         .pipe(Effect.mapError(fail("setLabels"))),
+
+    listAssigneeCandidates: (input) =>
+      cli.listAssigneeCandidates(input).pipe(Effect.mapError(fail("listAssigneeCandidates"))),
+
+    setAssignees: (input) =>
+      cli
+        .setAssignees({
+          cwd: input.cwd,
+          repository: input.repository,
+          host: input.host,
+          number: input.number,
+          assignees: input.assignees,
+          assigned: input.assigned,
+        })
+        .pipe(Effect.mapError(fail("setAssignees"))),
 
     runAction: (input) =>
       cli

@@ -3084,7 +3084,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
       expect(detail.body).toBe("Core body");
       expect(activity.author?.login).toBe("octocat");
       expect(callAt(0).args.at(-1)).toBe(
-        "number,title,url,author,headRefName,baseRefName,state,isDraft,mergeable,reviewDecision,additions,deletions,createdAt,updatedAt,mergedAt,reviewRequests,labels,statusCheckRollup,body,changedFiles,closedAt,isCrossRepository,headRepositoryOwner,headRefOid,autoMergeRequest",
+        "number,title,url,author,headRefName,baseRefName,state,isDraft,mergeable,reviewDecision,additions,deletions,createdAt,updatedAt,mergedAt,reviewRequests,labels,statusCheckRollup,body,changedFiles,closedAt,isCrossRepository,headRepositoryOwner,headRefOid,autoMergeRequest,assignees",
       );
       expect(callAt(1).args.at(-1)).toBe("author,comments,reviews,commits");
     }),
@@ -3654,6 +3654,35 @@ layer("GitHubPullRequestCli.layer", (it) => {
       expect(callAt(0).args).toContain("repos/acme/web/issues/7/labels/good%20first%20issue");
       expect(callAt(0).args).toContain("DELETE");
       expect(callAt(1).args).toContain("repos/acme/web/issues/7/labels/area%2Fweb");
+    }),
+  );
+
+  it.effect("assigns and unassigns through the issue's assignees, with one body for both", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      const target = { cwd: "/w", repository: "acme/web", host: "github.com", number: 7 };
+
+      yield* cli.setAssignees({ ...target, assignees: ["octocat", "hubot"], assigned: true });
+      yield* cli.setAssignees({ ...target, assignees: ["octocat"], assigned: false });
+
+      assert.strictEqual(mockedExecute.mock.calls.length, 2);
+      expect(callAt(0).args).toEqual([
+        "api",
+        "--method",
+        "POST",
+        "--hostname",
+        "github.com",
+        "repos/acme/web/issues/7/assignees",
+        "--input",
+        "-",
+      ]);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - asserting the raw gh request body.
+      expect(JSON.parse(callAt(0).stdin ?? "")).toEqual({ assignees: ["octocat", "hubot"] });
+      expect(callAt(1).args).toContain("DELETE");
+      expect(callAt(1).args).toContain("repos/acme/web/issues/7/assignees");
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - asserting the raw gh request body.
+      expect(JSON.parse(callAt(1).stdin ?? "")).toEqual({ assignees: ["octocat"] });
     }),
   );
 

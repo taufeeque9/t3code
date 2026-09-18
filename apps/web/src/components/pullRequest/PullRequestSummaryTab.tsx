@@ -12,6 +12,7 @@ import {
   ChevronRightIcon,
   HammerIcon,
   TagIcon,
+  UserIcon,
   UsersIcon,
 } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
@@ -36,6 +37,7 @@ import {
   pullRequestReviewOutcomeRingClassName,
   pullRequestReviewOutcomeStaleLabel,
 } from "./pullRequestPresentation";
+import { PullRequestAssignees } from "./PullRequestAssignees";
 import { PullRequestLabelPicker } from "./PullRequestLabelPicker";
 import { PullRequestReviewerPicker } from "./PullRequestReviewerPicker";
 import { PullRequestActivityUnavailableState } from "./PullRequestActivityUnavailableState";
@@ -797,6 +799,17 @@ export function PullRequestSummaryTab({
               ) : null}
             </span>
           </MetaRow>
+          {(detail.assignees?.length ?? 0) > 0 || detail.capabilities.assignees === true ? (
+            <MetaRow icon={<UserIcon className="size-3.5" />} label="Assignees">
+              <PullRequestAssignees
+                environmentId={environmentId}
+                reference={reference}
+                assignees={detail.assignees ?? []}
+                canChange={detail.capabilities.assignees === true}
+                allowed={detail.viewerPermissions.assignees !== false}
+              />
+            </MetaRow>
+          ) : null}
           {/* The row is shown empty only where a label could be put on it from here; on a host
               with none to offer, an empty row is a row about nothing. */}
           {detail.labels.length > 0 || detail.capabilities.labels === true ? (

@@ -3036,6 +3036,18 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "pull-requests",
             },
           ),
+        [WS_METHODS.pullRequestsAssigneeCandidates]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.pullRequestsAssigneeCandidates,
+            withPullRequestViewer(input, pullRequests.assigneeCandidates(input)),
+            { "rpc.aggregate": "pull-requests" },
+          ),
+        [WS_METHODS.pullRequestsSetAssignees]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.pullRequestsSetAssignees,
+            withPullRequestViewer(input, pullRequests.setAssignees(input)),
+            { "rpc.aggregate": "pull-requests" },
+          ),
         [WS_METHODS.sourceControlLookupRepository]: (input) =>
           observeRpcEffect(
             WS_METHODS.sourceControlLookupRepository,

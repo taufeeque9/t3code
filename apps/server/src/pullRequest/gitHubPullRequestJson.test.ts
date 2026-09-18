@@ -17,6 +17,8 @@ import {
   decodePullRequestSearchJson,
   decodePullRequestStacksJson,
   decodeLabelCandidatesJson,
+  decodeAssigneeCandidatesJson,
+  buildAssigneeRequestJson,
   decodeRepositoryAccessJson,
   decodeReviewerCandidatesJson,
   decodeReviewThreadCommentsJson,
@@ -956,6 +958,83 @@ describe("label candidate decoding", () => {
       expectSuccess(decodeLabelCandidatesJson(labelsJson({ defined: [], hasNextPage: true })))
         .truncated,
     ).toBe(true);
+  });
+});
+
+describe("assignee candidate decoding", () => {
+  const assigneesJson = (input: {
+    readonly assignable: ReadonlyArray<Record<string, unknown> | null>;
+    readonly assigned?: ReadonlyArray<Record<string, unknown>>;
+    readonly hasNextPage?: boolean;
+  }) =>
+    JSON.stringify({
+      data: {
+        repository: {
+          assignableUsers: {
+            pageInfo: { hasNextPage: input.hasNextPage ?? false },
+            nodes: input.assignable,
+          },
+          pullRequest: { assignees: { nodes: input.assigned ?? [] } },
+        },
+      },
+    });
+
+  it("marks whoever is already assigned, once, and leads with them", () => {
+    const list = expectSuccess(
+      decodeAssigneeCandidatesJson(
+        assigneesJson({
+          assignable: [
+            { login: "hubot", name: null, avatarUrl: "https://a/hubot" },
+            { login: "octocat", name: "Octo Cat", avatarUrl: "https://a/octocat" },
+            null,
+          ],
+          assigned: [{ login: "octocat", name: "Octo Cat", avatarUrl: "https://a/octocat" }],
+        }),
+      ),
+    );
+    expect(list.candidates).toEqual([
+      { login: "octocat", name: "Octo Cat", avatarUrl: "https://a/octocat", isAssigned: true },
+      { login: "hubot", name: null, avatarUrl: "https://a/hubot", isAssigned: false },
+    ]);
+    expect(list.truncated).toBe(false);
+  });
+
+  it("keeps an assignee GitHub no longer counts assignable, so they can be taken off", () => {
+    const list = expectSuccess(
+      decodeAssigneeCandidatesJson(
+        assigneesJson({ assignable: [{ login: "hubot" }], assigned: [{ login: "departed" }] }),
+      ),
+    );
+    expect(list.candidates.map((entry) => [entry.login, entry.isAssigned])).toEqual([
+      ["departed", true],
+      ["hubot", false],
+    ]);
+  });
+
+  it("says so when more people are assignable than the read asked for", () => {
+    expect(
+      expectSuccess(
+        decodeAssigneeCandidatesJson(assigneesJson({ assignable: [], hasNextPage: true })),
+      ).truncated,
+    ).toBe(true);
+  });
+
+  it("decodes against a number that names no pull request", () => {
+    const raw = JSON.stringify({
+      data: { repository: { assignableUsers: { nodes: [{ login: "hubot" }] }, pullRequest: null } },
+    });
+    expect(expectSuccess(decodeAssigneeCandidatesJson(raw)).candidates).toEqual([
+      { login: "hubot", name: null, avatarUrl: null, isAssigned: false },
+    ]);
+  });
+});
+
+describe("assignee request payload", () => {
+  it("names the logins in the one list both directions take", () => {
+    // @effect-diagnostics-next-line preferSchemaOverJson:off - asserting the raw gh request body.
+    expect(JSON.parse(buildAssigneeRequestJson(["octocat", "hubot"]))).toEqual({
+      assignees: ["octocat", "hubot"],
+    });
   });
 });
 
