@@ -162,49 +162,6 @@ The accent colour already reaches the client on `UsageLimitsReport`; upstream
 only uses it for the avatar. Popover titles and aria-labels keep the full name,
 which is read without the heading for context.
 
-### Fuzzy sidebar search over thread contents
-
-The sidebar matched thread titles only, among threads it had already loaded.
-Upstream's `orchestration.searchThreads` is an exact substring scan over whole
-messages, is not scoped to a project, and backs the command palette rather than
-the sidebar. It is left untouched; the fork adds a parallel path.
-
-- `apps/server/src/persistence/Migrations/050_ProjectionThreadSearchUnits.ts`
-- `Migrations.ts` keeps the shipped search migration at ID 50. Upstream's
-  `050_ProjectionThreadPullRequests.ts` runs at ID 51 in this fork; its upgrade
-  tests start from the existing search database. Upstream migrations 51–53
-  consequently run at IDs 52–54. Keep these IDs stable and assign future
-  migrations unused IDs when upstream numbering overlaps.
-- `apps/server/src/orchestration/Layers/threadSearchIndex.ts` and its test —
-  its own service, not a method on `ProjectionSnapshotQuery`, whose shape a
-  dozen upstream tests stub
-- `packages/shared/src/fuzzyMatch.ts`, `threadSearchUnits.ts` and their tests
-- `packages/contracts`: `orchestration.searchThreadUnits` and its schemas, the
-  RPC in `rpc.ts`, the scope in `RpcAuthorization.ts`, the `ws.ts` handler
-- `packages/client-runtime/src/state/threadUnitSearch.ts`
-- `apps/web`: `useThreadUnitSearch` in `state/queries.ts`, and in `Sidebar.tsx`
-  both the merge with the title match and `SidebarSearchResultRow`'s second
-  line, which shows the matched text so a filtered list says why each row is in
-  it. Title hits stay one line.
-
-One row per unit — title, URL, user message — is what bounds fuzzy matching to
-a single unit, so a loose query cannot stitch two messages together. Units are
-derived and re-extracted when a thread's `updated_at` passes its watermark, so
-no projection write path is fork-owned.
-
-Since 2026-09 upstream also feeds its exact `searchThreads` into the sidebar
-(`useThreadSearch`, `ThreadSearchMatchExcerpt`, a `contentMatchKeys` argument
-on `searchSidebarThreads`). That search is a substring scan over user and
-assistant messages across every connected environment, and its excerpt
-highlights the literal query. The fork's sidebar does not mount it: the row
-and the result list keep the fuzzy, project-scoped path above, and upstream's
-components stay in the tree for the command palette. Which of the two the
-sidebar should use is Taufeeque's call and has not been made yet.
-
-**On conflict:** the fork touches upstream files only at the registration
-points listed above. Retire it if upstream ever makes its own search fuzzy and
-project-scoped.
-
 ### Composer: end-of-turn queue semantics
 
 Upstream owns the multi-message queue, full draft snapshots (attachments and
@@ -264,6 +221,22 @@ keeping only while the setting is actually used.
 This one touches the most files of any fork feature and conflicts on most merges.
 
 ## Retired: superseded by upstream
+
+### Fuzzy sidebar search over thread contents
+
+Retired on 2026-09-22 after upstream fed its thread search into the sidebar
+(#11761): a substring scan over user and assistant messages across connected
+environments, with a highlighted excerpt under each row. The fork's fuzzy,
+per-unit search let too many threads through to be useful, so the parallel
+service, RPC, shared matcher, and client state were deleted and the sidebar is
+upstream's again.
+
+One artifact stays: migration ID 50 is the fork's `ProjectionThreadSearchUnits`
+table, and upstream's migrations 50 onward run one ID later in this fork. Every
+installed database has those IDs applied, so `Migrations.ts` must keep the
+shift; renumbering would make the next upstream migration look already applied.
+The unused table is left in place. Give future migrations IDs upstream does not
+use.
 
 ### Claude thinking in conversation history
 

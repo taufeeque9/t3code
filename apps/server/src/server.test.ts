@@ -125,7 +125,6 @@ import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import { OrchestrationThreadSettleBlockedError } from "./orchestration/Errors.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
-import { layerTest as threadSearchIndexLayerTest } from "./orchestration/Layers/threadSearchIndex.ts";
 import { ThreadDeletionReactor } from "./orchestration/Services/ThreadDeletionReactor.ts";
 import * as PullRequestSyncReactor from "./orchestration/PullRequestSyncReactor.ts";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
@@ -1013,45 +1012,42 @@ const buildAppUnderTest = (options?: {
         ),
       ),
       Layer.provide(
-        Layer.mergeAll(
-          threadSearchIndexLayerTest,
-          Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
-            getUserInputActivity: () => Effect.die("unused"),
-            getCommandReadModel: () => Effect.succeed(makeDefaultOrchestrationReadModel()),
-            getSnapshot: () => Effect.succeed(makeDefaultOrchestrationReadModel()),
-            getShellSnapshot: () =>
-              Effect.succeed({
-                snapshotSequence: 0,
-                projects: [],
-                threads: [],
-                updatedAt: "1970-01-01T00:00:00.000Z",
-              }),
-            getArchivedShellSnapshot: () =>
-              Effect.succeed({
-                snapshotSequence: 0,
-                projects: [],
-                threads: [],
-                updatedAt: "1970-01-01T00:00:00.000Z",
-              }),
-            searchThreads: () => Effect.succeed({ matches: [] }),
-            getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 0 }),
-            getProjectShellById: () => Effect.succeed(Option.none()),
-            getThreadShellById: () => Effect.succeed(Option.none()),
-            getThreadDetailById: () => Effect.succeed(Option.none()),
-            getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
-            getCounts: () => Effect.succeed({ projectCount: 0, threadCount: 0 }),
-            getEventReplayStats: ({ fromSequenceExclusive, toSequenceInclusive }) =>
-              Effect.succeed({
-                eventCount: Math.max(0, toSequenceInclusive - fromSequenceExclusive),
-                payloadBytes: 0,
-              }),
-            getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
-            getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
-            getImportedAgentSessionSources: () => Effect.succeed([]),
-            getThreadCheckpointContext: () => Effect.succeed(Option.none()),
-            ...options?.layers?.projectionSnapshotQuery,
-          }),
-        ),
+        Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
+          getUserInputActivity: () => Effect.die("unused"),
+          getCommandReadModel: () => Effect.succeed(makeDefaultOrchestrationReadModel()),
+          getSnapshot: () => Effect.succeed(makeDefaultOrchestrationReadModel()),
+          getShellSnapshot: () =>
+            Effect.succeed({
+              snapshotSequence: 0,
+              projects: [],
+              threads: [],
+              updatedAt: "1970-01-01T00:00:00.000Z",
+            }),
+          getArchivedShellSnapshot: () =>
+            Effect.succeed({
+              snapshotSequence: 0,
+              projects: [],
+              threads: [],
+              updatedAt: "1970-01-01T00:00:00.000Z",
+            }),
+          searchThreads: () => Effect.succeed({ matches: [] }),
+          getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 0 }),
+          getProjectShellById: () => Effect.succeed(Option.none()),
+          getThreadShellById: () => Effect.succeed(Option.none()),
+          getThreadDetailById: () => Effect.succeed(Option.none()),
+          getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
+          getCounts: () => Effect.succeed({ projectCount: 0, threadCount: 0 }),
+          getEventReplayStats: ({ fromSequenceExclusive, toSequenceInclusive }) =>
+            Effect.succeed({
+              eventCount: Math.max(0, toSequenceInclusive - fromSequenceExclusive),
+              payloadBytes: 0,
+            }),
+          getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
+          getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
+          getImportedAgentSessionSources: () => Effect.succeed([]),
+          getThreadCheckpointContext: () => Effect.succeed(Option.none()),
+          ...options?.layers?.projectionSnapshotQuery,
+        }),
       ),
       Layer.provide(
         Layer.mock(CheckpointDiffQuery.CheckpointDiffQuery)({
