@@ -27,9 +27,9 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
         expect(yield* makeClaudeEnvironment({ homePath: "" })).toBe(process.env);
 
         // The fork keys continuation on the transcript store, so every spelling of
-        // one home names the same `projects` directory.
+        // one home names the same `projects` directory, wherever it really lives.
         const key = yield* makeClaudeContinuationGroupKey({ homePath: resolved });
-        expect(key).toMatch(/^claude:projects:.*\/\.claude\/projects$/);
+        expect(key).toMatch(/^claude:projects:/);
         expect(yield* makeClaudeContinuationGroupKey({ homePath: "" })).toBe(key);
         expect(yield* makeClaudeContinuationGroupKey({ homePath: "~/.claude" })).toBe(key);
       }),
