@@ -91,7 +91,7 @@ const encodeJsonString = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknow
 const decodeWorkspaceConfig = Schema.decodeEffect(fromYaml(WorkspaceConfig));
 const encodeStageWorkspaceConfig = Schema.encodeEffect(fromYaml(StageWorkspaceConfig));
 
-export const readWorkspaceConfig = Effect.fn("readWorkspaceConfig")(function* () {
+const readWorkspaceConfig = Effect.fn("readWorkspaceConfig")(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const repoRoot = yield* RepoRoot;
@@ -2851,27 +2851,17 @@ export const packWindowsServerAsar = Effect.fn("packWindowsServerAsar")(function
   readonly arch: typeof BuildArch.Type;
 }) {
   const fs = yield* FileSystem.FileSystem;
-  const archiveStream = yield* Effect.tryPromise({
+  yield* Effect.tryPromise({
     try: () =>
       createPackageWithOptions(input.sourceDir, input.asarPath, {
         dot: true,
         unpack: WINDOWS_NATIVE_ASAR_UNPACK_GLOB,
-        globOptions: { ignore: resolveWindowsServerAsarIgnoreGlobs(input.arch) },
-      }),
-    catch: (cause) => new WindowsServerSidecarPackError({ asarPath: input.asarPath, cause }),
-  });
-  yield* Effect.tryPromise({
-    try: () =>
-      new Promise<void>((resolve, reject) => {
-        const stream = archiveStream as NodeJS.WritableStream & {
-          readonly writableFinished?: boolean;
-        };
-        if (stream.writableFinished === true) {
-          resolve();
-          return;
-        }
-        stream.once("finish", resolve);
-        stream.once("error", reject);
+        // glob 13 (via @electron/asar 4) matches `ignore` relative to `cwd`,
+        // not against the absolute paths it crawls, so anchor it at the source.
+        globOptions: {
+          cwd: input.sourceDir,
+          ignore: resolveWindowsServerAsarIgnoreGlobs(input.arch),
+        },
       }),
     catch: (cause) => new WindowsServerSidecarPackError({ asarPath: input.asarPath, cause }),
   });

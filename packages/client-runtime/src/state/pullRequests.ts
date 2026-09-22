@@ -176,6 +176,15 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
     }),
   );
+  const preview = writableQueryFamily(
+    createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:pull-requests:preview",
+      tag: WS_METHODS.pullRequestsPreview,
+      execute: (input) => routedRequest(WS_METHODS.pullRequestsPreview, input),
+      staleTimeMs: 60_000,
+      refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
+    }),
+  );
   const labelCandidates = writableQueryFamily(
     createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:pull-requests:label-candidates",
@@ -229,6 +238,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
     }),
     detail,
+    preview,
     activity,
     threadComments: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:pull-requests:thread-comments",
@@ -303,6 +313,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       label: "environment-data:pull-requests:run-action",
       tag: WS_METHODS.pullRequestsRunAction,
       execute: (input) => routedRequest(WS_METHODS.pullRequestsRunAction, input),
+      onSuccess: (target, registry) => Effect.sync(() => registry.refresh(preview(target))),
       scheduler: commandScheduler,
       concurrency: serialPerEnvironment,
     }),
@@ -310,6 +321,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       label: "environment-data:pull-requests:update",
       tag: WS_METHODS.pullRequestsUpdate,
       execute: (input) => routedRequest(WS_METHODS.pullRequestsUpdate, input),
+      onSuccess: (target, registry) => Effect.sync(() => registry.refresh(preview(target))),
       scheduler: commandScheduler,
       concurrency: serialPerEnvironment,
     }),
@@ -546,6 +558,12 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       label: "environment-data:pull-requests:invalidate",
       tag: WS_METHODS.pullRequestsInvalidate,
       execute: (input) => routedRequest(WS_METHODS.pullRequestsInvalidate, input),
+      onSuccess: ({ environmentId, input }, registry) =>
+        Effect.sync(() => {
+          if (input.reference !== undefined) {
+            registry.refresh(preview({ environmentId, input: input.reference }));
+          }
+        }),
       scheduler: commandScheduler,
       concurrency: serialPerEnvironment,
     }),

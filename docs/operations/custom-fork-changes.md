@@ -30,13 +30,9 @@ The reason the fork exists: an independently branded, self-installing build.
 - `.gitignore` ignores those generated `scripts/lib/*.d.ts`
 - `.github/workflows/custom-ci.yml`, `.github/workflows/custom-upstream-sync.yml`
 - `.github/workflows/ci.yml` restricts upstream's CI to `main` so fork branches do not run it
-- `pnpm-workspace.yaml` keeps `allowBuilds.msgpackr-extract` boolean; upstream's
-  dependency bump accidentally committed a placeholder string, which prevents
-  the desktop artifact pipeline from decoding the workspace configuration
 
 **On conflict:** keep the fork's values. Take upstream's structural changes to
-the build script and re-apply the identity constants on top. Drop the
-`msgpackr-extract` override once upstream restores a boolean value.
+the build script and re-apply the identity constants on top.
 
 ### Native conversation forks
 
@@ -92,7 +88,9 @@ session. Each account remains a separate provider instance with its own
 
 - `apps/server/src/provider/Drivers/ClaudeHome.ts` keys session continuation on the
   resolved `projects` path, so accounts sharing a transcript tree share continuation.
-  Upstream keys on the home directory instead.
+  Upstream keys on the home directory instead. The function keeps upstream's
+  optional environment argument so an inherited `CLAUDE_CONFIG_DIR` resolves the
+  same way; upstream's tests for that key are rewritten to the fork's format.
 - `apps/server/src/provider/Layers/ProviderService.ts` allows switching instances
   within a provider when continuation identity matches (`reusePersistedState`)
 
@@ -143,7 +141,9 @@ expired or failed readings show an unknown balance until refreshed.
 
 The picker uses the environment's existing provider snapshots, including in
 Settings and new-thread pickers. Selection and formatting live in
-`packages/shared/src/modelPickerQuota.ts` so clients agree.
+`packages/shared/src/modelPickerQuota.ts` so clients agree. On mobile the
+quota text and the `quota` row prop live in upstream's
+`ThreadSettingsRows.shared.tsx`, since upstream moved the rows out of the sheet.
 
 **On conflict:** compare quota selection and account placement before replacing
 this with upstream's picker. Retire the helper when upstream covers both clients.
@@ -192,6 +192,15 @@ a single unit, so a loose query cannot stitch two messages together. Units are
 derived and re-extracted when a thread's `updated_at` passes its watermark, so
 no projection write path is fork-owned.
 
+Since 2026-09 upstream also feeds its exact `searchThreads` into the sidebar
+(`useThreadSearch`, `ThreadSearchMatchExcerpt`, a `contentMatchKeys` argument
+on `searchSidebarThreads`). That search is a substring scan over user and
+assistant messages across every connected environment, and its excerpt
+highlights the literal query. The fork's sidebar does not mount it: the row
+and the result list keep the fuzzy, project-scoped path above, and upstream's
+components stay in the tree for the command palette. Which of the two the
+sidebar should use is Taufeeque's call and has not been made yet.
+
 **On conflict:** the fork touches upstream files only at the registration
 points listed above. Retire it if upstream ever makes its own search fuzzy and
 project-scoped.
@@ -229,8 +238,8 @@ It follows upstream's label feature layer for layer: an optional `assignees`
 capability and viewer permission (triage access), an optional `assignees` list on
 `PullRequestDetail`, two RPCs (`pullRequests.assigneeCandidates`,
 `pullRequests.setAssignees`), optional provider methods, and a cache update in
-`client-runtime`. Only the GitHub provider implements it; assignees ride the existing
-`gh pr view` call, so the detail costs no extra request. The UI lives in the
+`client-runtime`. Only the GitHub provider implements it; assignees ride upstream's
+core GraphQL detail query, so the detail costs no extra request. The UI lives in the
 fork-owned `PullRequestAssignees.tsx`; `PullRequestSummaryTab.tsx` only mounts it.
 
 **On conflict:** the edits to upstream files are additions next to the label code, so

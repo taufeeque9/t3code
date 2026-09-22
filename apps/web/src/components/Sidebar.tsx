@@ -209,12 +209,7 @@ import {
   type TerminalStatusIndicator,
   useLinkedThreadPullRequest,
 } from "./ThreadStatusIndicators";
-import {
-  resolveSnoozePresets,
-  snoozeWakeDescription,
-  snoozeWakeLabel,
-  type SnoozePreset,
-} from "./Sidebar.snooze";
+import { resolveSnoozePresets, snoozeWakeLabel, type SnoozePreset } from "./Sidebar.snooze";
 import { ProjectFavicon, type ProjectFaviconProject } from "./ProjectFavicon";
 import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
@@ -242,6 +237,7 @@ import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrom
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
 import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
+import { MiddleTruncate } from "./ui/middle-truncate";
 import {
   composerDraftHasUserContent,
   DraftId,
@@ -354,7 +350,7 @@ function SidebarThreadTooltip({
       align="start"
       sideOffset={4}
       variant="glass"
-      className="max-w-80 text-left whitespace-normal [&_[data-slot=tooltip-viewport]]:p-0"
+      className="[&_[data-slot=tooltip-viewport]]:p-0"
     >
       <div className="flex min-w-0 max-w-80 flex-col gap-2 p-[var(--floating-content-inset)]">
         <div className="min-w-0 truncate text-xs leading-tight font-medium text-foreground">
@@ -379,7 +375,7 @@ function SidebarThreadTooltip({
           {thread.branch ? (
             <div className="flex min-w-0 items-center gap-2">
               <GitBranchIcon className="size-3 shrink-0 stroke-muted-foreground" />
-              <div className="min-w-0 truncate text-foreground/75">{thread.branch}</div>
+              <MiddleTruncate value={thread.branch} className="flex text-foreground/75" />
             </div>
           ) : null}
           {branchMismatch ? (
@@ -479,7 +475,7 @@ function SnoozePopoverButton(props: {
         </TooltipTrigger>
         <TooltipPopup>Snooze thread</TooltipPopup>
       </Tooltip>
-      <PopoverPopup side="bottom" align="end" className="w-56" viewportClassName="p-1">
+      <PopoverPopup side="bottom" align="end" width="sm" viewportClassName="p-1">
         {presets.map((preset) => (
           <button
             key={preset.id}
@@ -1387,7 +1383,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     if (!showSnoozeButton) setSnoozeMenuOpen(false);
   }, [showSnoozeButton]);
   const handlePrClick = useCallback(
-    (event: ReactMouseEvent<HTMLAnchorElement>) => {
+    (event: ReactMouseEvent<HTMLElement>) => {
       const url = pr?.url ?? currentLinkedPr?.url;
       if (!url) return;
       const openedInRightPanel = openPrLink(
@@ -1941,9 +1937,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               {thread.branch ? (
                 <>
                   <ThreadWorktreeIndicator thread={thread} />
-                  <span className="min-w-0 flex-1 truncate whitespace-nowrap text-muted-foreground/40">
-                    {thread.branch}
-                  </span>
+                  <MiddleTruncate
+                    value={thread.branch}
+                    showTitle={false}
+                    className="flex-1 text-muted-foreground/40"
+                  />
                 </>
               ) : (
                 <span className="flex-1" />
@@ -3820,23 +3818,9 @@ export default function Sidebar() {
           );
           return;
         }
-        if (outcome.status !== "success") return;
-        // Snooze hides the row, so the toast is the only confirmation —
-        // and the Undo is the escape hatch for a mis-click.
-        toastManager.add(
-          stackedThreadToast({
-            type: "success",
-            title: `Snoozed until ${snoozeWakeDescription(preset.snoozedUntil, new Date(), timestampFormat)}`,
-            timeout: 5_000,
-            actionProps: {
-              children: "Undo",
-              onClick: () => attemptUnsnooze(threadRef),
-            },
-          }),
-        );
       })();
     },
-    [attemptUnsnooze, performSnooze, timestampFormat],
+    [performSnooze],
   );
 
   const removeFromSelection = useThreadSelectionStore((s) => s.removeFromSelection);
@@ -3942,35 +3926,15 @@ export default function Sidebar() {
             outcome.status === "failure" ? [outcome.error] : [],
           );
 
-          if (snoozedThreadRefs.length > 0) {
-            const snoozedCount = snoozedThreadRefs.length;
-            const failedCount = failures.length;
-            toastManager.add(
-              stackedThreadToast({
-                type: failedCount > 0 ? "warning" : "success",
-                title:
-                  failedCount > 0
-                    ? `Snoozed ${snoozedCount} of ${selectedThreads.length} threads`
-                    : `Snoozed ${snoozedCount} thread${snoozedCount === 1 ? "" : "s"}`,
-                description:
-                  failedCount > 0
-                    ? `${failedCount} thread${failedCount === 1 ? "" : "s"} couldn't be snoozed.`
-                    : undefined,
-                timeout: 5_000,
-                actionProps: {
-                  children: "Undo",
-                  onClick: () => {
-                    for (const threadRef of snoozedThreadRefs) attemptUnsnooze(threadRef);
-                  },
-                },
-              }),
-            );
-          } else if (failures.length > 0) {
+          if (failures.length > 0) {
             const firstError = failures[0];
             toastManager.add(
               stackedThreadToast({
                 type: "error",
-                title: "Failed to snooze threads",
+                title:
+                  snoozedThreadRefs.length > 0
+                    ? `Failed to snooze ${failures.length} thread${failures.length === 1 ? "" : "s"}`
+                    : "Failed to snooze threads",
                 description:
                   firstError instanceof Error ? firstError.message : "An error occurred.",
               }),
@@ -4074,7 +4038,6 @@ export default function Sidebar() {
     },
     [
       attemptSettle,
-      attemptSnooze,
       attemptUnpin,
       clearSelection,
       confirmThreadDelete,
@@ -4084,7 +4047,6 @@ export default function Sidebar() {
       performSnooze,
       removeFromSelection,
       serverConfigs,
-      attemptUnsnooze,
       updateThreadMetadata,
       timestampFormat,
     ],
@@ -4479,11 +4441,11 @@ export default function Sidebar() {
     <>
       <SidebarChromeHeader isElectron={isElectron} />
       <SidebarContent
-        className="gap-0 min-h-full"
+        className="min-h-full"
         fixedHeader={
           // Lifted above the stage backdrop, whose fade bleeds below the
           // header and would otherwise paint across the search row's outline.
-          <SidebarGroup className="relative z-[1] p-[var(--sidebar-content-inset)] pt-1">
+          <SidebarGroup className="z-[1]">
             <SidebarThreadHeader
               searchFieldRef={headerSearchRef}
               hasProjects={projectGroups.length > 0}
@@ -4579,7 +4541,7 @@ export default function Sidebar() {
                             key={item.value}
                             hideIndicator
                             value={item}
-                            className="h-8 min-h-8 py-0 font-medium"
+                            className="font-medium"
                             contentClassName="flex min-w-0 items-center gap-2"
                             onContextMenu={(event) => {
                               if (project) handleProjectSettings(event, project);
@@ -4605,7 +4567,7 @@ export default function Sidebar() {
                                 tabIndex={-1}
                                 aria-hidden="true"
                                 title={`Project settings for ${project.displayName}`}
-                                className="ml-auto size-6 [--control-icon-color:currentColor] text-icon-muted focus-visible:bg-accent focus-visible:text-foreground"
+                                className="ml-auto focus-visible:bg-accent focus-visible:text-foreground"
                                 onPointerDown={(event) => event.stopPropagation()}
                                 onClick={(event) => {
                                   void handleProjectSettings(event, project);
@@ -4642,7 +4604,7 @@ export default function Sidebar() {
           </SidebarGroup>
         }
       >
-        <SidebarGroup className="ps-[calc(var(--sidebar-content-inset)+1px)] pe-[var(--sidebar-content-inset)] pb-1 pt-0 flex-1">
+        <SidebarGroup className="flex-1 ps-[calc(var(--sidebar-content-inset)+1px)]">
           {isSearchingThreads ? (
             threadSearchResults.length > 0 ? (
               <TooltipProvider
@@ -4698,7 +4660,7 @@ export default function Sidebar() {
                 role="status"
                 className="px-2 py-6 text-center text-xs text-sidebar-muted-foreground"
               >
-                No threads found
+                {threadUnitSearch.isPending ? "Searching thread messages…" : "No threads found"}
               </p>
             )
           ) : null}
@@ -4852,7 +4814,9 @@ export default function Sidebar() {
                             key={threadKey}
                             id={threadKey}
                             disabled={
-                              !draggableThreadKeys.has(threadKey) || optimisticDrop !== null
+                              renamingThreadKey === threadKey ||
+                              !draggableThreadKeys.has(threadKey) ||
+                              optimisticDrop !== null
                             }
                           >
                             {(bag) => renderThreadRowInner(thread, section, bag)}
