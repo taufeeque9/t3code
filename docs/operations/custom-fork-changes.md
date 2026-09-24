@@ -79,9 +79,9 @@ server status/cache patches sit in upstream-owned files. Re-apply the smallest
 patches until upstream both recognizes expired Claude authentication and refreshes
 capabilities immediately after sign-in. Retire the whole thing once upstream
 offers an equivalent Claude sign-in flow. Upstream's generic `ProviderAuthFlow`
-(browser and device-code interactions, credential bindings) has only an
-Antigravity implementation so far; a Claude implementation on it would replace
-`ProviderLoginService`.
+helper (browser and device-code interactions, credential bindings) has no
+production caller yet, and only Antigravity exposes an auth controller. A Claude
+controller built on it would replace `ProviderLoginService`.
 
 ### Claude multi-account support
 
