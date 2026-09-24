@@ -1907,6 +1907,95 @@ describe("deriveMessagesTimelineRows", () => {
     expect(rows.map((row) => row.id)).toEqual(["turn-fold:turn-1", "assistant-final-entry"]);
   });
 
+  it("keeps turns with a stop-hook self-check fully expanded", () => {
+    const timelineEntries = [
+      {
+        id: "user-entry",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:00:00Z",
+        message: {
+          id: "user-1" as never,
+          role: "user" as const,
+          text: "Build it",
+          turnId: null,
+          createdAt: "2026-01-01T00:00:00Z",
+          updatedAt: "2026-01-01T00:00:00Z",
+          streaming: false,
+        },
+      },
+      {
+        id: "work-entry",
+        kind: "work" as const,
+        createdAt: "2026-01-01T00:00:05Z",
+        entry: {
+          id: "work-1",
+          createdAt: "2026-01-01T00:00:05Z",
+          turnId: "turn-1" as never,
+          label: "Ran command",
+          tone: "tool" as const,
+        },
+      },
+      {
+        id: "assistant-final-entry",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:00:20Z",
+        message: {
+          id: "assistant-final" as never,
+          role: "assistant" as const,
+          text: "Done",
+          turnId: "turn-1" as never,
+          createdAt: "2026-01-01T00:00:20Z",
+          updatedAt: "2026-01-01T00:00:22Z",
+          streaming: false,
+        },
+      },
+      {
+        id: "stop-hook-entry",
+        kind: "work" as const,
+        createdAt: "2026-01-01T00:00:22Z",
+        entry: {
+          id: "stop-hook-warning",
+          createdAt: "2026-01-01T00:00:22Z",
+          turnId: "turn-1" as never,
+          label: "Stop hook error occurred · ctrl+o to see",
+          tone: "error" as const,
+          sourceActivityKind: "runtime.warning" as const,
+        },
+      },
+      {
+        id: "self-check-entry",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:00:23Z",
+        message: {
+          id: "self-check" as never,
+          role: "assistant" as const,
+          text: "Both checks done.",
+          turnId: "turn-1" as never,
+          createdAt: "2026-01-01T00:00:23Z",
+          updatedAt: "2026-01-01T00:00:24Z",
+          streaming: false,
+        },
+      },
+    ];
+
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries,
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+
+    expect(rows.some((row) => row.kind === "turn-fold")).toBe(false);
+    expect(rows.map((row) => row.id)).toEqual([
+      "user-entry",
+      "work-entry",
+      "assistant-final-entry",
+      "stop-hook-entry",
+      "self-check-entry",
+    ]);
+  });
+
   const reasoningEntry = (id: string, at: string, turnId: string | null) => ({
     id,
     kind: "message" as const,

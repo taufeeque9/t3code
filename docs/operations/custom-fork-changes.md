@@ -202,6 +202,18 @@ fork-owned `PullRequestAssignees.tsx`; `PullRequestSummaryTab.tsx` only mounts i
 **On conflict:** the edits to upstream files are additions next to the label code, so
 keep both sides. If upstream ships assignees, take theirs and delete this.
 
+### Chat: stop-hook follow-ups
+
+A Claude stop hook appends a self-check reply after the real final response, in
+the same turn. Upstream treats the last assistant message of a turn as its answer
+and folds everything before it under "Worked for ...", which hides the final
+response. `deriveTurnFolds` in `MessagesTimeline.logic.ts` leaves a turn unfolded
+when it contains a `Stop hook` runtime warning or a `Self-check` reply.
+
+**On conflict:** keep the check in `deriveTurnFolds` and its test ("keeps turns
+with a stop-hook self-check fully expanded"). Retire it only once that test passes
+on upstream's code without the fork's check.
+
 ## Reassess on the next upstream change
 
 ### Configurable worktree branch prefix
@@ -246,10 +258,7 @@ partial-stream completion, and subagent filtering. The fork's parallel activity
 model also supported late correction of a completed Claude snapshot, but keeping
 two reasoning projections for that rare case was not worth the duplication.
 
-### Chat stop-hook follow-ups
-
-Retired on 2026-09-18 because upstream now keeps stop-hook warnings and their
-self-check replies outside the preceding turn fold with equivalent behavior.
+### Provider limits view
 
 Removed on 2026-09-05 when upstream shipped its own limits view. Do not revive.
 

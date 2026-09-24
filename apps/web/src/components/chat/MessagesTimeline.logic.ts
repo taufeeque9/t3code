@@ -540,6 +540,24 @@ interface TurnFold {
   label: string;
 }
 
+const SELF_CHECK_MESSAGE_PATTERN = /^\s*(?:[*_~`>#-]+\s*)*Self-check\b/iu;
+
+function isSelfCheckMessage(entry: TimelineEntry): boolean {
+  return (
+    entry.kind === "message" &&
+    entry.message.role === "assistant" &&
+    SELF_CHECK_MESSAGE_PATTERN.test(entry.message.text ?? "")
+  );
+}
+
+function isStopHookBoundary(entry: TimelineEntry): boolean {
+  return (
+    entry.kind === "work" &&
+    entry.entry.sourceActivityKind === "runtime.warning" &&
+    /^Stop hook\b/iu.test(entry.entry.label.trim())
+  );
+}
+
 /**
  * The session's running turn is authoritative when latestTurn briefly lags or
  * regresses behind it. Otherwise, the latest turn counts as unsettled while it
@@ -633,6 +651,7 @@ function deriveTurnFolds(input: {
   interface TurnGroup {
     entries: Array<TimelineEntry>;
     terminalEntry: Extract<TimelineEntry, { kind: "message" }> | null;
+    hasStopHookFollowUp: boolean;
     hasStreamingMessage: boolean;
     /**
      * The user message that kicked the turn off. Entry timestamps alone
@@ -669,6 +688,7 @@ function deriveTurnFolds(input: {
       group = {
         entries: [],
         terminalEntry: null,
+        hasStopHookFollowUp: false,
         hasStreamingMessage: false,
         // Each user boundary starts at most one turn; a second turn after the
         // same user message (e.g. a steer-superseded continuation) falls back
@@ -679,6 +699,9 @@ function deriveTurnFolds(input: {
       groupsByTurnId.set(turnId, group);
     }
     group.entries.push(entry);
+    if (isStopHookBoundary(entry) || isSelfCheckMessage(entry)) {
+      group.hasStopHookFollowUp = true;
+    }
     if (entry.kind === "message") {
       if (input.terminalAssistantMessageIds.has(entry.message.id)) {
         group.terminalEntry = entry;
@@ -698,6 +721,12 @@ function deriveTurnFolds(input: {
       continue;
     }
     if (group.hasStreamingMessage) {
+      continue;
+    }
+    // A Claude stop hook can append a self-check after the actual final
+    // response. Treating only the last assistant message as terminal would
+    // hide that final response inside the work fold.
+    if (group.hasStopHookFollowUp) {
       continue;
     }
     const hiddenEntryIds = new Set<string>();
