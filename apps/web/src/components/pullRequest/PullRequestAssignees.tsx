@@ -55,12 +55,12 @@ export function PullRequestAssignees({
       ) : (
         <span className="flex items-center -space-x-1">
           {assignees.map((actor) => (
-            <PullRequestActorLabel
+            <span
               key={actor.login}
-              actor={actor}
-              labelClassName="sr-only"
-              className="relative gap-0 hover:z-10 [&>img]:ring-2 [&>img]:ring-background [&>span:first-child]:ring-2 [&>span:first-child]:ring-background"
-            />
+              className="relative flex rounded-full ring-2 ring-background hover:z-10 focus-within:z-10"
+            >
+              <PullRequestActorLabel actor={actor} variant="avatar" />
+            </span>
           ))}
         </span>
       )}

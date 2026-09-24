@@ -2980,8 +2980,8 @@ export function GeneralSettingsPanel() {
                   }
                 }}
               />
-              <InputGroupAddon align="inline-end" className="text-muted-foreground">
-                /
+              <InputGroupAddon align="inline-end">
+                <span className="text-muted-foreground">/</span>
               </InputGroupAddon>
             </InputGroup>
           }
