@@ -167,26 +167,24 @@ which is read without the heading for context.
 
 ### Composer: end-of-turn queue semantics
 
-Upstream owns the multi-message queue, full draft snapshots (attachments and
-contexts), inline controls, and the queue-versus-steer setting. The fork keeps
-two behavior refinements:
+Upstream owns the multi-message queue, full draft snapshots (attachments,
+contexts, and the model and modes captured at queue time), inline controls, the
+queue-versus-steer setting, and `QueuedMessageSender`, which sends for threads
+that are not on screen. The fork keeps one behavior refinement: automatic
+delivery waits until the active turn finishes, where upstream also sends at the
+next tool boundary. **Send now** remains the explicit way to steer during a turn.
 
-- automatic delivery waits until the active turn finishes; **Send now** remains
-  the explicit way to steer during a turn;
-- each queued draft captures its model, runtime mode, interaction mode, and
-  prompt effort instead of inheriting whatever the composer selects later.
+The rule is the body of `isQueuedMessageDue` in `queuedMessageStore.ts`, which
+keeps upstream's signature so its callers are untouched. Two tests are rewritten
+to match: the mid-turn case in `queuedMessageStore.test.ts` and "holds the next
+message" in `QueuedMessageSender.test.tsx`. `Sidebar.tsx`, `LegacySidebar.tsx`,
+and `Sidebar.logic.ts` keep threads with queued work visible as active.
 
-`queuedMessageStore.ts` and its test own the timing rule and captured settings;
-`ChatView.tsx` records and replays them. `Sidebar.tsx`, `LegacySidebar.tsx`, and
-`Sidebar.logic.ts` keep threads with queued work visible as active.
+The fork's own capture of provider settings was retired on 2026-09-27 when
+upstream added `QueuedMessageSendSettings`.
 
-The old fork queue, its reload persistence, root-level coordinator, and dedicated
-keybinding were retired when upstream's richer queue landed. Full drafts contain
-live attachment uploads, so persisting or dispatching them outside `ChatView`
-would risk replaying stale files.
-
-**On conflict:** retire these refinements when upstream waits for turn completion
-and snapshots the queued draft's provider settings.
+**On conflict:** take upstream's queue and re-apply the one-line rule. Retire it
+when upstream waits for turn completion.
 
 ### Pull request assignees (GitHub)
 
@@ -247,7 +245,8 @@ service, RPC, shared matcher, and client state were deleted and the sidebar is
 upstream's again.
 
 One artifact stays: migration ID 50 is the fork's `ProjectionThreadSearchUnits`
-table, and upstream's migrations 50 onward run one ID later in this fork. Every
+table, and upstream's migrations 50 onward run one ID later in this fork, so a
+migration test that names IDs needs the same shift. Every
 installed database has those IDs applied, so `Migrations.ts` must keep the
 shift; renumbering would make the next upstream migration look already applied.
 The unused table is left in place. Give future migrations IDs upstream does not

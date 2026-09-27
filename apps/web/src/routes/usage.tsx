@@ -1,7 +1,8 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useCallback } from "react";
 
-import { isUsageMetric, UsagePage, type UsageMetric } from "../components/usage/UsagePage";
+import { isUsageMetric, UsagePage } from "../components/usage/UsagePage";
+import type { UsageMetric } from "../components/usage/usageShortcuts";
 
 /**
  * Keeps the selected view in the URL so a "Limits" entry point opens it
