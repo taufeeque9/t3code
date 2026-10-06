@@ -26,7 +26,9 @@ The reason the fork exists: an independently branded, self-installing build.
 - `scripts/custom/update-installed-app.sh` and its test. Its dirty-tree guard
   checks tracked changes only: the desktop build emits `.d.ts` beside its
   sources, and counting untracked files let the updater's own output block
-  every later run until the checkout was cleaned by hand.
+  every later run until the checkout was cleaned by hand. Its active-session
+  guard counts live Orchestration V2 runs, falling back to the V1 session table
+  on databases that predate V2.
 - `.gitignore` ignores those generated `scripts/lib/*.d.ts`
 - `.github/workflows/custom-ci.yml`, `.github/workflows/custom-upstream-sync.yml`
 - `.github/workflows/ci.yml` restricts upstream's CI to `main` so fork branches do not run it

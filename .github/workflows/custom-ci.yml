@@ -32,8 +32,8 @@ jobs:
 
       - name: Test custom behavior
         run: |
-          vp test run apps/web/src/components/chat/MessagesTimeline.logic.test.ts
-          vp test run apps/server/src/orchestration/decider.fork.test.ts apps/server/src/orchestration/threadFork.test.ts
+          vp test run apps/web/src/components/chat/MessagesTimeline.logic.test.ts apps/web/src/components/chat/userMessageFork.test.ts
+          vp test run packages/shared/src/git.test.ts
           vp test run scripts/build-desktop-artifact.test.ts
           vp test run scripts/custom/update-installed-app.test.ts
 
@@ -47,6 +47,12 @@ jobs:
             T3CODE_CUSTOM_UPDATER_HOME="$RUNNER_TEMP/t3-custom-updater" \
             T3CODE_CUSTOM_DATABASE="$RUNNER_TEMP/state.sqlite" \
             bash scripts/custom/update-installed-app.sh --status | grep '^active_sessions=1$'
+          sqlite3 "$RUNNER_TEMP/state.sqlite" \
+            "CREATE TABLE orchestration_v2_projection_runs (status TEXT); INSERT INTO orchestration_v2_projection_runs VALUES ('completed'), ('queued'), ('running'), ('waiting');"
+          T3CODE_CUSTOM_REPO="$GITHUB_WORKSPACE" \
+            T3CODE_CUSTOM_UPDATER_HOME="$RUNNER_TEMP/t3-custom-updater" \
+            T3CODE_CUSTOM_DATABASE="$RUNNER_TEMP/state.sqlite" \
+            bash scripts/custom/update-installed-app.sh --status | grep '^active_sessions=2$'
 
       - name: Install browser secret helper build libraries
         run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config

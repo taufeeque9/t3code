@@ -31,8 +31,15 @@ active_session_count() {
     printf '0\n'
     return
   fi
-  sqlite3 -readonly "$database" \
-    "SELECT COUNT(*) FROM projection_thread_sessions WHERE status IN ('starting', 'running');"
+  # Orchestration V2 tracks live work as runs; builds before V2 only have the session table.
+  if [[ -n "$(sqlite3 -readonly "$database" \
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'orchestration_v2_projection_runs';")" ]]; then
+    sqlite3 -readonly "$database" \
+      "SELECT COUNT(*) FROM orchestration_v2_projection_runs WHERE status IN ('preparing', 'starting', 'running', 'waiting');"
+  else
+    sqlite3 -readonly "$database" \
+      "SELECT COUNT(*) FROM projection_thread_sessions WHERE status IN ('starting', 'running');"
+  fi
 }
 
 application_is_running() {
