@@ -9,10 +9,12 @@ import {
   TurnId,
 } from "./baseSchemas.ts";
 import {
-  ChatAttachment,
-  ModelSelection,
   getProviderAttachmentLimitError,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+  ChatAttachment,
+} from "./chatAttachment.ts";
+import { ModelSelection } from "./modelSelection.ts";
+import {
   ProviderApprovalDecision,
   ProviderApprovalPolicy,
   ProviderInteractionMode,
@@ -21,7 +23,7 @@ import {
   ProviderUserInputAnswers,
   UserInputAttachments,
   RuntimeMode,
-} from "./orchestration.ts";
+} from "./providerPolicy.ts";
 import { ProviderInstanceId, ProviderDriverKind } from "./providerInstance.ts";
 
 const ProviderSessionStatus = Schema.Literals([
@@ -65,29 +67,6 @@ export const ProviderSessionStartInput = Schema.Struct({
   runtimeMode: RuntimeMode,
 });
 export type ProviderSessionStartInput = typeof ProviderSessionStartInput.Type;
-
-export const ProviderSessionForkPoint = Schema.Union([
-  Schema.Struct({
-    type: Schema.Literal("full"),
-    precedingTurnId: Schema.NullOr(TurnId),
-  }),
-  Schema.Struct({
-    type: Schema.Literal("before-user-message"),
-    userMessageOrdinal: Schema.Number.check(Schema.isInt(), Schema.isGreaterThan(0)),
-    userMessageText: Schema.String,
-    precedingTurnId: Schema.NullOr(TurnId),
-  }),
-]);
-export type ProviderSessionForkPoint = typeof ProviderSessionForkPoint.Type;
-
-export const ProviderPrepareSessionForkInput = Schema.Struct({
-  sourceThreadId: ThreadId,
-  targetThreadId: ThreadId,
-  sourceResumeCursor: Schema.Unknown,
-  forkPoint: ProviderSessionForkPoint,
-  cwd: Schema.optional(TrimmedNonEmptyString),
-});
-export type ProviderPrepareSessionForkInput = typeof ProviderPrepareSessionForkInput.Type;
 
 export const ProviderSendTurnInput = Schema.Struct({
   threadId: ThreadId,

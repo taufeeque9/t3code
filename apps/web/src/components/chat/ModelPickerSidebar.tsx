@@ -209,6 +209,8 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
                   driverKind={entry.driverKind}
                   displayName={entry.displayName}
                   accentColor={entry.accentColor}
+                  acpRegistryAgentId={entry.acpRegistryAgentId}
+                  acpRegistryIconUrl={entry.acpRegistryIconUrl}
                   showBadge={showInstanceBadge}
                   className="size-6 z-30"
                   iconClassName="size-5"
@@ -225,7 +227,7 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
                   <span
                     aria-hidden="true"
                     className={cn(
-                      "text-[10px] leading-3 tabular-nums text-muted-foreground",
+                      "text-3xs leading-3 tabular-nums text-muted-foreground",
                       quota.remainingPercent !== null &&
                         quota.remainingPercent <= 5 &&
                         "text-warning",

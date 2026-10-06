@@ -31,7 +31,7 @@ import * as Schema from "effect/Schema";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { makeClaudeEnvironment } from "../provider/Drivers/ClaudeHome.ts";
 import { mergeProviderInstanceEnvironment } from "../provider/ProviderInstanceEnvironment.ts";
-import { deriveProviderInstanceConfigMap } from "../provider/Layers/ProviderInstanceRegistryHydration.ts";
+import { deriveProviderInstanceConfigMap } from "../provider/ProviderInstanceRegistryHydration.ts";
 
 const decodeClaudeSettings = Schema.decodeUnknownEffect(ClaudeSettings);
 

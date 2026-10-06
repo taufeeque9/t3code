@@ -18,7 +18,6 @@ import {
   isProjectGroupingEnabled,
   projectGroupingModeFromToggle,
   resolveBackgroundActivityProfileOption,
-  resolveWorktreeBranchPrefixUpdate,
 } from "./SettingsPanels.logic";
 
 describe("typography settings restore", () => {
@@ -243,21 +242,6 @@ describe("buildProviderInstanceUpdatePatch", () => {
     expect(patch.providerInstances?.[instanceId]).toEqual(nextInstance);
     expect(patch.providers).toBeUndefined();
   });
-});
-
-describe("resolveWorktreeBranchPrefixUpdate", () => {
-  it("trims and lowercases a valid prefix before saving", () => {
-    expect(resolveWorktreeBranchPrefixUpdate("  Team_42-Dev  ")).toEqual({
-      worktreeBranchPrefix: "team_42-dev",
-    });
-  });
-
-  it.each(["", "-team", "team/feature", "team.prefix", "a".repeat(65)])(
-    "does not create a settings update for invalid prefix %j",
-    (value) => {
-      expect(resolveWorktreeBranchPrefixUpdate(value)).toBeNull();
-    },
-  );
 });
 
 describe("getChangedBrowserSettingLabels", () => {

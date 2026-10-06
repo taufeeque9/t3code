@@ -6,46 +6,51 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
-import { describe, expect, it, vi } from "vite-plus/test";
-
-vi.mock("./uuid", () => ({
-  randomHex: () => "deadbeef",
-}));
+import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildProjectThreadStartTurnInput,
   deriveThreadTitleFromPrompt,
-  type ProjectThreadStartTurnSpec,
 } from "./projectThreadStartTurn";
-
-const makeSpec = (
-  overrides: Partial<ProjectThreadStartTurnSpec> = {},
-): ProjectThreadStartTurnSpec => ({
-  projectId: ProjectId.make("project-1"),
-  projectCwd: "/workspace/project-1",
-  threadId: "thread-1",
-  commandId: "command-1",
-  messageId: "message-1",
-  createdAt: "2026-08-10T12:00:00.000Z",
-  text: "Build the mobile change",
-  uploadedAttachments: [],
-  modelSelection: {
-    instanceId: ProviderInstanceId.make("codex"),
-    model: "gpt-5.4",
-  },
-  runtimeMode: "approval-required",
-  interactionMode: "default",
-  workspaceMode: "worktree",
-  branch: "main",
-  worktreePath: null,
-  startFromOrigin: false,
-  ...overrides,
-});
 
 describe("project thread title", () => {
   it("keeps ordinary titles and the empty-prompt fallback", () => {
     expect(deriveThreadTitleFromPrompt("  Fix\n the parser  ")).toBe("Fix the parser");
     expect(deriveThreadTitleFromPrompt(" \n ")).toBe("New thread");
+  });
+
+  it("derives attachment-only titles from prepared image metadata", () => {
+    const uploadedAttachments = [
+      {
+        type: "image" as const,
+        id: "prepared-photo",
+        name: "photo.png",
+        mimeType: "image/png",
+        sizeBytes: 3,
+      },
+    ];
+    const input = buildProjectThreadStartTurnInput({
+      projectId: ProjectId.make("project"),
+      projectCwd: "/workspace",
+      threadId: "image-thread",
+      commandId: "image-command",
+      messageId: "image-message",
+      createdAt: "2026-09-04T00:00:00Z",
+      text: "",
+      uploadedAttachments,
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      workspaceMode: "local",
+      branch: null,
+      worktreePath: null,
+      startFromOrigin: false,
+      worktreeBranchName: "unused",
+    });
+
+    expect(input.titleSeed).toBe("Image: photo.png");
+    expect(input.bootstrap.createThread.title).toBe(input.titleSeed);
+    expect(input.message.attachments).toEqual(uploadedAttachments);
   });
 
   it.each([
@@ -55,7 +60,7 @@ describe("project thread title", () => {
     },
     {
       comment: 'Why "shared"?',
-      title: 'Keep `cache[key]` & <parser> shared. Retry! Comment: Why "shared"?',
+      title: "Keep `cache[key]` & <parser> shared. Retry! Commen...",
     },
   ])("uses readable titles and intact links with comment $comment", ({ comment, title }) => {
     const quoteText = "Keep `cache[key]` & <parser> shared.\n  Retry!";
@@ -71,46 +76,28 @@ describe("project thread title", () => {
       prefix: "",
       suffix: "",
     });
-    const input = buildProjectThreadStartTurnInput(
-      makeSpec({
-        text,
-        workspaceMode: "local",
-        branch: null,
-      }),
-    );
+    const input = buildProjectThreadStartTurnInput({
+      projectId: ProjectId.make("project"),
+      projectCwd: "/workspace",
+      threadId: "new-thread",
+      commandId: "command",
+      messageId: "message",
+      createdAt: "2026-09-01T00:00:00Z",
+      text,
+      uploadedAttachments: [],
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      workspaceMode: "local",
+      branch: null,
+      worktreePath: null,
+      startFromOrigin: false,
+      worktreeBranchName: "unused",
+    });
 
     expect(input.titleSeed).toBe(title);
     expect(input.bootstrap.createThread.title).toBe(input.titleSeed);
     expect(input.message.text).toBe(text);
-  });
-});
-
-describe("buildProjectThreadStartTurnInput", () => {
-  it("uses the configured prefix for a worktree bootstrap branch", () => {
-    const input = buildProjectThreadStartTurnInput(
-      makeSpec({
-        worktreeBranchPrefix: "mobile-team",
-      }),
-    );
-
-    expect(input.bootstrap.prepareWorktree?.branch).toBe("mobile-team/deadbeef");
-  });
-
-  it("falls back to the default prefix when the server configuration is unavailable", () => {
-    const input = buildProjectThreadStartTurnInput(makeSpec());
-
-    expect(input.bootstrap.prepareWorktree?.branch).toBe("t3code/deadbeef");
-  });
-
-  it("omits worktree preparation for a local thread", () => {
-    const input = buildProjectThreadStartTurnInput(
-      makeSpec({
-        workspaceMode: "local",
-        worktreePath: "/workspace/project-1",
-      }),
-    );
-
-    expect(input.bootstrap.prepareWorktree).toBeUndefined();
   });
 });
 
@@ -134,6 +121,7 @@ describe("new thread on an existing branch", () => {
         branch: "feature/existing",
         worktreePath,
         startFromOrigin: false,
+        worktreeBranchName: "unused",
       });
 
       expect(input.bootstrap.createThread).toMatchObject({

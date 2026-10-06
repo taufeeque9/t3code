@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildThreadActionMenuItems, type ThreadActionMenuState } from "./threadActionMenu.logic";
+import {
+  buildDraftActionMenuItems,
+  buildThreadActionMenuItems,
+  type ThreadActionMenuState,
+} from "./threadActionMenu.logic";
 
 const baseState: ThreadActionMenuState = {
   branch: null,
@@ -18,7 +22,6 @@ const baseState: ThreadActionMenuState = {
     snooze: true,
     pinning: true,
     titleRegeneration: true,
-    forking: true,
   },
   snoozePresets: [
     { id: "hour", label: "In 1 hour", whenLabel: "3:00 PM", snoozedUntil: "2026-08-07T15:00:00Z" },
@@ -46,7 +49,6 @@ describe("buildThreadActionMenuItems", () => {
           snooze: false,
           pinning: false,
           titleRegeneration: false,
-          forking: false,
         },
       }),
     ).toEqual(["rename", "mark-unread", "copy", "project-settings", "archive", "delete"]);
@@ -97,11 +99,6 @@ describe("buildThreadActionMenuItems", () => {
       expect.arrayContaining(["unpin", "unsettle", "unsnooze"]),
     );
     expect(ids(baseState)).toEqual(expect.arrayContaining(["pin", "settle", "snooze"]));
-  });
-
-  it("places the full-thread fork action immediately below settle", () => {
-    const menuIds = ids(baseState);
-    expect(menuIds.indexOf("fork-thread")).toBe(menuIds.indexOf("settle") + 1);
   });
 
   it("offers auto-settle as a submenu with the current option checked", () => {
@@ -162,7 +159,6 @@ describe("buildThreadActionMenuItems", () => {
           snooze: false,
           pinning: false,
           titleRegeneration: false,
-          forking: false,
         },
       }),
     ).toContain("archive");
@@ -173,5 +169,26 @@ describe("buildThreadActionMenuItems", () => {
       (item) => item.id === "archive",
     );
     expect(archiveItem?.disabled).toBe(true);
+  });
+});
+
+describe("buildDraftActionMenuItems", () => {
+  it("offers only the copy values the draft has", () => {
+    const items = buildDraftActionMenuItems({ hasPath: false, hasBranch: true, hasProject: true });
+    expect(items[0]).toMatchObject({ id: "copy", disabled: false });
+    expect(items[0]?.children?.map((item) => item.id)).toEqual(["copy-branch"]);
+
+    const noCopy = buildDraftActionMenuItems({
+      hasPath: false,
+      hasBranch: false,
+      hasProject: true,
+    });
+    expect(noCopy[0]).toMatchObject({ id: "copy", disabled: true, children: [] });
+  });
+
+  it("drops project settings without a project and keeps discard last", () => {
+    const items = buildDraftActionMenuItems({ hasPath: true, hasBranch: false, hasProject: false });
+    expect(items.map((item) => item.id)).toEqual(["copy", "discard"]);
+    expect(items.at(-1)).toMatchObject({ label: "Discard draft", destructive: true });
   });
 });

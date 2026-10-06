@@ -34,28 +34,16 @@ The reason the fork exists: an independently branded, self-installing build.
 **On conflict:** keep the fork's values. Take upstream's structural changes to
 the build script and re-apply the identity constants on top.
 
-### Native conversation forks
-
-Forking a thread into a new one that resumes the provider session at a chosen
-message. Upstream has no equivalent.
-
-- `apps/server/src/orchestration/threadFork.ts`, the `thread.fork` case in `decider.ts`,
-  `ProviderCommandReactor.ts`
-- `apps/server/src/provider/Services/ProviderService.ts` + `ProviderAdapter.ts`
-  (`prepareSessionFork`), `ClaudeAdapter.ts`, `CodexAdapter.ts`, `CodexSessionRuntime.ts`
-- `packages/contracts`: `ThreadForkInput/Result/Error`, `ProviderSessionForkPoint`,
-  `serverForkThread`, the `threadForking` capability
-- `apps/web`: `hooks/useForkThread.ts`, plus fork entry points in `ChatView.tsx`,
-  `Sidebar.tsx`, `MessagesTimeline.tsx`, `threadActionMenu.logic.ts`
-
 ### Claude account sign-in from the Limits view
 
 Repairs an expired Claude credential without a terminal. Upstream reports the
 broken account but offers no way to fix it.
 
 - `apps/server/src/limits/ProviderLoginService.ts` and its test
-- `apps/server/src/provider/Layers/ClaudeProvider.ts` and its provider-registry test
-- `apps/server/src/provider/Drivers/ClaudeDriver.ts` and its instance-registry test
+- `apps/server/src/provider/ClaudeProvider.ts` and its provider-registry test
+- `apps/server/src/provider/Drivers/ClaudeDriver.ts` and its instance-registry test, whose
+  Claude fixture (`provider/testing/ProviderInstanceRegistryLive.fixture.mjs`) reports
+  signed out when a sibling `claude-account-state` file says so
 - `packages/contracts/src/limits.ts` (sign-in contracts only), the two
   `server.*ProviderLogin` RPCs, their `ws.ts` handlers and auth scopes
 - `apps/web/src/components/usage/ProviderLoginDialog.tsx`,
@@ -94,8 +82,10 @@ session. Each account remains a separate provider instance with its own
   Upstream keys on the home directory instead. The function keeps upstream's
   optional environment argument so an inherited `CLAUDE_CONFIG_DIR` resolves the
   same way; upstream's tests for that key are rewritten to the fork's format.
-- `apps/server/src/provider/Layers/ProviderService.ts` allows switching instances
-  within a provider when continuation identity matches (`reusePersistedState`)
+
+Orchestration V2 already resumes the native thread when the continuation keys
+match (`restart_and_resume` in `ProviderSessionTransitionPolicy.ts`) and hands
+off a summary otherwise, so the key is the fork's only edit.
 
 Upstream now scans every configured Claude, Codex, and Grok instance for usage
 history and collapses aliased homes. That behavior is no longer fork-owned.
@@ -165,27 +155,6 @@ The accent colour already reaches the client on `UsageLimitsReport`; upstream
 only uses it for the avatar. Popover titles and aria-labels keep the full name,
 which is read without the heading for context.
 
-### Composer: end-of-turn queue semantics
-
-Upstream owns the multi-message queue, full draft snapshots (attachments,
-contexts, and the model and modes captured at queue time), inline controls, the
-queue-versus-steer setting, and `QueuedMessageSender`, which sends for threads
-that are not on screen. The fork keeps one behavior refinement: automatic
-delivery waits until the active turn finishes, where upstream also sends at the
-next tool boundary. **Send now** remains the explicit way to steer during a turn.
-
-The rule is the body of `isQueuedMessageDue` in `queuedMessageStore.ts`, which
-keeps upstream's signature so its callers are untouched. Two tests are rewritten
-to match: the mid-turn case in `queuedMessageStore.test.ts` and "holds the next
-message" in `QueuedMessageSender.test.tsx`. `Sidebar.tsx`, `LegacySidebar.tsx`,
-and `Sidebar.logic.ts` keep threads with queued work visible as active.
-
-The fork's own capture of provider settings was retired on 2026-09-27 when
-upstream added `QueuedMessageSendSettings`.
-
-**On conflict:** take upstream's queue and re-apply the one-line rule. Retire it
-when upstream waits for turn completion.
-
 ### Pull request assignees (GitHub)
 
 An **Assignees** row under Reviewers on the pull request summary: who is assigned,
@@ -215,25 +184,44 @@ when it contains a `Stop hook` runtime warning or a `Self-check` reply.
 with a stop-hook self-check fully expanded"). Retire it only once that test passes
 on upstream's code without the fork's check.
 
-## Reassess on the next upstream change
+### Temporary worktree branches use the branch-name prefix
 
-### Configurable worktree branch prefix
+Upstream names worktree branches `t3/<hex>` and only applies the
+`branchNamePrefix` setting when the background rename lands, so a failed
+rename leaves a `t3/` branch. The fork names temporary branches under the same
+prefix (`tf-c/<hex>`), still recognising upstream's `t3` and legacy shapes.
 
-Upstream hardcodes the `t3code` prefix; the fork makes it a server setting. Worth
-keeping only while the setting is actually used.
+- `packages/shared/src/git.ts`: optional `branchNamePrefix` on
+  `buildTemporaryWorktreeBranchName`, `flattenTemporaryWorktreeBranchName`, and
+  `isTemporaryWorktreeBranch`, plus `temporaryWorktreeBranchPrefix`
+- `apps/server/src/orchestration-v2/ThreadLaunchService.ts` passes the project's
+  `branchNamePrefix`
+- `docs/user/project-settings.md`: one sentence under "Worktree branch names"
 
-- `packages/contracts/src/settings.ts` (`WorktreeBranchPrefix`,
-  `DEFAULT_WORKTREE_BRANCH_PREFIX`), `packages/shared/src/git.ts`
-- `apps/web`: `SettingsPanels.tsx`, `GitActionsControl`, `ChatView.tsx`
-- `apps/mobile`: `projectThreadStartTurn.ts`, `use-thread-outbox-drain.ts`.
-  Upstream moved thread creation onto the outbox (#10435) and deleted
-  `use-project-actions.ts`, so the setting now reaches the server through the
-  drain alone and `NewTaskDraftScreen.tsx` is upstream's again.
-- `apps/server`: `CheckpointReactor.ts`, `ProviderCommandReactor.ts`
+Mobile still sends `t3/<hex>` names, which the server recognises and renames.
 
-This one touches the most files of any fork feature and conflicts on most merges.
+**On conflict:** re-apply the optional parameter. Retire it once upstream
+names temporary branches from its prefix setting.
 
 ## Retired: superseded by upstream
+
+### Native conversation forks, end-of-turn queue, worktree prefix setting
+
+Retired on 2026-10-06 when upstream replaced its orchestrator with V2 (#2829),
+deleting the V1 code all three were built on.
+
+- Forks: V2's `thread.fork` forks from any completed assistant response, natively
+  on Claude, Codex, OpenCode, and Pi, and through a summary handoff elsewhere. The
+  fork's sidebar "Fork thread" entry and forking a running thread went with it.
+- Queue: V2 queues follow-ups on the server and starts the next one only when
+  the active run ends, which is the rule the fork carried.
+- The `worktreeBranchPrefix` setting gave way to upstream's `branchNamePrefix`;
+  only the temporary-branch patch above survives.
+
+Upstream's V2 migrations run as 56–59 here, one ID later, following the shift
+described under the sidebar search below. `reconcileV2PreviewMigration` only
+matches an `OrchestrationV2` row at 53 or 54, which no fork database has, so the
+fork deletes its test, whose fixtures assume upstream's IDs.
 
 ### Fuzzy sidebar search over thread contents
 
