@@ -240,6 +240,10 @@ describe("isTemporaryWorktreeBranch", () => {
     const flat = flattenTemporaryWorktreeBranchName(branch, "tf-c");
     expect(flat).toBe("tf-c-deadbeef");
     expect(isTemporaryWorktreeBranch(flat, "tf-c")).toBe(true);
+    expect(flattenTemporaryWorktreeBranchName(flat, "tf-c")).toBe(flat);
+    expect(flattenTemporaryWorktreeBranchName("team/tf/deadbeef", "team/tf")).toBe(
+      "team/tf-deadbeef",
+    );
     expect(buildTemporaryWorktreeBranchName(() => "deadbeef", " / ")).toBe(
       `${WORKTREE_BRANCH_PREFIX}/deadbeef`,
     );

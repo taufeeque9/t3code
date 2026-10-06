@@ -434,7 +434,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
-  it.live("manual Claude refresh invalidates cached capabilities after login", () =>
+  it.live("reports a signed-out Claude account until it signs in", () =>
     Effect.gen(function* () {
       if (yield* isHostWindows) return;
 
@@ -464,6 +464,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       expect(signedOut.auth.status).toBe("unauthenticated");
 
       yield* fileSystem.writeFileString(fixtures.claudeAccountPath, "authenticated");
+      yield* claude!.invalidateCaches ?? Effect.void;
       const signedIn = yield* claude!.snapshot.refresh;
       expect(signedIn.auth.status).toBe("authenticated");
       expect(signedIn.usageLimits?.windows).toHaveLength(1);

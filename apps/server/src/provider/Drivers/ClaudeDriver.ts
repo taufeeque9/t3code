@@ -238,9 +238,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       );
 
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
-      const managedSnapshot = yield* makeManagedServerProvider<
-        ProviderSnapshotSettings<ClaudeSettings>
-      >({
+      const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<ClaudeSettings>>({
         resolveMaintenance,
         getSettings: snapshotSettings.getSettings,
         streamSettings: snapshotSettings.streamSettings,
@@ -274,14 +272,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
             }),
         ),
       );
-      // Manual refreshes may follow login, so bypass the TTL cache. Background
-      // health checks still share cached capabilities to avoid unnecessary CLI work.
-      const snapshot = {
-        ...managedSnapshot,
-        refresh: Cache.invalidateAll(capabilitiesProbeCache).pipe(
-          Effect.andThen(managedSnapshot.refresh),
-        ),
-      } satisfies typeof managedSnapshot;
 
       // Same rules as Codex: serialised on the config directory that holds the
       // login, one request id kept until Claude answers (a cooldown or rate

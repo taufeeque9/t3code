@@ -43,9 +43,9 @@ broken account but offers no way to fix it.
 
 - `apps/server/src/limits/ProviderLoginService.ts` and its test
 - `apps/server/src/provider/ClaudeProvider.ts` and its provider-registry test
-- `apps/server/src/provider/Drivers/ClaudeDriver.ts` and its instance-registry test, whose
-  Claude fixture (`provider/testing/ProviderInstanceRegistryLive.fixture.mjs`) reports
-  signed out when a sibling `claude-account-state` file says so
+- the instance-registry test, whose Claude fixture
+  (`provider/testing/ProviderInstanceRegistryLive.fixture.mjs`) reports signed out
+  when a sibling `claude-account-state` file says so
 - `packages/contracts/src/limits.ts` (sign-in contracts only), the two
   `server.*ProviderLogin` RPCs, their `ws.ts` handlers and auth scopes
 - `apps/web/src/components/usage/ProviderLoginDialog.tsx`,
@@ -59,15 +59,15 @@ identity, and drops an account whose probe reported nothing at all — which is
 exactly what an unusable credential looks like. The fork collects those accounts
 separately rather than widening that function, so upstream's notices and their
 tests stay untouched. It also treats an SDK initialization with no account
-identity as signed out; otherwise Claude reports the expired login as a working
+identity (no email, plan, API key, non-first-party backend, or token source other
+than `none`) as signed out; otherwise Claude reports the expired login as a working
 account with unsupported limits and the repair action disappears after refresh.
-Explicit provider refreshes invalidate Claude's short-lived capability cache so
-the refresh following a successful sign-in observes the new credential immediately.
+After a sign-in the client refreshes that instance with `refreshModels`, which is
+upstream's way to drop its cached capabilities.
 
-**On conflict:** the collection is fork-owned, while the render line and the two
-server status/cache patches sit in upstream-owned files. Re-apply the smallest
-patches until upstream both recognizes expired Claude authentication and refreshes
-capabilities immediately after sign-in. Retire the whole thing once upstream
+**On conflict:** the collection is fork-owned, while the render line and the
+signed-out check sit in upstream-owned files. Re-apply the smallest patches until
+upstream recognizes expired Claude authentication. Retire the whole thing once upstream
 offers an equivalent Claude sign-in flow. Upstream's generic `ProviderAuthFlow`
 helper (browser and device-code interactions, credential bindings) has no
 production caller yet, and only Antigravity exposes an auth controller. A Claude

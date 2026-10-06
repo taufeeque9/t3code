@@ -70,7 +70,7 @@ function sanitizeBranchPrefix(prefix: string): string {
 }
 
 /** The configured branch-name prefix as a temporary worktree namespace, `t3` when unset. */
-export function temporaryWorktreeBranchPrefix(branchNamePrefix: string | undefined): string {
+function temporaryWorktreeBranchPrefix(branchNamePrefix: string | undefined): string {
   return sanitizeBranchPrefix(branchNamePrefix ?? "").toLowerCase() || WORKTREE_BRANCH_PREFIX;
 }
 
@@ -148,10 +148,9 @@ export function flattenTemporaryWorktreeBranchName(
 ): string {
   // Keep only the canonical 8-hex token so legacy `t3code/` and UUID names map cleanly.
   const normalized = refName.trim().toLowerCase();
-  const tokenStart = normalized.includes("/")
-    ? normalized.lastIndexOf("/") + 1
-    : normalized.search(/[-/]/) + 1;
-  const token = normalized.slice(tokenStart, tokenStart + 8);
+  const token = normalized.includes("/")
+    ? normalized.slice(normalized.lastIndexOf("/") + 1).slice(0, 8)
+    : normalized.slice(-8);
   return `${temporaryWorktreeBranchPrefix(branchNamePrefix)}-${token}`;
 }
 

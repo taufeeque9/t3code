@@ -32,7 +32,6 @@ import {
   buildTemporaryWorktreeBranchName,
   flattenTemporaryWorktreeBranchName,
   isTemporaryWorktreeBranch,
-  temporaryWorktreeBranchPrefix,
 } from "@t3tools/shared/git";
 
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
@@ -372,13 +371,17 @@ const make = Effect.gen(function* () {
           }
         }
         if (startFromOrigin) yield* setupTracker.stageStatus(threadId, "fetch", "done");
+        const temporaryNamespace = branch?.includes("/")
+          ? branch.slice(0, branch.lastIndexOf("/"))
+          : null;
         if (
           branch !== null &&
+          temporaryNamespace !== null &&
           isTemporaryWorktreeBranch(branch, branchNamePrefix) &&
           (yield* git
             .hasCommit({
               cwd: project.workspaceRoot,
-              refName: `refs/heads/${temporaryWorktreeBranchPrefix(branchNamePrefix)}`,
+              refName: `refs/heads/${temporaryNamespace}`,
             })
             .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId))))
         ) {

@@ -179,7 +179,7 @@ function hasClaudeAccount(capabilities: ClaudeCapabilitiesProbe): boolean {
   return Boolean(
     capabilities.email?.trim() ||
     capabilities.subscriptionType?.trim() ||
-    normalizeClaudeAuthMethod(capabilities.tokenSource) ||
+    (capabilities.tokenSource !== undefined && capabilities.tokenSource !== "none") ||
     hasClaudeApiKeySource(capabilities.apiKeySource) ||
     (capabilities.apiProvider && capabilities.apiProvider !== "firstParty"),
   );

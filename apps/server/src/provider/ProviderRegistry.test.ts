@@ -3004,6 +3004,30 @@ it.layer(
       ),
     );
 
+    it.effect("treats a token-only Claude login as signed in and an empty one as signed out", () =>
+      Effect.gen(function* () {
+        const tokenOnly = yield* checkClaudeProviderStatus(
+          defaultClaudeSettings,
+          claudeCapabilities({ tokenSource: "CLAUDE_CODE_OAUTH_TOKEN", apiProvider: "firstParty" }),
+        );
+        assert.strictEqual(tokenOnly.status, "ready");
+
+        const signedOut = yield* checkClaudeProviderStatus(
+          defaultClaudeSettings,
+          claudeCapabilities({ tokenSource: "none", apiProvider: "firstParty" }),
+        );
+        assert.strictEqual(signedOut.status, "error");
+        assert.strictEqual(signedOut.auth.status, "unauthenticated");
+      }).pipe(
+        Effect.provide(
+          layerMockSpawner((args) => {
+            if (args.join(" ") === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            throw new Error(`Unexpected args: ${args.join(" ")}`);
+          }),
+        ),
+      ),
+    );
+
     it.effect("returns ready and labels Bedrock-backed Claude as authenticated", () =>
       Effect.gen(function* () {
         // Bedrock authenticates via external AWS credentials, so the SDK init

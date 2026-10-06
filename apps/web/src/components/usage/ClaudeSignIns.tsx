@@ -1,5 +1,3 @@
-import type { EnvironmentId } from "@t3tools/contracts";
-
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
@@ -54,8 +52,12 @@ export function ClaudeSignIns({
           if (!open) setTarget(null);
         }}
         onSignedIn={() => {
-          const environmentId: EnvironmentId | undefined = target?.environmentId;
-          if (environmentId) void refreshProviders({ environmentId, input: {} });
+          if (!target) return;
+          // refreshModels drops the instance's cached capabilities, which still hold the old login.
+          void refreshProviders({
+            environmentId: target.environmentId,
+            input: { instanceId: target.instanceId, refreshModels: true },
+          });
         }}
       />
     </div>
