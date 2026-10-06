@@ -1,5 +1,6 @@
 import { ComputerUseAppIcon } from "~/components/Icons";
 import { useChatCanvas } from "./ChatCanvasContext";
+import type { UserMessageForkSources } from "./userMessageFork";
 import { WorkLogBlock, WorkLogButton, WorkLogDetails, WorkLogList, WorkLogRow } from "./WorkLog";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import type { WorktreeSetupSnapshot } from "@t3tools/contracts";
@@ -55,6 +56,7 @@ import {
   summarizeSubagentStatuses,
 } from "@t3tools/client-runtime/state/subagent-display";
 
+const EMPTY_USER_MESSAGE_FORK_SOURCES: UserMessageForkSources = new Map();
 const NOOP_USE_ARTIFACT_TEMPLATE = () => {};
 const NOOP_OPEN_ATTACHMENT = (_attachment: ChatFileAttachment) => {};
 
@@ -320,7 +322,9 @@ interface TimelineRowSharedState {
   onForkFromRun: (input: {
     readonly sourceThreadId: ThreadId;
     readonly runId: RunId;
+    readonly prompt?: string;
   }) => Promise<void>;
+  userMessageForkSources: UserMessageForkSources;
   onRollbackCheckpoint: (input: {
     readonly checkpointId: string;
     readonly scopeId: string;
@@ -451,7 +455,9 @@ interface MessagesTimelineProps {
   onForkFromRun: (input: {
     readonly sourceThreadId: ThreadId;
     readonly runId: RunId;
+    readonly prompt?: string;
   }) => Promise<void>;
+  userMessageForkSources?: UserMessageForkSources;
   onRollbackCheckpoint: (input: {
     readonly checkpointId: string;
     readonly scopeId: string;
@@ -530,6 +536,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onOpenThread,
   parentThreadLink = null,
   onForkFromRun,
+  userMessageForkSources = EMPTY_USER_MESSAGE_FORK_SOURCES,
   onRollbackCheckpoint,
   supportsConversationRollback,
   onRevertToTurnCount,
@@ -1174,6 +1181,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onOpenTurnDiff,
       onOpenThread,
       onForkFromRun,
+      userMessageForkSources,
       onRollbackCheckpoint,
       onToggleTurnFold,
       onToggleAttemptFold,
@@ -1209,6 +1217,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onOpenTurnDiff,
       onOpenThread,
       onForkFromRun,
+      userMessageForkSources,
       onRollbackCheckpoint,
       onToggleTurnFold,
       onToggleAttemptFold,
@@ -2285,6 +2294,13 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             {typeof revertTurnCount === "number" && (
               <RevertUserMessageButton turnCount={revertTurnCount} messageId={row.message.id} />
             )}
+            <ForkUserMessageButton
+              messageId={row.message.id}
+              prompt={replaceComposerContextReferences(
+                resolvedContext.text,
+                (reference) => reference.label,
+              )}
+            />
             {resolvedContext.text && (
               <MessageCopyButton
                 // Structured paste needs the canonical links to retain their positions.
@@ -2375,6 +2391,37 @@ export function resolvePreviewAnnotationImage(input: {
     ) ??
     input.previewImages[input.annotationRecordIds.indexOf(input.record.contextId)] ??
     null
+  );
+}
+
+/** Forks before this message and leaves its text in the new thread's composer. */
+function ForkUserMessageButton({ messageId, prompt }: { messageId: MessageId; prompt: string }) {
+  const ctx = use(TimelineRowCtx);
+  const [busy, setBusy] = useState(false);
+  const source = ctx.userMessageForkSources.get(messageId);
+  if (!source) return null;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost"
+            disabled={busy}
+            onClick={() => {
+              setBusy(true);
+              void ctx.onForkFromRun({ ...source, prompt }).finally(() => setBusy(false));
+            }}
+            aria-label="Fork from here"
+          />
+        }
+      >
+        <GitForkIcon className={cn("size-3", busy && "animate-pulse")} />
+      </TooltipTrigger>
+      <TooltipPopup>Fork from here</TooltipPopup>
+    </Tooltip>
   );
 }
 

@@ -1,5 +1,6 @@
 import { ChatCanvas } from "./chat/ChatCanvas";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
+import { resolveUserMessageForkSources } from "./chat/userMessageFork";
 import {
   resolveBackgroundDraftWorkspaceOptions,
   resolveDraftHeroState,
@@ -8419,8 +8420,16 @@ export default function ChatView(props: ChatViewProps) {
     ],
   );
 
+  const userMessageForkSources = useMemo(
+    () => resolveUserMessageForkSources(serverProjection?.runs ?? []),
+    [serverProjection?.runs],
+  );
   const onForkFromRun = useCallback(
-    async (input: { readonly sourceThreadId: ThreadId; readonly runId: RunId }) => {
+    async (input: {
+      readonly sourceThreadId: ThreadId;
+      readonly runId: RunId;
+      readonly prompt?: string;
+    }) => {
       if (!activeThread || activeEnvironmentUnavailable) return;
       const targetThreadId = newThreadId();
       const targetThreadRef = scopeThreadRef(environmentId, targetThreadId);
@@ -8443,6 +8452,7 @@ export default function ChatView(props: ChatViewProps) {
         }
         return;
       }
+      if (input.prompt) setComposerDraftPrompt(targetThreadRef, input.prompt);
       const targetThreadReady = await waitForThreadShell(targetThreadRef);
       if (!targetThreadReady) {
         setThreadError(
@@ -8462,6 +8472,7 @@ export default function ChatView(props: ChatViewProps) {
       environmentId,
       forkThreadFromRun,
       navigate,
+      setComposerDraftPrompt,
       setThreadError,
     ],
   );
@@ -11183,6 +11194,7 @@ export default function ChatView(props: ChatViewProps) {
                 onOpenThread={onOpenRelatedThread}
                 parentThreadLink={paintOnlyDisplayedTimeline ? null : parentThreadLink}
                 onForkFromRun={paintOnlyDisplayedTimeline ? async () => {} : onForkFromRun}
+                {...(!paintOnlyDisplayedTimeline ? { userMessageForkSources } : {})}
                 onRollbackCheckpoint={(input) => {
                   if (!paintOnlyDisplayedTimeline) void onRollbackCheckpoint(input);
                 }}

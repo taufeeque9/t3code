@@ -184,6 +184,25 @@ when it contains a `Stop hook` runtime warning or a `Self-check` reply.
 with a stop-hook self-check fully expanded"). Retire it only once that test passes
 on upstream's code without the fork's check.
 
+### Chat: fork from a user message
+
+Upstream forks only after an assistant response. A **Fork from here** button on
+a user message forks after the run before it and leaves the message's text in
+the new thread's composer, to resend or edit it. It rides upstream's
+`thread.fork`; nothing server-side is fork-owned.
+
+- `apps/web/src/components/chat/userMessageFork.ts` and its test map each run's
+  starting message to the forkable run before it
+- `MessagesTimeline.tsx`: `ForkUserMessageButton`, the `userMessageForkSources`
+  prop, and an optional `prompt` on upstream's `onForkFromRun`
+- `ChatView.tsx`: computes the sources from the projection's runs and sets the
+  forked thread's draft before navigating
+
+A thread's first message has no run before it, so it gets no button.
+
+**On conflict:** keep the button beside upstream's fork-from-response. Retire it
+if upstream adds forking before a user message.
+
 ### Temporary worktree branches use the branch-name prefix
 
 Upstream names worktree branches `t3/<hex>` and only applies the
@@ -212,7 +231,8 @@ deleting the V1 code all three were built on.
 
 - Forks: V2's `thread.fork` forks from any completed assistant response, natively
   on Claude, Codex, OpenCode, and Pi, and through a summary handoff elsewhere. The
-  fork's sidebar "Fork thread" entry and forking a running thread went with it.
+  fork's sidebar "Fork thread" entry and forking a running thread went with it;
+  forking from a user message was re-ported on V2 (above).
 - Queue: V2 queues follow-ups on the server and starts the next one only when
   the active run ends, which is the rule the fork carried.
 - The `worktreeBranchPrefix` setting gave way to upstream's `branchNamePrefix`;
