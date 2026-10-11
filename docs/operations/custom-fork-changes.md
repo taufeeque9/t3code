@@ -89,7 +89,7 @@ on that infrastructure would replace `ProviderLoginService`.
 
 Switch between Claude accounts in the same thread while preserving the provider
 session. Each account remains a separate provider instance with its own
-`CLAUDE_CONFIG_DIR`, while compatible accounts can share one transcript tree.
+`CLAUDE_CONFIG_DIR`. Accounts can share a transcript tree or keep separate ones.
 
 - `apps/server/src/provider/Drivers/ClaudeHome.ts` keys session continuation on the
   resolved `projects` path, so accounts sharing a transcript tree share continuation.
@@ -97,13 +97,26 @@ session. Each account remains a separate provider instance with its own
   optional environment argument so an inherited `CLAUDE_CONFIG_DIR` resolves the
   same way; upstream's tests for that key are rewritten to the fork's format.
 
-Orchestration V2 already resumes the native thread when the continuation keys
-match (`restart_and_resume` in `ProviderSessionTransitionPolicy.ts`) and hands
-off a summary otherwise, so the key is the fork's only edit.
-Separate account config directories must share the same resolved `projects`
-directory, typically through symlinks. Merely using Claude for both accounts
-does not make their histories compatible. Native resume failure still falls
-back to a portable handoff.
+- `ProviderSessionTransitionPolicy.ts` also permits native continuation between
+  Claude accounts with different `claude:projects:` keys.
+- `provider/Drivers/ClaudeSessionHistory.ts` copies the complete native session
+  transcript and its auxiliary directory into the destination account's projects
+  tree. `ProviderTurnStartService.ts` transfers from the last account that
+  actually ran that native conversation, then resumes the same native ID.
+  Transfers preserve unrelated sessions and atomically publish the transcript.
+  A missing or unreadable source fails the switch instead of sending a portable
+  handoff. Switching back copies the updated native history back in full.
+- `Orchestrator.ts` classifies queued account switches against the native
+  thread's owner even after the composer selection changes.
+
+Sharing a transcript tree through symlinks avoids copying. Distinct directories
+are supported without changing their links or account credentials. Claude ↔
+Codex switches still use upstream's portable handoff.
+
+**On conflict:** preserve full native continuation across Claude account config
+directories. Retire the transfer only when upstream supports equivalent history
+preservation; provider-name equality alone is insufficient without making the
+native transcript available to the destination account.
 
 Upstream now scans every configured Claude, Codex, and Grok instance for usage
 history and collapses aliased homes. That behavior is no longer fork-owned.

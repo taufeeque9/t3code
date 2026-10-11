@@ -17,6 +17,7 @@ import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
@@ -25,6 +26,8 @@ import * as Schema from "effect/Schema";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
+import { transferClaudeSessionHistory } from "../provider/Drivers/ClaudeSessionHistory.ts";
+import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import {
@@ -90,9 +93,11 @@ export const layer: Layer.Layer<
   | ContextHandoffService.ContextHandoffServiceV2
   | IdAllocator.IdAllocatorV2
   | FileSystem.FileSystem
+  | Path.Path
   | GitWorkflowService.GitWorkflowService
   | ProjectService.ProjectService
   | ProviderAuthService.ProviderAuthService
+  | ProviderAdapterRegistry.ProviderAdapterRegistryV2
   | ProjectionStore.ProjectionStoreV2
   | ProviderSessionManager.ProviderSessionManagerV2
   | RunExecutionService.RunExecutionServiceV2
@@ -104,9 +109,11 @@ export const layer: Layer.Layer<
     const contextHandoffService = yield* ContextHandoffService.ContextHandoffServiceV2;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
     const projects = yield* ProjectService.ProjectService;
     const providerAuth = yield* ProviderAuthService.ProviderAuthService;
+    const adapters = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
@@ -665,6 +672,79 @@ export const layer: Layer.Layer<
             handoff.delivery?.nativeThreadId === providerThread.nativeThreadRef?.nativeId &&
             handoff.delivery?.status === "pending",
         );
+        const nativeSessionId = providerThread.nativeThreadRef.nativeId;
+        const previousNativeRun =
+          session.driver !== "claudeAgent"
+            ? undefined
+            : projection.runs.findLast(
+                (previous) =>
+                  previous.ordinal < run.ordinal &&
+                  projection.providerThreads.some(
+                    (thread) =>
+                      thread.id === previous.providerThreadId &&
+                      thread.nativeThreadRef?.nativeId === nativeSessionId,
+                  ) &&
+                  (previous.status === "completed" ||
+                    previous.status === "failed" ||
+                    previous.status === "interrupted") &&
+                  projection.providerTurns.some(
+                    (turn) => turn.runAttemptId === previous.activeAttemptId,
+                  ),
+              );
+        const claudeAccountSwitch =
+          session.driver === "claudeAgent" &&
+          previousNativeRun !== undefined &&
+          previousNativeRun.providerInstanceId !== run.providerInstanceId;
+        if (claudeAccountSwitch) {
+          const preparedProviderThread = yield* loadFromProvider(
+            Effect.gen(function* () {
+              if (adapters.getMetadata === undefined) {
+                return yield* new ProviderTurnStartError({
+                  runId,
+                  cause: "Claude account history metadata is unavailable.",
+                });
+              }
+              if (nativeSessionId === null) {
+                return yield* new ProviderTurnStartError({
+                  runId,
+                  cause: "Claude account continuation has no native session ID.",
+                });
+              }
+              const source = yield* adapters.getMetadata(previousNativeRun.providerInstanceId);
+              const target = yield* adapters.getMetadata(run.providerInstanceId);
+              const prefix = "claude:projects:";
+              if (
+                source.driver !== "claudeAgent" ||
+                !source.continuationKey.startsWith(prefix) ||
+                !target.continuationKey.startsWith(prefix)
+              ) {
+                return yield* new ProviderTurnStartError({
+                  runId,
+                  cause: "Claude account continuation has an unsupported history identity.",
+                });
+              }
+              yield* transferClaudeSessionHistory({
+                sourceProjectsPath: source.continuationKey.slice(prefix.length),
+                targetProjectsPath: target.continuationKey.slice(prefix.length),
+                nativeSessionId,
+              });
+              return providerThread;
+            }).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapter.ProviderAdapterResumeThreadError({
+                    driver: session.driver,
+                    providerSessionId,
+                    providerThreadId: providerThread.id,
+                    cause,
+                  }),
+              ),
+            ),
+          );
+          if (preparedProviderThread === undefined) return undefined;
+        }
         const resumed = yield* Effect.result(
           uncertainDelivery
             ? Effect.fail(
@@ -685,6 +765,9 @@ export const layer: Layer.Layer<
         );
         if (resumed._tag === "Success") {
           return resumed.success;
+        }
+        if (claudeAccountSwitch) {
+          return yield* loadFromProvider(Effect.fail(resumed.failure));
         }
 
         yield* Effect.logWarning("Provider resume failed; attempting a fresh native session", {

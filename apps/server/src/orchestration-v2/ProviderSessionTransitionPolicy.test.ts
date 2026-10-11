@@ -16,6 +16,37 @@ const base = {
   capabilities: CodexProviderCapabilitiesV2,
 };
 
+it("resumes Claude accounts with separate native transcript stores", () => {
+  const claude = ProviderDriverKind.make("claudeAgent");
+  const current = {
+    ...base,
+    driver: claude,
+    continuationIdentity: {
+      driverKind: claude,
+      continuationKey: "claude:projects:/accounts/sokobans/projects",
+    },
+    modelSelection: { instanceId: ProviderInstanceId.make("claude-sokobans"), model: "opus" },
+  };
+  assert.deepEqual(
+    decideProviderSessionTransition({
+      current,
+      target: {
+        ...current,
+        continuationIdentity: {
+          driverKind: claude,
+          continuationKey: "claude:projects:/accounts/proton/projects",
+        },
+        modelSelection: {
+          ...current.modelSelection,
+          instanceId: ProviderInstanceId.make("claude-max"),
+        },
+        available: true,
+      },
+    }),
+    { type: "restart_and_resume" },
+  );
+});
+
 it("reuses compatible sessions and treats interaction mode as turn-scoped", () => {
   assert.deepEqual(
     decideProviderSessionTransition({

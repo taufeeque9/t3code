@@ -45,9 +45,15 @@ export function decideProviderSessionTransition(input: {
 
   const current = input.current;
   const target = input.target;
+  const transferableClaudeHistory =
+    current.driver === "claudeAgent" &&
+    target.driver === "claudeAgent" &&
+    current.continuationIdentity.continuationKey.startsWith("claude:projects:") &&
+    target.continuationIdentity.continuationKey.startsWith("claude:projects:");
   const continuationCompatible =
     current.continuationIdentity.driverKind === target.continuationIdentity.driverKind &&
-    current.continuationIdentity.continuationKey === target.continuationIdentity.continuationKey;
+    (current.continuationIdentity.continuationKey === target.continuationIdentity.continuationKey ||
+      transferableClaudeHistory);
   if (!continuationCompatible || current.driver !== target.driver) {
     return { type: "create_with_handoff" };
   }

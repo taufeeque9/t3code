@@ -1385,13 +1385,27 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
       const commandId = CommandId.make(`command:system:start-queued:${queuedRun.id}`);
       const now = yield* DateTime.now;
+      const activeProviderThread = projection.providerThreads.find(
+        (candidate) => candidate.id === projection.thread.activeProviderThreadId,
+      );
+      const currentModelSelection = {
+        ...projection.thread.modelSelection,
+        instanceId:
+          activeProviderThread?.providerInstanceId ?? projection.thread.modelSelection.instanceId,
+      };
       const selectionChanged = !modelSelectionsEqual(
-        projection.thread.modelSelection,
+        currentModelSelection,
         queuedRun.modelSelection,
       );
       const switchPlan = selectionChanged
         ? yield* providerSwitchService
-            .plan({ projection, targetModelSelection: queuedRun.modelSelection })
+            .plan({
+              projection: {
+                ...projection,
+                thread: { ...projection.thread, modelSelection: currentModelSelection },
+              },
+              targetModelSelection: queuedRun.modelSelection,
+            })
             .pipe(
               Effect.mapError(
                 (cause) =>
@@ -1403,9 +1417,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               ),
             )
         : null;
-      const activeProviderThread = projection.providerThreads.find(
-        (candidate) => candidate.id === projection.thread.activeProviderThreadId,
-      );
       const canResumeAcrossInstances =
         switchPlan?.instanceChanged === true &&
         switchPlan.transition.type === "restart_and_resume" &&

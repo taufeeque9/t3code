@@ -1,3 +1,4 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { vi } from "vite-plus/test";
 import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
 import { assert, describe, it } from "@effect/vitest";
@@ -25,6 +26,8 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
@@ -105,6 +108,7 @@ function makeTestAdapter(input: {
   readonly refuseStarts?: Ref.Ref<number>;
   readonly failInjectionOnce?: Ref.Ref<boolean>;
   readonly nativeThreadGeneration?: Ref.Ref<number>;
+  readonly nativeThreadId?: string;
   readonly failResume?: boolean;
   readonly failResumeOnce?: Ref.Ref<boolean>;
   readonly initialContextUsage?: OrchestrationV2ProviderThread["contextUsage"];
@@ -160,7 +164,8 @@ function makeTestAdapter(input: {
                 input.nativeThreadGeneration === undefined
                   ? ""
                   : `:${yield* Ref.getAndUpdate(input.nativeThreadGeneration, (value) => value + 1)}`;
-              const nativeThreadId = `${input.driver}:${threadInput.threadId}${generation}`;
+              const nativeThreadId =
+                input.nativeThreadId ?? `${input.driver}:${threadInput.threadId}${generation}`;
               return {
                 id: ProviderThreadId.make(`provider-thread:${nativeThreadId}`),
                 driver: input.driver,
@@ -1814,6 +1819,240 @@ describe("orchestration v2 provider switching", () => {
         );
       }),
     ),
+  );
+
+  it.live.each(["complete", "queued-after-selection", "missing-source"] as const)(
+    "preserves complete native Claude history across separate accounts: %s",
+    (scenario) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const cwd = yield* checkpointWorkspace(`claude-account-switch-${scenario}`);
+          const sourceProjects = path.join(cwd, "source-projects");
+          const targetProjects = path.join(cwd, "target-projects");
+          const accountThreadId = ThreadId.make(`thread:claude-account-switch:${scenario}`);
+          const nativeId = "a1b2c3-native-claude-session";
+          const sourceProject = path.join(sourceProjects, "-native-project");
+          const targetProject = path.join(targetProjects, "-native-project");
+          const sourceSession = path.join(sourceProject, `${nativeId}.jsonl`);
+          const targetSession = path.join(targetProject, `${nativeId}.jsonl`);
+          const sourceAuxiliary = path.join(sourceProject, nativeId, "subagents", "agent.jsonl");
+          const targetAuxiliary = path.join(targetProject, nativeId, "subagents", "agent.jsonl");
+          const originalHistory = Array.from({ length: 100 }, (_, index) =>
+            JSON.stringify({
+              type: "assistant",
+              message: { content: `Full native history ${index}` },
+            }),
+          ).join("\n");
+          const continuedHistory = `${originalHistory}\n${JSON.stringify({
+            type: "assistant",
+            message: { content: "Work completed on the destination account" },
+          })}`;
+          yield* fs.makeDirectory(path.dirname(sourceAuxiliary), { recursive: true });
+          yield* fs.makeDirectory(targetProjects, { recursive: true });
+          if (scenario !== "missing-source") {
+            yield* fs.writeFileString(sourceSession, originalHistory);
+            yield* fs.writeFileString(sourceAuxiliary, "Full native subagent history");
+          }
+          const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+          const generation = yield* Ref.make(0);
+          const started = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          const alternateSelection: ModelSelection = {
+            ...CLAUDE_MODEL_SELECTION,
+            instanceId: ProviderInstanceId.make("claude-alternate"),
+          };
+          const adapters = [CLAUDE_MODEL_SELECTION, alternateSelection].map((selection) =>
+            makeTestAdapter({
+              instanceId: selection.instanceId,
+              driver: CLAUDE_DRIVER,
+              capabilities: ClaudeProviderCapabilitiesV2,
+              modelSelection: selection,
+              responseByRunOrdinal: {},
+              capturedTurns,
+              nativeThreadId: nativeId,
+              nativeThreadGeneration: generation,
+              ...(scenario === "queued-after-selection" &&
+              selection.instanceId === CLAUDE_MODEL_SELECTION.instanceId
+                ? { holdFirstTurn: started, releaseFirstTurn: release }
+                : {}),
+            }),
+          );
+          const layerRegistry = Layer.succeed(
+            ProviderAdapterRegistry.ProviderAdapterRegistryV2,
+            ProviderAdapterRegistry.ProviderAdapterRegistryV2.of({
+              get: (instanceId) => {
+                const adapter = adapters.find((candidate) => candidate.instanceId === instanceId);
+                return adapter === undefined
+                  ? Effect.fail(
+                      new ProviderAdapterRegistry.ProviderAdapterRegistryLookupError({
+                        instanceId,
+                      }),
+                    )
+                  : Effect.succeed(adapter);
+              },
+              list: () => Effect.succeed(adapters.map((adapter) => adapter.instanceId)),
+              getMetadata: (instanceId) =>
+                Effect.succeed({
+                  driver: CLAUDE_DRIVER,
+                  continuationKey: `claude:projects:${
+                    instanceId === alternateSelection.instanceId ? targetProjects : sourceProjects
+                  }`,
+                  enabled: true,
+                  capabilities: ClaudeProviderCapabilitiesV2,
+                }),
+            }),
+          );
+          yield* Effect.gen(function* () {
+            const orchestrator = yield* Orchestrator.OrchestratorV2;
+            const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+            const dispatch = Effect.fn("claudeAccountSwitchDispatch")(function* (
+              ordinal: number,
+              selection: ModelSelection,
+            ) {
+              if (scenario === "queued-after-selection" && ordinal === 2) {
+                yield* orchestrator.dispatch({
+                  type: "thread.model-selection.set",
+                  commandId: CommandId.make(`claude-account-switch:${scenario}:selection`),
+                  threadId: accountThreadId,
+                  modelSelection: selection,
+                });
+              }
+              yield* orchestrator.dispatch({
+                type: "message.dispatch",
+                commandId: CommandId.make(`claude-account-switch:${scenario}:${ordinal}`),
+                threadId: accountThreadId,
+                messageId: MessageId.make(`claude-account-switch:${scenario}:${ordinal}`),
+                createdBy: "user",
+                creationSource: "web",
+                text: `Native account request ${ordinal}`,
+                attachments: [],
+                modelSelection: selection,
+                dispatchMode: {
+                  type:
+                    scenario === "queued-after-selection" && ordinal === 2
+                      ? "queue_after_active"
+                      : "start_immediately",
+                },
+              });
+              if (scenario === "queued-after-selection" && ordinal === 1) {
+                yield* Deferred.await(started);
+                return;
+              }
+              if (scenario === "queued-after-selection" && ordinal === 2) {
+                const queued = yield* orchestrator.getThreadProjection(accountThreadId);
+                assert.deepEqual(
+                  queued.runs.map((run) => run.status),
+                  ["running", "queued"],
+                );
+                assert.lengthOf(queued.contextHandoffs, 0);
+                yield* Deferred.succeed(release, undefined);
+              }
+              yield* orchestrator.streamStoredEvents.pipe(
+                Stream.filter(
+                  ({ event }) =>
+                    event.type === "run.updated" &&
+                    event.payload.ordinal === ordinal &&
+                    (event.payload.status === "completed" || event.payload.status === "failed"),
+                ),
+                Stream.runHead,
+              );
+              yield* worker.drain();
+            });
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              commandId: CommandId.make(`claude-account-switch:${scenario}:create`),
+              threadId: accountThreadId,
+              projectId,
+              createdBy: "user",
+              creationSource: "web",
+              title: "Claude native account switch",
+              modelSelection: CLAUDE_MODEL_SELECTION,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+            });
+            yield* dispatch(1, CLAUDE_MODEL_SELECTION);
+            yield* dispatch(2, alternateSelection);
+            if (scenario !== "missing-source") {
+              assert.equal(yield* fs.readFileString(targetSession), originalHistory);
+              assert.equal(
+                yield* fs.readFileString(targetAuxiliary),
+                "Full native subagent history",
+              );
+              yield* fs.writeFileString(targetSession, continuedHistory);
+              yield* dispatch(3, CLAUDE_MODEL_SELECTION);
+              assert.equal(yield* fs.readFileString(sourceSession), continuedHistory);
+            }
+            if (scenario === "missing-source") {
+              const failed = yield* orchestrator.getThreadProjection(accountThreadId);
+              assert.deepEqual(
+                failed.runs.map((run) => run.status),
+                ["completed", "failed"],
+              );
+              assert.lengthOf(failed.contextHandoffs, 0);
+              assert.lengthOf(yield* Ref.get(capturedTurns), 1);
+              assert.equal(yield* Ref.get(generation), 1);
+              yield* fs.writeFileString(sourceSession, originalHistory);
+              yield* dispatch(3, alternateSelection);
+              assert.equal(yield* fs.readFileString(targetSession), originalHistory);
+            }
+            const projection = yield* orchestrator.getThreadProjection(accountThreadId);
+            assert.deepEqual(
+              projection.runs.map((run) => run.status),
+              scenario !== "missing-source"
+                ? ["completed", "completed", "completed"]
+                : ["completed", "failed", "completed"],
+            );
+            assert.deepEqual(
+              projection.contextHandoffs.map((handoff) => [
+                handoff.strategy,
+                handoff.coveredRunOrdinals,
+              ]),
+              scenario === "missing-source"
+                ? [["delta_since_target_last_seen", { from: 2, to: 2 }]]
+                : [],
+            );
+            assert.equal(yield* Ref.get(generation), 1);
+            const turns = yield* Ref.get(capturedTurns);
+            assert.deepEqual(
+              turns.map((turn) => turn.nativeThreadId),
+              Array.from({ length: scenario !== "missing-source" ? 3 : 2 }, () => nativeId),
+            );
+            if (scenario === "missing-source") {
+              assert.equal(turns[0]?.text, "Native account request 1");
+              assert.include(turns[1]?.text ?? "", "Native account request 2");
+              assert.include(turns[1]?.text ?? "", "Native account request 3");
+              assert.notInclude(turns[1]?.text ?? "", "Context handoff (full_thread_summary):");
+            } else {
+              assert.deepEqual(
+                turns.map((turn) => turn.text),
+                [
+                  "Native account request 1",
+                  "Native account request 2",
+                  "Native account request 3",
+                ],
+              );
+            }
+          }).pipe(
+            Effect.provide(
+              ProviderReplayHarness.layerWithRegistry(
+                {
+                  name: `claude-account-switch-${scenario}`,
+                  runtimePolicyOverride: {
+                    cwd,
+                    approvalPolicy: "never",
+                    sandboxPolicy: { type: "readOnly" },
+                  },
+                },
+                layerRegistry,
+              ),
+            ),
+          );
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("resumes a queued account switch without requiring a portable handoff", () =>

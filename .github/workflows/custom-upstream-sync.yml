@@ -84,6 +84,8 @@ jobs:
           vp test run packages/shared/src/git.test.ts
           vp test run scripts/build-desktop-artifact.test.ts
           vp test run scripts/custom/update-installed-app.test.ts
+          vp test run apps/server/src/provider/Drivers/ClaudeSessionHistory.test.ts apps/server/src/orchestration-v2/ProviderSessionTransitionPolicy.test.ts
+          vp test run apps/server/src/orchestration-v2/testkit/ProviderSwitch.integration.test.ts -t 'preserves complete native Claude history'
           vp run build:desktop
 
       - name: Promote validated sync branch
