@@ -7,12 +7,16 @@ file in the same commit that adds, changes, or retires a fork feature.
 Regenerate the raw picture with:
 
 ```bash
-git diff --name-only upstream/main custom | grep -v '^\.repos/'
+git diff --name-only upstream/main...custom | rg -v '^\.repos/'
 git log --oneline --no-merges upstream/main..custom
 ```
 
+The three-dot diff isolates fork changes since the shared ancestor. A direct
+`upstream/main` versus `custom` diff also includes upstream changes not yet merged.
+
 Each entry records why the fork carries it and what a future merge should do
 when upstream moves into the same area. See the conflict rule in `AGENTS.md`.
+Client additions below are web/desktop only unless mobile is explicitly listed.
 
 ## Keep: no upstream equivalent
 
@@ -29,9 +33,15 @@ The reason the fork exists: an independently branded, self-installing build.
   every later run until the checkout was cleaned by hand. Its active-session
   guard counts live Orchestration V2 runs in `statev2.sqlite`, falling back to
   the V1 session table in `state.sqlite` until a V2 build has seeded it.
+  Dependency installation sets `CI=true` so pnpm can replace a stale layout
+  without a TTY. Staged bundles are signed with a stable local identity and
+  verified before installation; preserving it avoids changing macOS's app identity
+  on each update. Installation waits for a manual quit; `--after-app-exit`
+  installs the staged build and relaunches without initiating that quit.
 - `.gitignore` ignores those generated `scripts/lib/*.d.ts`
 - `.github/workflows/custom-ci.yml`, `.github/workflows/custom-upstream-sync.yml`
 - `.github/workflows/ci.yml` restricts upstream's CI to `main` so fork branches do not run it
+- `AGENTS.md` adds the fork's deployment and conflict-resolution rules
 
 **On conflict:** keep the fork's values. Take upstream's structural changes to
 the build script and re-apply the identity constants on top.
@@ -57,8 +67,8 @@ broken account but offers no way to fix it.
   `claudeSignIn.ts` and `ClaudeSignIns.tsx`, plus one line rendering
   `<ClaudeSignIns />` in upstream's `UsageLimitsPooled.tsx`
 
-Upstream's only in-app provider sign-in is Antigravity's Google flow
-(`ProviderSetupSection.tsx`); Claude has none. Upstream reports a broken account
+Upstream has in-app authentication for Antigravity, Codex ChatGPT, and ACP
+Registry providers, but Claude has no native auth controller. Upstream reports a broken account
 through `collectLimitNotices`, which returns plain strings with no provider
 identity, and drops an account whose probe reported nothing at all — which is
 exactly what an unusable credential looks like. The fork collects those accounts
@@ -71,10 +81,9 @@ is unauthenticated. After a sign-in the client refreshes that instance with
 **On conflict:** the collection is fork-owned, while the render line and the
 API-key label sit in upstream-owned files. Re-apply them as the smallest patches.
 Retire the whole thing once upstream offers an equivalent Claude sign-in flow.
-Upstream's generic `ProviderAuthFlow` helper (browser and device-code
-interactions, credential bindings) has no production caller yet, and only
-Antigravity exposes an auth controller. A Claude controller built on it would
-replace `ProviderLoginService`.
+Upstream's generic `ProviderAuthFlow` helper has production callers in
+`CodexChatGptAuth.ts` and the ACP Registry's `auth.ts`. A Claude controller built
+on that infrastructure would replace `ProviderLoginService`.
 
 ### Claude multi-account support
 
@@ -91,6 +100,10 @@ session. Each account remains a separate provider instance with its own
 Orchestration V2 already resumes the native thread when the continuation keys
 match (`restart_and_resume` in `ProviderSessionTransitionPolicy.ts`) and hands
 off a summary otherwise, so the key is the fork's only edit.
+Separate account config directories must share the same resolved `projects`
+directory, typically through symlinks. Merely using Claude for both accounts
+does not make their histories compatible. Native resume failure still falls
+back to a portable handoff.
 
 Upstream now scans every configured Claude, Codex, and Grok instance for usage
 history and collapses aliased homes. That behavior is no longer fork-owned.
@@ -103,7 +116,7 @@ smallest edit on top of upstream's pipeline rather than a parallel view.
 
 - `packages/contracts/src/providerUsageLimits.ts`: `ServerProviderExtraUsage`,
   optional `extraUsage` on `ServerProviderUsageLimits`
-- `apps/server/src/provider/Layers/claudeUsageLimits.ts`: `claudeExtraUsage`
+- `apps/server/src/provider/claudeUsageLimits.ts`: `claudeExtraUsage`
 - `apps/web/src/components/usage/extraUsage.ts`, shown as an `Extra` row in the
   account popover of upstream's `UsageLimitsPooled.tsx`
 
@@ -111,8 +124,9 @@ smallest edit on top of upstream's pipeline rather than a parallel view.
 
 ### Composer: warning when the thread's account is nearly spent
 
-Upstream shows limits only when asked (`/limits`), so a turn can be refused
-with no warning. This warns in the thread at 95% of a session or weekly window.
+Upstream offers Usage → Limits and a recovery banner after a usage-limit failure,
+but no proactive warning before exhaustion. This warns in the thread at 95% of
+a session or weekly window.
 
 - `apps/web/src/components/usage/limitWarning.ts` and its test
 - `apps/web/src/components/ChatView.tsx`: the `limitWarning` memo and its banner
@@ -137,7 +151,8 @@ Web, desktop, and mobile model rows show remaining weekly quota. Fable uses its
 own bucket; other Claude models use the shared weekly allowance. Claude account
 selectors show session quota separately. Codex model rows show weekly quota,
 with no session figure in the account selector. Low balances use warning text;
-expired or failed readings show an unknown balance until refreshed.
+expired or failed readings with an existing quota window show an unknown balance
+until refreshed. Missing or unsupported windows show no quota label.
 
 The picker uses the environment's existing provider snapshots, including in
 Settings and new-thread pickers. Selection and formatting live in
@@ -177,6 +192,8 @@ capability and viewer permission (triage access), an optional `assignees` list o
 menu disabled like the label menu (`PullRequestDetailPanel.tsx`). Only the GitHub provider implements it; assignees ride upstream's
 core GraphQL detail query, so the detail costs no extra request. The UI lives in the
 fork-owned `PullRequestAssignees.tsx`; `PullRequestSummaryTab.tsx` only mounts it.
+There is no mobile assignee UI or agent MCP tool. GitHub can return success
+without applying an assignment; preserve the API's check of the returned assignees.
 
 **On conflict:** the edits to upstream files are additions next to the label code, so
 keep both sides. If upstream ships assignees, take theirs and delete this.
@@ -210,6 +227,8 @@ the new thread's composer, to resend or edit it. It rides upstream's
 A thread's first message has no run before it, so it gets no button. A message
 sent after a completed `/compact` run forks before that run, because Claude
 records no reply there to fork at.
+The restored draft contains message text with context-reference labels;
+attachments and structured context references are not copied.
 
 **On conflict:** keep the button beside upstream's fork-from-response. Retire it
 if upstream adds forking before a user message.
@@ -233,6 +252,23 @@ Mobile still sends `t3/<hex>` names, which the server recognises and renames.
 **On conflict:** re-apply the optional parameter. Retire it once upstream
 names temporary branches from its prefix setting.
 
+### Database migration ledger
+
+The retired sidebar search left migration ID 50, `ProjectionThreadSearchUnits`,
+in installed databases. Keep that migration and its unused table. Upstream's
+migrations from ID 50 onward run one ID later here (`OrchestrationV2` is 56).
+Preserve every released ID/name pair in `Migrations.ts`; renumbering would make
+a later schema change look already applied. Append incoming upstream migrations
+at the next free fork ID and adjust tests that name migration IDs, including
+the dev-database migration test.
+
+`reconcileV2PreviewMigration` only matches an `OrchestrationV2` row at 53 or 54,
+which the fork's ledger does not use. Its upstream fixture test is removed;
+the reconciliation implementation remains upstream-owned.
+
+**On conflict:** preserve the fork's ledger while taking upstream's migration
+implementations. Retiring a feature does not retire its applied migration.
+
 ## Retired: superseded by upstream
 
 ### Native conversation forks, end-of-turn queue, worktree prefix setting
@@ -241,19 +277,15 @@ Retired on 2026-10-06 when upstream replaced its orchestrator with V2 (#2829),
 deleting the V1 code all three were built on.
 
 - Forks: V2's `thread.fork` forks from any completed assistant response, natively
-  on Claude, Codex, OpenCode, and Pi, and through a summary handoff elsewhere. The
+  on Claude, Codex, OpenCode, and Pi. Other providers follow their advertised
+  capabilities, with portable context as fallback; ACP can also fork at the
+  current native head when its runtime supports it. The
   fork's sidebar "Fork thread" entry and forking a running thread went with it;
   forking from a user message was re-ported on V2 (above).
 - Queue: V2 queues follow-ups on the server and starts the next one only when
   the active run ends, which is the rule the fork carried.
 - The `worktreeBranchPrefix` setting gave way to upstream's `branchNamePrefix`;
   only the temporary-branch patch above survives.
-
-Upstream's migrations from `OrchestrationV2` on run one ID later here
-(`OrchestrationV2` is 56), following the shift described under the sidebar search
-below. `reconcileV2PreviewMigration` only
-matches an `OrchestrationV2` row at 53 or 54, which no fork database has, so the
-fork deletes its test, whose fixtures assume upstream's IDs.
 
 ### Fuzzy sidebar search over thread contents
 
@@ -264,13 +296,7 @@ per-unit search let too many threads through to be useful, so the parallel
 service, RPC, shared matcher, and client state were deleted and the sidebar is
 upstream's again.
 
-One artifact stays: migration ID 50 is the fork's `ProjectionThreadSearchUnits`
-table, and upstream's migrations 50 onward run one ID later in this fork, so a
-migration test that names IDs needs the same shift. Every
-installed database has those IDs applied, so `Migrations.ts` must keep the
-shift; renumbering would make the next upstream migration look already applied.
-The unused table is left in place. Give future migrations IDs upstream does not
-use.
+The migration remains fork-owned; see Database migration ledger above.
 
 ### Claude thinking in conversation history
 
