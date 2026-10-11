@@ -80,8 +80,8 @@ jobs:
       - name: Validate merged source
         if: steps.merge.outputs.changed == 'true'
         run: |
-          vp test run apps/web/src/components/chat/MessagesTimeline.logic.test.ts
-          vp test run apps/server/src/orchestration/decider.fork.test.ts apps/server/src/orchestration/threadFork.test.ts
+          vp test run apps/web/src/components/chat/MessagesTimeline.logic.test.ts apps/web/src/components/chat/userMessageFork.test.ts
+          vp test run packages/shared/src/git.test.ts
           vp test run scripts/build-desktop-artifact.test.ts
           vp test run scripts/custom/update-installed-app.test.ts
           vp run build:desktop

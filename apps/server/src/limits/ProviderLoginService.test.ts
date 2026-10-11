@@ -99,6 +99,34 @@ describe("ProviderLoginService", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.live("signs in a default instance that carries no config", () =>
+    Effect.gen(function* () {
+      const { home } = yield* setup(STUB_CLI);
+      yield* Effect.promise(async () => {
+        const binaryPath = NodePath.join(home, "claude");
+        await NodeFSP.writeFile(binaryPath, STUB_CLI);
+        await NodeFSP.chmod(binaryPath, 0o755);
+      });
+      const service = yield* makeService({
+        providerInstances: {
+          [ProviderInstanceId.make("claudeAgent")]: {
+            driver: "claudeAgent",
+            environment: [
+              {
+                name: "PATH",
+                value: `${home}${NodePath.delimiter}${process.env.PATH ?? ""}`,
+                sensitive: false,
+              },
+            ],
+          },
+        },
+      });
+
+      const started = yield* service.start({ instanceId: ProviderInstanceId.make("claudeAgent") });
+      assert.strictEqual(started.authorizeUrl, AUTHORIZE_URL);
+    }).pipe(Effect.scoped),
+  );
+
   it.live("reports the CLI's own message when it rejects the code", () =>
     Effect.gen(function* () {
       const { settings } = yield* setup(STUB_CLI);

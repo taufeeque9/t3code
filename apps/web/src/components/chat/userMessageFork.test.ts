@@ -38,4 +38,23 @@ describe("resolveUserMessageForkSources", () => {
     expect(sources.get(MessageId.make("message-3"))?.runId).toBe(RunId.make("run-1"));
     expect(sources.has(MessageId.make("message-4"))).toBe(false);
   });
+
+  it("forks before a completed /compact run, which leaves no reply to fork at", () => {
+    const compact = new Set([MessageId.make("message-2")]);
+
+    const sources = resolveUserMessageForkSources([run(1), run(2), run(3)], compact);
+
+    expect(sources.get(MessageId.make("message-2"))?.runId).toBe(RunId.make("run-1"));
+    expect(sources.get(MessageId.make("message-3"))?.runId).toBe(RunId.make("run-1"));
+    expect(
+      resolveUserMessageForkSources([run(1), run(2, "running"), run(3)], compact).has(
+        MessageId.make("message-3"),
+      ),
+    ).toBe(false);
+    expect(
+      resolveUserMessageForkSources([run(1), run(2, "failed"), run(3)], compact).get(
+        MessageId.make("message-3"),
+      )?.runId,
+    ).toBe(RunId.make("run-2"));
+  });
 });

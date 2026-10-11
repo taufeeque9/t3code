@@ -1,10 +1,47 @@
+import { AuthProvidersManageScope } from "@t3tools/contracts";
 import { serverEnvironment } from "../../state/server";
+import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
 import { useState } from "react";
 
-import { collectClaudeSignIns } from "./claudeSignIn";
+import { collectClaudeSignIns, type ClaudeSignInCandidate } from "./claudeSignIn";
 import { ProviderLoginDialog, type ProviderLoginTarget } from "./ProviderLoginDialog";
+
+/** One account's row. The grant belongs to the account's environment, so each row reads its own. */
+function ClaudeSignInRow({
+  candidate,
+  onSignIn,
+}: {
+  readonly candidate: ClaudeSignInCandidate;
+  readonly onSignIn: (target: ProviderLoginTarget) => void;
+}) {
+  const canManageProviders = useEnvironmentScope(candidate.environmentId, AuthProvidersManageScope);
+  return (
+    <div className="flex items-center gap-3 text-xs">
+      <span className="min-w-0 truncate text-muted-foreground">
+        {candidate.listedInNotices
+          ? candidate.displayName
+          : `${candidate.displayName}: ${candidate.notice}`}
+      </span>
+      <Button
+        size="xs"
+        variant="outline"
+        className="ms-auto shrink-0"
+        disabled={!canManageProviders}
+        onClick={() =>
+          onSignIn({
+            environmentId: candidate.environmentId,
+            instanceId: candidate.instanceId,
+            displayName: candidate.displayName,
+          })
+        }
+      >
+        Sign in
+      </Button>
+    </div>
+  );
+}
 
 /**
  * The way back in for a Claude account whose credential stopped working, next
@@ -24,27 +61,7 @@ export function ClaudeSignIns({
   return (
     <div className="flex flex-col gap-2">
       {candidates.map((candidate) => (
-        <div key={candidate.key} className="flex items-center gap-3 text-xs">
-          <span className="min-w-0 truncate text-muted-foreground">
-            {candidate.listedInNotices
-              ? candidate.displayName
-              : `${candidate.displayName}: ${candidate.notice}`}
-          </span>
-          <Button
-            size="xs"
-            variant="outline"
-            className="ms-auto shrink-0"
-            onClick={() =>
-              setTarget({
-                environmentId: candidate.environmentId,
-                instanceId: candidate.instanceId,
-                displayName: candidate.displayName,
-              })
-            }
-          >
-            Sign in
-          </Button>
-        </div>
+        <ClaudeSignInRow key={candidate.key} candidate={candidate} onSignIn={setTarget} />
       ))}
       <ProviderLoginDialog
         target={target}

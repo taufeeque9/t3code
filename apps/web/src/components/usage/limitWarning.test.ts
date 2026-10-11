@@ -278,3 +278,25 @@ describe("duplicate account readings", () => {
     }
   });
 });
+
+describe("Antigravity family buckets", () => {
+  const antigravity = {
+    ...account("antigravity", "antigravity", [
+      window("gemini-weekly", "Gemini · Weekly", 4),
+      window("3p-weekly", "Claude & GPT (shared) · Weekly", 100),
+    ]),
+    driver: ProviderDriverKind.make("antigravity"),
+  };
+
+  it("ignores the shared Claude and GPT bucket for a Gemini model", () => {
+    expect(
+      resolveLimitWarning(report([antigravity]), "antigravity", "gemini-3.8-flash-high"),
+    ).toBeNull();
+  });
+
+  it("warns on the shared bucket for a Claude model", () => {
+    expect(
+      resolveLimitWarning(report([antigravity]), "antigravity", "claude-sonnet-4-6")?.windowLabel,
+    ).toBe("Claude & GPT (shared) · Weekly");
+  });
+});

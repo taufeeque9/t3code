@@ -8722,9 +8722,27 @@ export default function ChatView(props: ChatViewProps) {
     ],
   );
 
+  // Joined into a string so the fork sources keep their identity while replies stream.
+  const compactCommandMessageIdsKey = useMemo(
+    () =>
+      (serverProjection?.messages ?? [])
+        .filter(
+          (message) =>
+            message.role === "user" &&
+            message.attachments.length === 0 &&
+            message.text.trim().toLowerCase() === "/compact",
+        )
+        .map((message) => message.id)
+        .join("\n"),
+    [serverProjection?.messages],
+  );
   const userMessageForkSources = useMemo(
-    () => resolveUserMessageForkSources(serverProjection?.runs ?? []),
-    [serverProjection?.runs],
+    () =>
+      resolveUserMessageForkSources(
+        serverProjection?.runs ?? [],
+        new Set(compactCommandMessageIdsKey.split("\n")),
+      ),
+    [serverProjection?.runs, compactCommandMessageIdsKey],
   );
   const onForkFromRun = useCallback(
     async (input: {

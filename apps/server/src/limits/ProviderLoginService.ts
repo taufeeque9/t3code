@@ -157,7 +157,7 @@ export const make = Effect.gen(function* () {
       });
     }
 
-    const claudeSettings = yield* decodeClaudeSettings(instance.config).pipe(
+    const claudeSettings = yield* decodeClaudeSettings(instance.config ?? {}).pipe(
       Effect.mapError(
         (cause) =>
           new ProviderLoginError({

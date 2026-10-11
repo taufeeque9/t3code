@@ -119,6 +119,8 @@ with no warning. This warns in the thread at 95% of a session or weekly window.
 
 The web/desktop warning follows the composer's selected account and model.
 Model-specific windows only warn for that model; shared windows always apply.
+Antigravity buckets are matched by family: Gemini models read the Gemini
+buckets, everything else the shared Claude and GPT ones.
 The banner names other accounts with quota, ranked by their tightest applicable
 window, or says when every reported account is exhausted. Missing or failed
 reads remain unknown, and a passed reset needs fresh data before it counts as
@@ -205,7 +207,9 @@ the new thread's composer, to resend or edit it. It rides upstream's
 - `ChatView.tsx`: computes the sources from the projection's runs and sets the
   forked thread's draft before navigating
 
-A thread's first message has no run before it, so it gets no button.
+A thread's first message has no run before it, so it gets no button. A message
+sent after a completed `/compact` run forks before that run, because Claude
+records no reply there to fork at.
 
 **On conflict:** keep the button beside upstream's fork-from-response. Retire it
 if upstream adds forking before a user message.

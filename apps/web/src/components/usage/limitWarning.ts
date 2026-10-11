@@ -28,9 +28,17 @@ function modelScope(window: ServerProviderUsageWindow, driver: LimitAccount["dri
     : null;
 }
 
+/** Antigravity buckets are per family: Gemini has its own, Claude and GPT share `3p`. */
 function appliesToModel(window: ServerProviderUsageWindow, account: LimitAccount, model: string) {
+  const normalized = `_${normalize(model)}_`;
+  if (account.driver === "antigravity") {
+    const family = window.id.split("-")[0];
+    if (family === "gemini") return normalized.includes("_gemini_");
+    if (family === "3p") return !normalized.includes("_gemini_");
+    if (family === "claude" || family === "gpt") return normalized.includes(`_${family}_`);
+  }
   const scope = modelScope(window, account.driver);
-  return scope === null || `_${normalize(model)}_`.includes(`_${scope}_`);
+  return scope === null || normalized.includes(`_${scope}_`);
 }
 
 function hasReset(window: ServerProviderUsageWindow, now: number) {
