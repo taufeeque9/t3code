@@ -178,7 +178,8 @@ if [[ "$built_commit" != "$desired_commit" || ! -d "$staged_app" ]]; then
   log "Building T3 Code Custom at ${desired_commit:0:12}."
   (
     cd "$repo_dir"
-    "$vp_bin" install --frozen-lockfile
+    # Without a TTY, pnpm only replaces node_modules after a layout change when CI is set.
+    CI=true "$vp_bin" install --frozen-lockfile
     env -u GITHUB_REPOSITORY \
       T3CODE_DESKTOP_UPDATE_REPOSITORY="" \
       T3CODE_DESKTOP_OUTPUT_DIR="$attempt_dir" \
