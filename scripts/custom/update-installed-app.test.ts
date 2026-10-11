@@ -20,8 +20,7 @@ it.layer(NodeServices.layer)("custom app updater", (it) => {
         const binDirectory = path.join(fixtureDirectory, "bin");
         const repositoryDirectory = path.join(fixtureDirectory, "repo");
         const stateDirectory = path.join(fixtureDirectory, "state");
-        const databasePath = path.join(fixtureDirectory, "state.sqlite");
-        const runtimeStatePath = path.join(fixtureDirectory, "server-runtime.json");
+        const userdataDirectory = path.join(fixtureDirectory, "userdata");
         const destinationPath = path.join(fixtureDirectory, "Applications", "T3 Code Custom.app");
         const gitInvocationPath = path.join(fixtureDirectory, "git-invoked");
         const sqliteInvocationPath = path.join(fixtureDirectory, "sqlite-invoked");
@@ -36,7 +35,11 @@ it.layer(NodeServices.layer)("custom app updater", (it) => {
         yield* fs.writeFileString(path.join(stateDirectory, "built-commit"), `${desiredCommit}\n`);
         yield* fs.writeFileString(path.join(stagedApp, "version.txt"), "new");
         yield* fs.writeFileString(path.join(destinationPath, "version.txt"), "old");
-        yield* fs.writeFileString(databasePath, "database is unavailable during shutdown");
+        yield* fs.makeDirectory(userdataDirectory, { recursive: true });
+        yield* fs.writeFileString(
+          path.join(userdataDirectory, "statev2.sqlite"),
+          "database is unavailable during shutdown",
+        );
 
         const gitStub = path.join(binDirectory, "git");
         yield* fs.writeFileString(
@@ -86,8 +89,7 @@ exit 14
               T3_TEST_RESTART_INVOCATION: restartInvocationPath,
               T3CODE_CUSTOM_REPO: repositoryDirectory,
               T3CODE_CUSTOM_UPDATER_HOME: stateDirectory,
-              T3CODE_CUSTOM_DATABASE: databasePath,
-              T3CODE_CUSTOM_RUNTIME_STATE: runtimeStatePath,
+              T3CODE_CUSTOM_USERDATA: userdataDirectory,
               T3CODE_CUSTOM_DESTINATION: destinationPath,
             },
           }),

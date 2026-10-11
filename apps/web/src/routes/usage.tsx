@@ -21,7 +21,7 @@ function UsageRoute() {
     },
     [navigate],
   );
-  return <UsagePage metric={metric ?? "cost"} onMetricChange={onMetricChange} />;
+  return <UsagePage metric={metric} onMetricChange={onMetricChange} />;
 }
 
 export const Route = createFileRoute("/usage")({

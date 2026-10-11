@@ -27,8 +27,8 @@ The reason the fork exists: an independently branded, self-installing build.
   checks tracked changes only: the desktop build emits `.d.ts` beside its
   sources, and counting untracked files let the updater's own output block
   every later run until the checkout was cleaned by hand. Its active-session
-  guard counts live Orchestration V2 runs, falling back to the V1 session table
-  on databases that predate V2.
+  guard counts live Orchestration V2 runs in `statev2.sqlite`, falling back to
+  the V1 session table in `state.sqlite` until a V2 build has seeded it.
 - `.gitignore` ignores those generated `scripts/lib/*.d.ts`
 - `.github/workflows/custom-ci.yml`, `.github/workflows/custom-upstream-sync.yml`
 - `.github/workflows/ci.yml` restricts upstream's CI to `main` so fork branches do not run it
@@ -42,12 +42,17 @@ Repairs an expired Claude credential without a terminal. Upstream reports the
 broken account but offers no way to fix it.
 
 - `apps/server/src/limits/ProviderLoginService.ts` and its test
-- `apps/server/src/provider/ClaudeProvider.ts` and its provider-registry test
+- `apps/server/src/provider/ClaudeProvider.ts`: `claudeAuthMetadata` labels an
+  install that authenticates with an API key as "Claude API Key", which upstream
+  leaves unlabelled; one test in the provider-registry test covers it
 - the instance-registry test, whose Claude fixture
   (`provider/testing/ProviderInstanceRegistryLive.fixture.mjs`) reports signed out
   when a sibling `claude-account-state` file says so
-- `packages/contracts/src/limits.ts` (sign-in contracts only), the two
-  `server.*ProviderLogin` RPCs, their `ws.ts` handlers and auth scopes
+- `packages/contracts/src/limits.ts` (sign-in contracts only) and the two
+  `server.*ProviderLogin` RPCs. Like every fork RPC they are registered in three
+  upstream tables: a scope in `RpcAuthorization.ts` (`providers:manage`, as for
+  upstream's provider-auth RPCs), a handler in `ws.ts`, and a label in
+  `RpcInstrumentation.ts`
 - `apps/web/src/components/usage/ProviderLoginDialog.tsx`,
   `claudeSignIn.ts` and `ClaudeSignIns.tsx`, plus one line rendering
   `<ClaudeSignIns />` in upstream's `UsageLimitsPooled.tsx`
@@ -58,20 +63,18 @@ through `collectLimitNotices`, which returns plain strings with no provider
 identity, and drops an account whose probe reported nothing at all — which is
 exactly what an unusable credential looks like. The fork collects those accounts
 separately rather than widening that function, so upstream's notices and their
-tests stay untouched. It also treats an SDK initialization with no account
-identity (no email, plan, API key, non-first-party backend, or token source other
-than `none`) as signed out; otherwise Claude reports the expired login as a working
-account with unsupported limits and the repair action disappears after refresh.
-After a sign-in the client refreshes that instance with `refreshModels`, which is
-upstream's way to drop its cached capabilities.
+tests stay untouched. The signed-out state itself is upstream's
+`claudeAuthStatus`: a CLI reporting token source `none` with no account identity
+is unauthenticated. After a sign-in the client refreshes that instance with
+`refreshModels`, which is upstream's way to drop its cached capabilities.
 
 **On conflict:** the collection is fork-owned, while the render line and the
-signed-out check sit in upstream-owned files. Re-apply the smallest patches until
-upstream recognizes expired Claude authentication. Retire the whole thing once upstream
-offers an equivalent Claude sign-in flow. Upstream's generic `ProviderAuthFlow`
-helper (browser and device-code interactions, credential bindings) has no
-production caller yet, and only Antigravity exposes an auth controller. A Claude
-controller built on it would replace `ProviderLoginService`.
+API-key label sit in upstream-owned files. Re-apply them as the smallest patches.
+Retire the whole thing once upstream offers an equivalent Claude sign-in flow.
+Upstream's generic `ProviderAuthFlow` helper (browser and device-code
+interactions, credential bindings) has no production caller yet, and only
+Antigravity exposes an auth controller. A Claude controller built on it would
+replace `ProviderLoginService`.
 
 ### Claude multi-account support
 
@@ -167,7 +170,9 @@ It follows upstream's label feature layer for layer: an optional `assignees`
 capability and viewer permission (triage access), an optional `assignees` list on
 `PullRequestDetail`, two RPCs (`pullRequests.assigneeCandidates`,
 `pullRequests.setAssignees`), optional provider methods, and a cache update in
-`client-runtime`. Only the GitHub provider implements it; assignees ride upstream's
+`client-runtime`. `setAssignees` needs `source-control:write`, declared beside
+`setLabels` in `clientRpcPermissions.ts`, and a session without it sees the
+menu disabled like the label menu (`PullRequestDetailPanel.tsx`). Only the GitHub provider implements it; assignees ride upstream's
 core GraphQL detail query, so the detail costs no extra request. The UI lives in the
 fork-owned `PullRequestAssignees.tsx`; `PullRequestSummaryTab.tsx` only mounts it.
 
@@ -240,8 +245,9 @@ deleting the V1 code all three were built on.
 - The `worktreeBranchPrefix` setting gave way to upstream's `branchNamePrefix`;
   only the temporary-branch patch above survives.
 
-Upstream's V2 migrations run as 56–59 here, one ID later, following the shift
-described under the sidebar search below. `reconcileV2PreviewMigration` only
+Upstream's migrations from `OrchestrationV2` on run one ID later here
+(`OrchestrationV2` is 56), following the shift described under the sidebar search
+below. `reconcileV2PreviewMigration` only
 matches an `OrchestrationV2` row at 53 or 54, which no fork database has, so the
 fork deletes its test, whose fixtures assume upstream's IDs.
 

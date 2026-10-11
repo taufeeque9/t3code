@@ -21,6 +21,7 @@ import {
   type ProviderLoginStartResult,
   type ProviderLoginSubmitResult,
 } from "@t3tools/contracts";
+import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -30,7 +31,6 @@ import * as Schema from "effect/Schema";
 
 import { ServerSettingsService } from "../serverSettings.ts";
 import { makeClaudeEnvironment } from "../provider/Drivers/ClaudeHome.ts";
-import { mergeProviderInstanceEnvironment } from "../provider/ProviderInstanceEnvironment.ts";
 import { deriveProviderInstanceConfigMap } from "../provider/ProviderInstanceRegistryHydration.ts";
 
 const decodeClaudeSettings = Schema.decodeUnknownEffect(ClaudeSettings);
@@ -169,7 +169,7 @@ export const make = Effect.gen(function* () {
     );
     const environment = yield* makeClaudeEnvironment(
       claudeSettings,
-      mergeProviderInstanceEnvironment(instance.environment),
+      yield* mergeProviderInstanceEnvironment(instance.environment),
     ).pipe(Effect.provideService(Path.Path, path));
 
     // One attempt per instance: starting again replaces whatever was pending so

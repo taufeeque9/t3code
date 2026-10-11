@@ -5,8 +5,8 @@ set -euo pipefail
 repo_dir="${T3CODE_CUSTOM_REPO:-/Users/tf-work/Desktop/t3code-custom}"
 state_dir="${T3CODE_CUSTOM_UPDATER_HOME:-/Users/tf-work/.t3/custom-updater}"
 vp_bin="${T3CODE_CUSTOM_VP_BIN:-/Users/tf-work/.vite-plus/bin/vp}"
-database="${T3CODE_CUSTOM_DATABASE:-/Users/tf-work/.t3/userdata/state.sqlite}"
-runtime_state="${T3CODE_CUSTOM_RUNTIME_STATE:-/Users/tf-work/.t3/userdata/server-runtime.json}"
+userdata_dir="${T3CODE_CUSTOM_USERDATA:-/Users/tf-work/.t3/userdata}"
+runtime_state="$userdata_dir/server-runtime.json"
 destination="${T3CODE_CUSTOM_DESTINATION:-/Applications/T3 Code Custom.app}"
 custom_bundle_id="com.taufeeque.t3code-custom"
 official_bundle_id="com.t3tools.t3code"
@@ -27,11 +27,16 @@ read_state() {
 }
 
 active_session_count() {
+  # Orchestration V2 keeps its state in statev2.sqlite, seeded once from state.sqlite.
+  local database="$userdata_dir/statev2.sqlite"
+  if [[ ! -f "$database" ]]; then
+    database="$userdata_dir/state.sqlite"
+  fi
   if [[ ! -f "$database" ]]; then
     printf '0\n'
     return
   fi
-  # Orchestration V2 tracks live work as runs; builds before V2 only have the session table.
+  # V2 tracks live work as runs; builds before V2 only have the session table.
   if [[ -n "$(sqlite3 -readonly "$database" \
     "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'orchestration_v2_projection_runs';")" ]]; then
     sqlite3 -readonly "$database" \
