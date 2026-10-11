@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 import { useCallback } from "react";
 
 import { isUsageMetric, UsagePage } from "../components/usage/UsagePage";
@@ -25,6 +25,14 @@ function UsageRoute() {
 }
 
 export const Route = createFileRoute("/usage")({
+  beforeLoad: async ({ context }) => {
+    if (
+      context.authGateState.status !== "authenticated" &&
+      context.authGateState.status !== "hosted-static"
+    ) {
+      throw redirect({ to: "/pair", replace: true });
+    }
+  },
   component: UsageRoute,
   validateSearch: (search: Record<string, unknown>): { metric?: UsageMetric } => {
     const metric = search["metric"];
