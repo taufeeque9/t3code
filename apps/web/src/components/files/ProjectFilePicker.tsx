@@ -11,7 +11,9 @@ import { CommandPaletteContent } from "../CommandPaletteContent";
 import { type CommandPaletteActionItem } from "../CommandPalette.logic";
 import { CommandPaletteResults } from "../CommandPaletteResults";
 import {
+  fileName,
   getProjectFilePickerMatches,
+  hostFilePathFromQuery,
   PROJECT_FILE_PICKER_RESULT_LIMIT,
 } from "./ProjectFilePicker.logic";
 import { useProjectFilePickerQuery } from "./projectFilesQueryState";
@@ -72,10 +74,11 @@ function OpenProjectFilePicker(props: ProjectFilePickerProps & { target: ActiveP
   const { target } = props;
   const [query, setQuery] = useState("");
   const [highlightedItemValue, setHighlightedItemValue] = useState<string | null>(null);
+  const hostFilePath = hostFilePathFromQuery(query);
   const result = useProjectFilePickerQuery(
     target.environmentId,
     target.cwd,
-    query,
+    hostFilePath === null ? query : "",
     PROJECT_FILE_PICKER_RESULT_LIMIT,
   );
   const { resolvedTheme } = useTheme();
@@ -112,6 +115,23 @@ function OpenProjectFilePicker(props: ProjectFilePickerProps & { target: ActiveP
       })),
     [hasMatchedQuery, matches, resolvedTheme, target.threadRef],
   );
+  const hostFileItem = useMemo<CommandPaletteActionItem | null>(
+    () =>
+      hostFilePath === null
+        ? null
+        : {
+            kind: "action",
+            value: `host-file:${hostFilePath}`,
+            searchTerms: [hostFilePath],
+            title: fileName(hostFilePath) || hostFilePath,
+            description: hostFilePath,
+            icon: <PierreEntryIcon pathValue={hostFilePath} kind="file" theme={resolvedTheme} />,
+            run: async () => {
+              useRightPanelStore.getState().openFile(target.threadRef, hostFilePath);
+            },
+          },
+    [hostFilePath, resolvedTheme, target.threadRef],
+  );
 
   const emptyStateMessage = getEmptyStateMessage(query, result.error, result.isPending);
 
@@ -136,7 +156,11 @@ function OpenProjectFilePicker(props: ProjectFilePickerProps & { target: ActiveP
     >
       <CommandPaletteResults
         groups={
-          items.length > 0 ? [{ value: "project-files", label: target.projectName, items }] : []
+          hostFileItem
+            ? [{ value: "host-file", label: "Path", items: [hostFileItem] }]
+            : items.length > 0
+              ? [{ value: "project-files", label: target.projectName, items }]
+              : []
         }
         highlightedItemValue={highlightedItemValue}
         isActionsOnly={false}

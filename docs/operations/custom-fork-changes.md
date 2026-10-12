@@ -246,6 +246,20 @@ attachments and structured context references are not copied.
 **On conflict:** keep the button beside upstream's fork-from-response. Retire it
 if upstream adds forking before a user message.
 
+### File picker: open an absolute path
+
+Upstream's file picker (`filePicker.toggle`) only searches the active project's
+index. Typing or pasting an absolute path offers that path as the single result,
+which opens it in the read-only host-file preview upstream already uses for
+absolute chat links, from any project.
+
+- `ProjectFilePicker.logic.ts`: `hostFilePathFromQuery` and its test
+- `ProjectFilePicker.tsx`: the `host-file` result group; the index search runs
+  with an empty query while the input holds an absolute path
+
+**On conflict:** re-apply the result group on upstream's picker. Retire it if
+upstream's picker opens absolute paths.
+
 ### Temporary worktree branches use the branch-name prefix
 
 Upstream names worktree branches `t3/<hex>` and only applies the

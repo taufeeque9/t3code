@@ -1,4 +1,5 @@
 import type { ProjectEntry } from "@t3tools/contracts";
+import { isAbsolutePath } from "@t3tools/shared/path";
 import { normalizeSearchQuery } from "@t3tools/shared/searchRanking";
 
 export const PROJECT_FILE_PICKER_RESULT_LIMIT = 200;
@@ -10,8 +11,14 @@ export interface ProjectFilePickerMatch {
   readonly pathMatchIndices: ReadonlyArray<number>;
 }
 
-function fileName(path: string): string {
-  return path.slice(path.lastIndexOf("/") + 1);
+export function fileName(path: string): string {
+  return path.slice(Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")) + 1);
+}
+
+/** An absolute path typed or pasted into the picker opens directly, from any project. */
+export function hostFilePathFromQuery(query: string): string | null {
+  const path = query.trim();
+  return isAbsolutePath(path) ? path : null;
 }
 
 /**

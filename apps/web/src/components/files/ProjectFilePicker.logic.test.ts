@@ -1,6 +1,6 @@
 import { assert, describe, it } from "vite-plus/test";
 
-import { getProjectFilePickerMatches } from "./ProjectFilePicker.logic";
+import { getProjectFilePickerMatches, hostFilePathFromQuery } from "./ProjectFilePicker.logic";
 
 function pathsForQuery(entries: Parameters<typeof getProjectFilePickerMatches>[0], query: string) {
   return getProjectFilePickerMatches(entries, query).map(({ name, path }) => ({ name, path }));
@@ -79,5 +79,17 @@ describe("getProjectFilePickerMatches", () => {
         ?.pathMatchIndices,
       [0, 1, 2],
     );
+  });
+});
+
+describe("hostFilePathFromQuery", () => {
+  it("opens pasted absolute paths and leaves fuzzy queries to the index", () => {
+    assert.equal(
+      hostFilePathFromQuery("  /Users/me/other-repo/docs/notes.md\n"),
+      "/Users/me/other-repo/docs/notes.md",
+    );
+    assert.equal(hostFilePathFromQuery("C:\\repo\\notes.md"), "C:\\repo\\notes.md");
+    assert.equal(hostFilePathFromQuery("docs/notes.md"), null);
+    assert.equal(hostFilePathFromQuery("notes"), null);
   });
 });
