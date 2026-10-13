@@ -216,12 +216,24 @@ keep both sides. If upstream ships assignees, take theirs and delete this.
 A Claude stop hook appends a self-check reply after the real final response, in
 the same turn. Upstream treats the last assistant message of a turn as its answer
 and folds everything before it under "Worked for ...", which hides the final
-response. `deriveTurnFolds` in `MessagesTimeline.logic.ts` leaves a turn unfolded
-when it contains a `Stop hook` runtime warning or a `Self-check` reply.
+response. The fork marks the hook and leaves such turns unfolded:
 
-**On conflict:** keep the check in `deriveTurnFolds` and its test ("keeps turns
-with a stop-hook self-check fully expanded"). Retire it only once that test passes
-on upstream's code without the fork's check.
+- `ClaudeAdapterV2.ts`: `isClaudeStopHookFeedback` turns the SDK's synthetic
+  `Stop hook feedback:` frame into a `Stop hook feedback` system notice. A
+  `/goal` evaluator check arrives the same way and is skipped, since upstream
+  tracks it as goal progress.
+- `MessagesTimeline.logic.ts` (web) and `threadActivity.ts` (mobile): a run with
+  that notice does not fold. Web also keeps the older `Self-check` reply-text
+  match for turns recorded before the notice existed.
+
+Do not rely on the reply text alone: Claude does not always open its follow-up
+with "Self-check", and turns that didn't were folded.
+
+**On conflict:** keep the adapter notice and both fold checks, with their tests
+("marks Stop hook feedback between the answer and its follow-up", "keeps turns
+with a stop-hook self-check fully expanded", "keeps a response with a Claude
+stop-hook follow-up unfolded"). Retire them only once those fold tests pass on
+upstream's code without the fork's checks.
 
 ### Chat: fork from a user message
 

@@ -13369,6 +13369,100 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
     );
 
+    const stopHookNotices = (events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) =>
+      events.flatMap((event) =>
+        event.type === "turn_item.updated" &&
+        event.turnItem.type === "system_notice" &&
+        event.turnItem.message === "Stop hook feedback"
+          ? [event.turnItem]
+          : [],
+      );
+
+    it.effect("marks Stop hook feedback between the answer and its follow-up", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("stop-hook-attempt"),
+            text: "Fix the test",
+            attachments: [],
+          }),
+        );
+        for (const frame of [
+          makeAssistantTextFrame({ uuid: "stop-hook-answer", text: "The test passes now." }),
+          claudeSdkFrame({
+            type: "user",
+            message: {
+              role: "user",
+              content: [{ type: "text", text: "Stop hook feedback:\nSELF-CHECK before stopping" }],
+            },
+            parent_tool_use_id: null,
+            isSynthetic: true,
+            uuid: "stop-hook-feedback",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          makeAssistantTextFrame({ uuid: "stop-hook-follow-up", text: "I re-ran it to check." }),
+          makeResultFrame({ uuid: "stop-hook-result", result: "I re-ran it to check." }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* Queue.take(harness.terminalReceipts);
+        const ordinalOf = (text: string) =>
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "assistant_message" &&
+            event.turnItem.text === text
+              ? [event.turnItem.ordinal]
+              : [],
+          )[0] ?? Number.NaN;
+        const notices = stopHookNotices(harness.events);
+        assert.lengthOf(notices, 1);
+        assert.isAbove(notices[0]!.ordinal, ordinalOf("The test passes now."));
+        assert.isBelow(notices[0]!.ordinal, ordinalOf("I re-ran it to check."));
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    );
+
+    it.effect("does not mark a goal's evaluator check as Stop hook feedback", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const condition = "all tests pass";
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("goal-check-attempt"),
+            text: `/goal ${condition}`,
+            attachments: [],
+          }),
+        );
+        for (const frame of [
+          syntheticFrame("goal-check-set", `Goal set: ${condition}`),
+          makeAssistantTextFrame({ uuid: "goal-check-work", text: "Fixing the test." }),
+          stopHookFeedback("goal-check-feedback", condition, "One test still fails."),
+          makeAssistantTextFrame({ uuid: "goal-check-done", text: "All tests pass now." }),
+          makeResultFrame({ uuid: "goal-check-result", result: "All tests pass now." }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* Queue.take(harness.terminalReceipts);
+        assert.lengthOf(stopHookNotices(harness.events), 0);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    );
+
     it.effect("keeps a goal active after a command turn with no model output", () =>
       Effect.gen(function* () {
         const harness = yield* makeWakeHarness;

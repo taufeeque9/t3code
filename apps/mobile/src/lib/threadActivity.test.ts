@@ -894,6 +894,44 @@ describe("buildThreadFeed", () => {
     expect(expanded[4]).toMatchObject({ message: { id: middle.messageId, text: middle.text } });
   });
 
+  it("keeps a response with a Claude stop-hook follow-up unfolded", () => {
+    const opening = {
+      ...assistantMessage("2026-06-20T00:00:01.500Z"),
+      id: TurnItemId.make("item-opening"),
+      messageId: MessageId.make("message-opening"),
+      text: "Saving the rule.",
+    };
+    const answer = {
+      ...assistantMessage("2026-06-20T00:00:02.500Z"),
+      id: TurnItemId.make("item-answer"),
+      messageId: MessageId.make("message-answer"),
+      text: "The rule is in your global instructions.",
+    };
+    const stopHook = {
+      ...base("item-stop-hook", "2026-06-20T00:00:02.600Z", 1),
+      type: "system_notice" as const,
+      message: "Stop hook feedback",
+    };
+    const feed = buildThreadFeed([
+      projected(userMessage(), 0),
+      projected(opening, 1),
+      projected(command(), 2),
+      projected(answer, 3),
+      projected(stopHook, 4),
+      projected(assistantMessage(), 5),
+    ]);
+    const latestRun = {
+      runId,
+      status: "completed" as const,
+      startedAt: "2026-06-20T00:00:01.000Z",
+      completedAt: "2026-06-20T00:00:03.000Z",
+    };
+
+    const presented = deriveThreadFeedPresentation(feed, latestRun, new Set());
+    expect(presented.some((entry) => entry.type === "run-fold")).toBe(false);
+    expect(presented.some((entry) => entry.id === "message-answer")).toBe(true);
+  });
+
   it("does not fold a response that only has opening and final messages", () => {
     const feed = buildThreadFeed([
       projected(userMessage(), 0),

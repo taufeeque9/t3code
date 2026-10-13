@@ -1221,6 +1221,35 @@ function nextClaudeGoal(
   };
 }
 
+const CLAUDE_STOP_HOOK_FEEDBACK_PREFIX = "Stop hook feedback:\n";
+
+/**
+ * Whether a root frame returns a blocking Stop hook's feedback, which Claude
+ * answers in the same turn after its final response. An active goal's
+ * evaluator checks arrive the same way and are tracked as goal progress instead.
+ */
+function isClaudeStopHookFeedback(
+  message: SDKMessage,
+  goal: OrchestrationV2ProviderGoal | null,
+): boolean {
+  if (
+    message.type !== "user" ||
+    message.parent_tool_use_id !== null ||
+    message.isSynthetic !== true
+  ) {
+    return false;
+  }
+  const content = message.message.content;
+  const text =
+    typeof content === "string"
+      ? content
+      : content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
+  return (
+    text.startsWith(CLAUDE_STOP_HOOK_FEEDBACK_PREFIX) &&
+    (goal === null || !text.startsWith(`${CLAUDE_STOP_HOOK_FEEDBACK_PREFIX}[${goal.objective}]: `))
+  );
+}
+
 const providerGoalsEqual = Schema.toEquivalence(Schema.NullOr(OrchestrationV2ProviderGoal));
 
 /** Compares a subagent result with its routed text regardless of block joins. */
@@ -6695,6 +6724,48 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return;
           }
           yield* trackClaudeGoal({ nativeThreadId: liveQuery.nativeThreadId, context, message });
+
+          // Marks where a Stop hook's follow-up starts, so the response before it
+          // is not folded away as work.
+          if (
+            message.type === "user" &&
+            isClaudeStopHookFeedback(
+              message,
+              goalsByNativeThread.get(liveQuery.nativeThreadId) ?? null,
+            )
+          ) {
+            const now = yield* DateTime.now;
+            const nativeItemId = message.uuid ?? `stop-hook:${context.providerTurnId}`;
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              driver: CLAUDE_PROVIDER,
+              turnItem: {
+                id: idAllocator.derive.turnItemFromProviderItem({
+                  driver: CLAUDE_PROVIDER,
+                  nativeItemId,
+                }),
+                threadId: context.input.threadId,
+                runId: context.input.runId,
+                nodeId: context.input.rootNodeId,
+                providerThreadId: context.input.providerThread.id,
+                providerTurnId: context.providerTurnId,
+                nativeItemRef: {
+                  driver: CLAUDE_PROVIDER,
+                  nativeId: nativeItemId,
+                  strength: message.uuid === undefined ? "weak" : "strong",
+                },
+                parentItemId: null,
+                ordinal: yield* resolveItemOrdinal(context, nativeItemId),
+                type: "system_notice",
+                status: "completed",
+                title: "Stop hook feedback",
+                message: "Stop hook feedback",
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+              },
+            });
+          }
 
           // Subagent narration belongs to its child thread, never the parent log.
           if (message.type === "stream_event" && !message.parent_tool_use_id) {

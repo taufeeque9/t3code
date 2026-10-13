@@ -1068,6 +1068,8 @@ function deriveTurnFolds(input: {
   }
   const groupsByRunId = new Map<RunId, TurnGroup>();
   const runlessFailedKeys = new Set<RunId>();
+  // A stop-hook notice is a system notice, which belongs to no fold group.
+  const stopHookRunIds = new Set<RunId>();
 
   // Fold state is keyed by run, so each runless prompt lends its response a
   // stable key of its own. Decide per prompt, not per thread: a V1 thread's
@@ -1088,6 +1090,9 @@ function deriveTurnFolds(input: {
             : null;
       runlessKey = boundaryRunId == null ? RunId.make(`runless:${entry.id}`) : null;
       continue;
+    }
+    if (isStopHookBoundary(entry) && entry.kind === "work" && entry.entry.runId) {
+      stopHookRunIds.add(entry.entry.runId);
     }
     const runId = timelineEntryFoldRunId(entry, runlessKey);
     if (!runId) {
@@ -1113,7 +1118,7 @@ function deriveTurnFolds(input: {
       groupsByRunId.set(runId, group);
     }
     group.entries.push(entry);
-    if (isStopHookBoundary(entry) || isSelfCheckMessage(entry)) {
+    if (isSelfCheckMessage(entry)) {
       group.hasStopHookFollowUp = true;
     }
     if (entry.kind === "message") {
@@ -1142,7 +1147,7 @@ function deriveTurnFolds(input: {
     // A Claude stop hook can append a self-check after the actual final
     // response. Treating only the last assistant message as terminal would
     // hide that final response inside the work fold.
-    if (group.hasStopHookFollowUp) {
+    if (group.hasStopHookFollowUp || stopHookRunIds.has(runId)) {
       continue;
     }
     const hiddenEntryIds = new Set<string>();

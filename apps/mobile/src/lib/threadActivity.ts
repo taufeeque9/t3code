@@ -1061,6 +1061,8 @@ function deriveThreadFeedRunFolds(
   const firstAssistantMessageIdByRun = new Map<RunId, string>();
   const terminalAssistantMessageIdByRun = new Map<RunId, string>();
   const interruptedRunIds = new Set<RunId>();
+  // A Claude stop hook's follow-up comes after the real final response.
+  const stopHookRunIds = new Set<RunId>();
   const failedRunIds = failedFeedRunIds(feed, latestRun);
   const groupsByRunId = new Map<
     RunId,
@@ -1103,6 +1105,9 @@ function deriveThreadFeedRunFolds(
     for (const activity of entry.activities) {
       const item = activity.projectedItem.item;
       if (item.type === "run_interrupt_result") interruptedRunIds.add(runId);
+      if (item.type === "system_notice" && /^Stop hook\b/u.test(item.message)) {
+        stopHookRunIds.add(runId);
+      }
       if (
         runId === runlessKey &&
         item.type === "error" &&
@@ -1121,6 +1126,7 @@ function deriveThreadFeedRunFolds(
       runId === activeRunId ||
       (runlessWorkActive && runId === runlessKey) ||
       interruptedRunIds.has(runId) ||
+      stopHookRunIds.has(runId) ||
       failedRunIds.has(runId) ||
       group.entries.some((entry) => entry.type === "message" && entry.message.streaming)
     ) {
