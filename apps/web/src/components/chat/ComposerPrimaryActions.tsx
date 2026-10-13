@@ -51,11 +51,9 @@ interface ComposerPrimaryActionsProps {
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
-  /** Tokens a stale session would re-read. When set, a Compact chip shows the count and Enter compacts first. */
+  /** Tokens a stale session would re-read. When set, a Compact chip shows the count and compacts, then sends. */
   compactBeforeSendTokens?: number | null;
-  /** The Compact chip is turned off, so the next send keeps full history. */
-  keepFullHistory?: boolean;
-  onToggleKeepFullHistory?: () => void;
+  onCompactAndSendMessage?: MouseEventHandler<HTMLButtonElement>;
 }
 
 const formatPendingPrimaryActionLabel = (input: {
@@ -110,8 +108,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   onInterrupt,
   onImplementPlanInNewThread,
   compactBeforeSendTokens = null,
-  keepFullHistory = false,
-  onToggleKeepFullHistory,
+  onCompactAndSendMessage,
 }: ComposerPrimaryActionsProps) {
   const pointerFocusProps = preserveComposerFocusOnPointerDown
     ? { onPointerDown: preventPointerFocus }
@@ -274,19 +271,16 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     compactBeforeSendTokens !== null && !showResume && !isEditingQueuedMessage
       ? formatContextWindowTokens(compactBeforeSendTokens)
       : null;
-  const compactsBeforeSend = compactTokens !== null && !keepFullHistory;
 
   const submitLabel = showResume
     ? "Resume thread"
     : isEditingQueuedMessage
       ? "Update queued message"
-      : compactsBeforeSend
-        ? "Compact and send"
-        : isQueuing
-          ? "Queue message"
-          : isRunning
-            ? "Steer message"
-            : "Submit message";
+      : isQueuing
+        ? "Queue message"
+        : isRunning
+          ? "Steer message"
+          : "Submit message";
   const submitStatus = isEnvironmentUnavailable
     ? "Environment disconnected"
     : (sendDisabledReason ??
@@ -301,12 +295,11 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
             : null));
   const submitTooltip =
     submitStatus ??
-    (compactsBeforeSend
-      ? `Summarize ${compactTokens} tokens of history, then send`
-      : isRunning && !isEditingQueuedMessage
-        ? `Click to ${followUpBehavior}, Ctrl/⌘-click${alternateShortcutLabel ? ` or ${alternateShortcutLabel}` : ""} to ${alternateAction}`
-        : submitLabel);
+    (isRunning && !isEditingQueuedMessage
+      ? `Click to ${followUpBehavior}, Ctrl/⌘-click${alternateShortcutLabel ? ` or ${alternateShortcutLabel}` : ""} to ${alternateAction}`
+      : submitLabel);
 
+  const sendUnavailable = isSendBusy || isSendDisabled || isConnecting || isEnvironmentUnavailable;
   const sendButton = (
     <button
       type={showResume ? "button" : "submit"}
@@ -318,13 +311,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       )}
       {...pointerFocusProps}
       onClick={showResume ? onResume : onSubmitMessage}
-      disabled={
-        isSendBusy ||
-        isSendDisabled ||
-        isConnecting ||
-        isEnvironmentUnavailable ||
-        (!hasSendableContent && !showResume)
-      }
+      disabled={sendUnavailable || (!hasSendableContent && !showResume)}
       aria-label={submitStatus ?? submitLabel}
     >
       {stageBackdropVariant ? (
@@ -369,29 +356,19 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           render={
             <button
               type="button"
-              className={cn(
-                "flex h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border px-2.5 text-xs tabular-nums outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-64 sm:h-8 [&_svg]:pointer-events-none [&_svg]:size-3.5",
-                keepFullHistory
-                  ? "border-border text-muted-foreground hover:text-foreground"
-                  : "border-warning/40 text-warning hover:bg-warning/8",
-              )}
+              className="flex h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-warning/40 px-2.5 text-xs tabular-nums text-warning outline-none transition-colors hover:bg-warning/8 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-64 sm:h-8 [&_svg]:pointer-events-none [&_svg]:size-3.5"
               {...pointerFocusProps}
-              aria-pressed={!keepFullHistory}
-              aria-label={`Compact ${compactTokens} tokens of history before sending`}
-              disabled={!canOperateThread}
-              onClick={onToggleKeepFullHistory}
+              aria-label={`Compact ${compactTokens} tokens of history, then send`}
+              disabled={!canOperateThread || sendUnavailable || !hasSendableContent}
+              onClick={onCompactAndSendMessage}
             />
           }
         >
           <Minimize2Icon aria-hidden="true" />
-          {keepFullHistory ? "Full" : "Compact"}
+          Compact
           <span>{compactTokens}</span>
         </TooltipTrigger>
-        <TooltipPopup>
-          {keepFullHistory
-            ? `Next send keeps all ${compactTokens} tokens. Click to compact first`
-            : `Next send compacts ${compactTokens} tokens first. Click to keep full history`}
-        </TooltipPopup>
+        <TooltipPopup>{`Summarize ${compactTokens} tokens of history, then send`}</TooltipPopup>
       </Tooltip>
       {submit}
     </div>

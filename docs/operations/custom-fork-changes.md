@@ -260,6 +260,26 @@ absolute chat links, from any project.
 **On conflict:** re-apply the result group on upstream's picker. Retire it if
 upstream's picker opens absolute paths.
 
+### Composer: compacting a stale Claude thread is opt-in
+
+Upstream's Compact chip (shown after Claude's prompt cache expires on a 100k+
+token thread) is on by default, so Enter and the send button run `/compact`
+before the message. Taufeeque wants a normal send by default. The chip is a
+one-click "compact, then send" button instead of a toggle; Enter and the send
+button always keep full history.
+
+- `ComposerPrimaryActions.tsx`: the chip calls `onCompactAndSendMessage`; the
+  send button no longer changes label or tooltip for compaction
+- `ChatComposer.tsx`: `handleCompactAndSendMessage` passes `compactFirst`
+  through `submitComposer` to `onSend`; the mobile collapsed send button sends
+- `ChatView.tsx`: `onSend` takes `compactFirst`; the per-thread full-history
+  toggle state is gone
+- `docs/user/providers-claude.md`: the chip's description
+
+**On conflict:** keep upstream's offer conditions (`shouldOfferResumeCompaction`)
+and re-apply the opt-in wiring. Retire it if upstream makes plain send the
+default.
+
 ### Temporary worktree branches use the branch-name prefix
 
 Upstream names worktree branches `t3/<hex>` and only applies the
