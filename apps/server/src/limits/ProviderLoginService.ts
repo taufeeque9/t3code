@@ -184,7 +184,7 @@ export const make = Effect.gen(function* () {
       { env: environment, stdio: ["pipe", "pipe", "pipe"] },
     ) as NodeChildProcess.ChildProcessWithoutNullStreams;
 
-    const loginId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
+    const loginId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
     const pending: PendingLogin = {
       loginId,
       instanceId: input.instanceId,

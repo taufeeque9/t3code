@@ -200,7 +200,10 @@ It follows upstream's label feature layer for layer: an optional `assignees`
 capability and viewer permission (triage access), an optional `assignees` list on
 `PullRequestDetail`, two RPCs (`pullRequests.assigneeCandidates`,
 `pullRequests.setAssignees`), optional provider methods, and a cache update in
-`client-runtime`. `setAssignees` needs `source-control:write`, declared beside
+`client-runtime`. The GraphQL side is an `assignees` selection on upstream's
+`PullRequestCore` and an `AssigneeCandidates` query, both in
+`pullRequestReads.graphql`; regenerate `pullRequestReads.graphql.ts` with
+`vp run generate` in that package after a conflict there. `setAssignees` needs `source-control:write`, declared beside
 `setLabels` in `clientRpcPermissions.ts`, and a session without it sees the
 menu disabled like the label menu (`PullRequestDetailPanel.tsx`). Only the GitHub provider implements it; assignees ride upstream's
 core GraphQL detail query, so the detail costs no extra request. The UI lives in the
@@ -317,7 +320,8 @@ The retired sidebar search left migration ID 50, `ProjectionThreadSearchUnits`,
 in installed databases. Keep that migration and its unused table. Upstream's
 migrations from ID 50 onward run one ID later here (`OrchestrationV2` is 56).
 Preserve every released ID/name pair in `Migrations.ts`; renumbering would make
-a later schema change look already applied. Append incoming upstream migrations
+a later schema change look already applied. `FIRST_V2_MIGRATION_ID` is 56 for the same reason, and
+`Migrations.test.ts` names IDs one higher than upstream's copy. Append incoming upstream migrations
 at the next free fork ID and adjust tests that name migration IDs, including
 the dev-database migration test.
 
