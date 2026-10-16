@@ -157,3 +157,71 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
     }).pipe(Effect.provide(realQueryRunner)),
   );
 });
+
+describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude session history", () => {
+  const projectDir = "/t3-claude-history-test/project";
+  const sessionId = "11111111-2222-4333-8444-555555555555";
+
+  /** A config dir holding one transcript, which the server's own Claude home lacks. */
+  function accountConfigDir(): string {
+    const configDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-claude-account-"));
+    const projects = NodePath.join(configDir, "projects", "-t3-claude-history-test-project");
+    NodeFS.mkdirSync(projects, { recursive: true });
+    NodeFS.writeFileSync(
+      NodePath.join(projects, `${sessionId}.jsonl`),
+      `${JSON.stringify({
+        type: "user",
+        uuid: "aaaaaaaa-0000-4000-8000-000000000001",
+        parentUuid: null,
+        sessionId,
+        timestamp: "2026-10-15T00:00:00.000Z",
+        cwd: projectDir,
+        message: { role: "user", content: "hello" },
+      })}\n`,
+    );
+    return configDir;
+  }
+
+  // The runner hands the fork to this checkout's CLI, as a packaged server does to its own.
+  const runnerFromSource = realQueryRunner.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.succeed(HostProcess.Environment, {}),
+        Layer.succeed(HostProcess.IsExecutable, false),
+        Layer.succeed(HostProcess.Arguments, [
+          process.execPath,
+          NodePath.resolve(import.meta.dirname, "../../bin.ts"),
+        ]),
+      ),
+    ),
+  );
+
+  it.effect("forks a session stored under another account's config dir", () =>
+    Effect.gen(function* () {
+      const configDir = accountConfigDir();
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(configDir, { recursive: true, force: true })),
+      );
+      const runner = yield* ClaudeAgentSdkQueryRunner;
+      const forked = yield* runner.forkSession({
+        sessionId,
+        options: { dir: projectDir },
+        environment: { ...process.env, CLAUDE_CONFIG_DIR: configDir },
+        threadId: ThreadId.make("thread-fork-account"),
+        providerSessionId: ProviderSessionId.make("session-fork-account"),
+      });
+
+      assert.notEqual(forked.sessionId, sessionId);
+      assert.isTrue(
+        NodeFS.existsSync(
+          NodePath.join(
+            configDir,
+            "projects",
+            "-t3-claude-history-test-project",
+            `${forked.sessionId}.jsonl`,
+          ),
+        ),
+      );
+    }).pipe(Effect.provide(runnerFromSource)),
+  );
+});

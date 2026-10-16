@@ -108,6 +108,13 @@ session. Each account remains a separate provider instance with its own
   handoff. Switching back copies the updated native history back in full.
 - `Orchestrator.ts` classifies queued account switches against the native
   thread's owner even after the composer selection changes.
+- `ClaudeAdapterV2.ts`'s query runner forks sessions and looks up subagent
+  transcripts through the CLI's `__claude-history` subcommand
+  (`claudeHistoryWorker.ts`) when the instance's `CLAUDE_CONFIG_DIR` differs
+  from the server's. The SDK helpers read the server's environment, so upstream
+  fails to fork any thread on an account with its own `homePath` ("Session …
+  not found in project directory"). Drop this once upstream passes the
+  instance environment to those helpers.
 
 Sharing a transcript tree through symlinks avoids copying. Distinct directories
 are supported without changing their links or account credentials. Claude ↔

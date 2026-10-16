@@ -1866,6 +1866,7 @@ describe("ClaudeAdapterV2 native fork", () => {
               dir: "/workspace",
               upToMessageId: "assistant-message-cursor",
             },
+            environment: {},
             threadId: targetThreadId,
             providerSessionId,
           },
