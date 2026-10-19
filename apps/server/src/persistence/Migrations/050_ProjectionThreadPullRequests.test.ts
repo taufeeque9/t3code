@@ -146,7 +146,6 @@ layer("050_ProjectionThreadPullRequests", (it) => {
         yield* sql`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'projection_thread_search_units'`;
       assert.equal(searchTables.length, 1);
 
-      // The legacy column stays so a rollback keeps its data.
       const columns = yield* sql<{ readonly name: string }>`
         PRAGMA table_info(projection_threads)
       `;

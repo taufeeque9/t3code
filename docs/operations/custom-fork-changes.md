@@ -149,7 +149,7 @@ but no proactive warning before exhaustion. This warns in the thread at 95% of
 a session or weekly window.
 
 - `apps/web/src/components/usage/limitWarning.ts` and its test
-- `apps/web/src/components/ChatView.tsx`: the `limitWarning` memo and its banner
+- `apps/web/src/components/ChatView.tsx`: `limitWarning` and its banner
 
 The web/desktop warning follows the composer's selected account and model.
 Model-specific windows only warn for that model; shared windows always apply.

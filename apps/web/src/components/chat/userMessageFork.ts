@@ -1,4 +1,10 @@
-import type { MessageId, OrchestrationV2Run, RunId, ThreadId } from "@t3tools/contracts";
+import type {
+  MessageId,
+  OrchestrationV2ConversationMessage,
+  OrchestrationV2Run,
+  RunId,
+  ThreadId,
+} from "@t3tools/contracts";
 
 export interface UserMessageForkSource {
   readonly sourceThreadId: ThreadId;
@@ -42,5 +48,38 @@ export function resolveUserMessageForkSources(
       previous = run;
     }
   }
+  return sources;
+}
+
+type ForkSourceRuns = Parameters<typeof resolveUserMessageForkSources>[0];
+
+const forkSourcesByRuns = new WeakMap<
+  ForkSourceRuns,
+  { readonly compactKey: string; readonly sources: UserMessageForkSources }
+>();
+
+/**
+ * The thread's fork sources, keeping one identity while only message text changes, so streamed
+ * replies do not re-render every timeline row.
+ */
+export function userMessageForkSourcesForThread(
+  runs: ForkSourceRuns,
+  messages: ReadonlyArray<
+    Pick<OrchestrationV2ConversationMessage, "id" | "role" | "text" | "attachments">
+  >,
+): UserMessageForkSources {
+  const compactIds = messages
+    .filter(
+      (message) =>
+        message.role === "user" &&
+        message.attachments.length === 0 &&
+        message.text.trim().toLowerCase() === "/compact",
+    )
+    .map((message) => message.id);
+  const compactKey = compactIds.join("\n");
+  const cached = forkSourcesByRuns.get(runs);
+  if (cached?.compactKey === compactKey) return cached.sources;
+  const sources = resolveUserMessageForkSources(runs, new Set(compactIds));
+  forkSourcesByRuns.set(runs, { compactKey, sources });
   return sources;
 }

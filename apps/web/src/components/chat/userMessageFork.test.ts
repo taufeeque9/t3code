@@ -1,7 +1,7 @@
 import { MessageId, RunId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveUserMessageForkSources } from "./userMessageFork";
+import { resolveUserMessageForkSources, userMessageForkSourcesForThread } from "./userMessageFork";
 
 const threadId = ThreadId.make("thread-1");
 const run = (
@@ -56,5 +56,31 @@ describe("resolveUserMessageForkSources", () => {
         MessageId.make("message-3"),
       )?.runId,
     ).toBe(RunId.make("run-2"));
+  });
+});
+
+describe("userMessageForkSourcesForThread", () => {
+  const runs = [run(1), run(2, "running")];
+  const userMessage = (id: string, text: string) => ({
+    id: MessageId.make(id),
+    role: "user" as const,
+    text,
+    attachments: [],
+  });
+
+  it("keeps one identity while only message text changes", () => {
+    const first = userMessageForkSourcesForThread(runs, [userMessage("message-1", "a")]);
+    const streamed = userMessageForkSourcesForThread(runs, [
+      userMessage("message-1", "a"),
+      { id: MessageId.make("reply"), role: "assistant", text: "partial", attachments: [] },
+    ]);
+    expect(streamed).toBe(first);
+  });
+
+  it("recomputes when a /compact command appears", () => {
+    const first = userMessageForkSourcesForThread(runs, [userMessage("message-1", "a")]);
+    const compacted = userMessageForkSourcesForThread(runs, [userMessage("message-1", "/compact")]);
+    expect(compacted).not.toBe(first);
+    expect(compacted.has(MessageId.make("message-2"))).toBe(false);
   });
 });
