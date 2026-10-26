@@ -16,8 +16,6 @@ describe("claudeUsageResponseToLimits", () => {
             five_hour: { utilization: 54, resets_at: "2026-07-18T14:39:00Z" },
             seven_day: { utilization: 18.4, resets_at: "2026-07-24T08:59:00+00:00" },
             seven_day_opus: { utilization: 3, resets_at: null },
-            // Newer CLIs add this on top of the typed keys; the pinned SDK
-            // typings do not know it yet.
             ...({
               model_scoped: [
                 { display_name: "Fable", utilization: 73, resets_at: "2026-07-24T08:59:00Z" },
@@ -86,15 +84,6 @@ describe("claudeUsageResponseToLimits", () => {
     ).toEqual({ overageIncluded: "Fable" });
   });
 
-  it("reports API key and Bedrock accounts as unsupported", () => {
-    expect(
-      claudeUsageResponseToLimits({
-        checkedAt,
-        response: { rate_limits_available: false, rate_limits: null },
-      }).limits,
-    ).toEqual({ checkedAt, windows: [], unavailable: { reason: "unsupported" } });
-  });
-
   it("skips a window the endpoint reports without a utilization", () => {
     expect(
       claudeUsageResponseToLimits({
@@ -118,45 +107,119 @@ describe("claudeUsageResponseToLimits", () => {
     ]);
   });
 
-  it("reports extra usage only for an account that enabled it", () => {
-    const read = (extra: object) =>
-      claudeUsageResponseToLimits({
-        checkedAt,
-        response: {
-          rate_limits_available: true,
-          rate_limits: {
-            five_hour: { utilization: 10, resets_at: null },
-            ...({ extra_usage: extra } as object),
-          },
-        },
-      }).limits.extraUsage;
-
-    expect(
-      read({
+  const enterpriseResponse = {
+    rate_limits_available: true,
+    rate_limits: {
+      five_hour: null,
+      seven_day: null,
+      spend: {
+        enabled: true,
+        used: { amount_minor: 4_631, currency: "USD", exponent: 2 },
+        limit: { amount_minor: 50_000, currency: "USD", exponent: 2 },
+        percent: 9,
+      },
+      extra_usage: {
         is_enabled: true,
-        used_credits: 1234,
-        monthly_limit: 5000,
-        utilization: 24.68,
+        used_credits: 4_631,
+        monthly_limit: 50_000,
+        utilization: 9.261999999999999,
         currency: "USD",
         decimal_places: 2,
-      }),
-    ).toEqual({
-      usedCredits: 1234,
-      monthlyLimit: 5000,
-      usedPercent: 24.68,
-      currency: "USD",
-      decimalPlaces: 2,
-    });
+      },
+    },
+  };
+  const monthlyWindow = {
+    id: "monthly_spend",
+    kind: "monthly",
+    label: "Monthly spend",
+    usedPercent: expect.closeTo(9.262, 10),
+  };
 
-    expect(read({ is_enabled: false, used_credits: 10, monthly_limit: 20 })).toBeUndefined();
-    // Credit-counting accounts omit the currency and rely on the default scale.
-    expect(read({ is_enabled: true, used_credits: 7 })).toEqual({
-      usedCredits: 7,
-      monthlyLimit: null,
-      usedPercent: null,
-      currency: null,
-      decimalPlaces: 2,
-    });
+  it("maps the captured Enterprise budget precisely, preferring spend beside rolling windows", () => {
+    expect(claudeUsageResponseToLimits({ checkedAt, response: enterpriseResponse }).limits).toEqual(
+      {
+        checkedAt,
+        windows: [monthlyWindow],
+      },
+    );
+    const response = {
+      ...enterpriseResponse,
+      rate_limits: {
+        ...enterpriseResponse.rate_limits,
+        five_hour: { utilization: 12, resets_at: null },
+        extra_usage: {
+          ...enterpriseResponse.rate_limits.extra_usage,
+          used_credits: 30_000,
+          utilization: 60,
+        },
+      },
+    };
+    expect(claudeUsageResponseToLimits({ checkedAt, response }).limits.windows).toEqual([
+      {
+        id: "five_hour",
+        kind: "session",
+        label: "Session",
+        usedPercent: 12,
+        windowDurationMins: 300,
+      },
+      monthlyWindow,
+    ]);
+  });
+
+  it("falls back to enabled extra usage amounts or utilization when spend is unusable", () => {
+    const response = {
+      ...enterpriseResponse,
+      rate_limits: {
+        ...enterpriseResponse.rate_limits,
+        spend: {
+          ...enterpriseResponse.rate_limits.spend,
+          enabled: false,
+          used: { amount_minor: 30_000, currency: "USD", exponent: 2 },
+        },
+        extra_usage: { ...enterpriseResponse.rate_limits.extra_usage, utilization: 9 },
+      },
+    };
+    expect(claudeUsageResponseToLimits({ checkedAt, response }).limits.windows).toEqual([
+      monthlyWindow,
+    ]);
+    const utilizationOnly = {
+      ...response,
+      rate_limits: {
+        ...response.rate_limits,
+        spend: { enabled: true, used: null, limit: null, percent: 9 },
+        extra_usage: {
+          ...enterpriseResponse.rate_limits.extra_usage,
+          used_credits: null,
+          monthly_limit: null,
+        },
+      },
+    };
+    expect(
+      claudeUsageResponseToLimits({ checkedAt, response: utilizationOnly }).limits.windows,
+    ).toEqual([monthlyWindow]);
+  });
+
+  it("omits disabled budgets and refuses invalid money without an enabled fallback", () => {
+    const rateLimits = enterpriseResponse.rate_limits;
+    const response = {
+      ...enterpriseResponse,
+      rate_limits: {
+        ...rateLimits,
+        spend: { ...rateLimits.spend, enabled: false },
+        extra_usage: { ...rateLimits.extra_usage, is_enabled: false },
+      },
+    };
+    expect(claudeUsageResponseToLimits({ checkedAt, response }).limits.windows).toEqual([]);
+    response.rate_limits.spend = {
+      ...rateLimits.spend,
+      limit: { ...rateLimits.spend.limit, currency: "EUR" },
+    };
+    expect(claudeUsageResponseToLimits({ checkedAt, response }).limits.windows).toEqual([]);
+    response.rate_limits.spend = {
+      ...rateLimits.spend,
+      limit: { ...rateLimits.spend.limit, amount_minor: 0 },
+    };
+    expect(claudeUsageResponseToLimits({ checkedAt, response }).limits.windows).toEqual([]);
   });
 });
 
@@ -204,17 +267,5 @@ describe("claudeRateLimitEventToUpdate", () => {
         },
       ],
     });
-  });
-
-  it("ignores windows the page does not render and events without a utilization", () => {
-    expect(
-      claudeRateLimitEventToUpdate(
-        { status: "allowed", rateLimitType: "seven_day_opus", utilization: 0.1 },
-        noNames,
-      ),
-    ).toBeUndefined();
-    expect(
-      claudeRateLimitEventToUpdate({ status: "rejected", rateLimitType: "five_hour" }, noNames),
-    ).toBeUndefined();
   });
 });

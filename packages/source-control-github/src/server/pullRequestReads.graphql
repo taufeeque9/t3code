@@ -1,4 +1,11 @@
-# Reads of one pull request, or of the repository it belongs to.
+# Reads of the signed-in account, one pull request, or its repository.
+
+query RoutingIdentityViewer {
+  viewer {
+    databaseId
+    login
+  }
+}
 
 # Resolves a listing's authors to avatars, which no listing field carries.
 query ActorAvatars($ids: [ID!]!) {
@@ -51,11 +58,13 @@ query PullRequestCore(
   $number: Int!
   $headRef: String!
   $required: Boolean!
+  $requestedReviewers: Int!
 ) {
   repository(owner: $owner, name: $name) {
     mergeCommitAllowed
     squashMergeAllowed
     rebaseMergeAllowed
+    autoMergeAllowed
     viewerPermission
     pullRequest(number: $number) {
       number
@@ -65,6 +74,7 @@ query PullRequestCore(
       state
       isDraft
       mergeable
+      mergeStateStatus
       reviewDecision
       additions
       deletions
@@ -108,7 +118,7 @@ query PullRequestCore(
           behindBy
         }
       }
-      reviewRequests(first: 100) {
+      reviewRequests(first: $requestedReviewers) {
         nodes {
           requestedReviewer {
             ... on User {
@@ -239,9 +249,13 @@ query PullRequestActivity(
       commits(last: 100) @include(if: $head) {
         nodes {
           commit {
+            id
             oid
             messageHeadline
             committedDate
+            parents(first: 1) {
+              totalCount
+            }
             authors(first: 10) {
               nodes {
                 name
@@ -295,6 +309,18 @@ query PullRequestActivity(
           }
         }
       }
+    }
+  }
+}
+
+# Merge commits include upstream changes in their stats, which the timeline does not display.
+# Read only the non-merge commits named by the activity connection.
+query PullRequestCommitStats($ids: [ID!]!) {
+  nodes(ids: $ids) {
+    ... on Commit {
+      oid
+      additions
+      deletions
     }
   }
 }
@@ -366,6 +392,7 @@ query ViewerPermissions($owner: String!, $name: String!, $number: Int!) {
     mergeCommitAllowed
     squashMergeAllowed
     rebaseMergeAllowed
+    autoMergeAllowed
     viewerPermission
     pullRequest(number: $number) {
       viewerCanUpdate
@@ -451,6 +478,37 @@ query LabelCandidates($owner: String!, $name: String!, $number: Int!) {
   }
 }
 
+query RepositoryLabels($owner: String!, $name: String!, $query: String) {
+  repository(owner: $owner, name: $name) {
+    labels(first: 100, query: $query, orderBy: { field: NAME, direction: ASC }) {
+      pageInfo {
+        hasNextPage
+      }
+      nodes {
+        name
+        color
+      }
+    }
+  }
+}
+
+# Mentionable rather than assignable users: a pull request from a fork is opened by someone with
+# no access to the repository, and a listing is still narrowed by them.
+query RepositoryAuthors($owner: String!, $name: String!, $query: String) {
+  repository(owner: $owner, name: $name) {
+    mentionableUsers(first: 50, query: $query) {
+      pageInfo {
+        hasNextPage
+      }
+      nodes {
+        login
+        name
+        avatarUrl
+      }
+    }
+  }
+}
+
 # Who this pull request may be assigned to, and who it already is. `assignableUsers` is the same
 # list the reviewer candidates read from.
 query AssigneeCandidates($owner: String!, $name: String!, $number: Int!) {
@@ -491,6 +549,24 @@ query PullRequestFilesViewed($owner: String!, $name: String!, $number: Int!, $af
         nodes {
           path
           viewerViewedState
+        }
+      }
+    }
+  }
+}
+
+query PullRequestFileStats($owner: String!, $name: String!, $number: Int!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      files(first: 100, after: $after) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          path
+          additions
+          deletions
         }
       }
     }

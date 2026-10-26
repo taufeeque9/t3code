@@ -9,10 +9,7 @@ import {
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
 
-/**
- * `id` is stable per provider (`five_hour`, `seven_day_opus`, `primary`) so a
- * sparse turn-driven update lands on the same row a full probe produced.
- */
+/** Stable per-provider ids let sparse updates merge with full probes. */
 export const ServerProviderUsageWindow = Schema.Struct({
   id: TrimmedNonEmptyString,
   kind: Schema.Literals(["session", "weekly", "monthly", "other"]),
@@ -31,31 +28,12 @@ export const ServerProviderResetCredits = Schema.Struct({
 });
 export type ServerProviderResetCredits = typeof ServerProviderResetCredits.Type;
 
-/**
- * Pay-as-you-go credits spent past the subscription allowance. Claude reports
- * these only when the account has extra usage enabled. Amounts are minor units
- * scaled by `decimalPlaces`.
- */
-export const ServerProviderExtraUsage = Schema.Struct({
-  usedCredits: Schema.NullOr(Schema.Number),
-  monthlyLimit: Schema.NullOr(Schema.Number),
-  usedPercent: Schema.NullOr(Schema.Number),
-  currency: Schema.NullOr(Schema.String),
-  decimalPlaces: NonNegativeInt,
-});
-export type ServerProviderExtraUsage = typeof ServerProviderExtraUsage.Type;
-
-/**
- * `unavailable` distinguishes an account that can never report windows (API
- * key, Bedrock) from a probe that failed this time, so clients can keep the
- * last good bars for the latter and clear them for the former.
- */
+/** Clear bars for unavailable accounts; retain last good bars after a failed probe. */
 export const ServerProviderUsageLimits = Schema.Struct({
   checkedAt: IsoDateTime,
   windows: ForwardCompatibleArray(ServerProviderUsageWindow),
   credentialFingerprint: Schema.optional(TrimmedNonEmptyString),
   resetCredits: Schema.optional(ServerProviderResetCredits),
-  extraUsage: Schema.optional(ServerProviderExtraUsage),
   externalUsage: Schema.optional(
     Schema.Struct({
       label: TrimmedNonEmptyString,
@@ -71,11 +49,7 @@ export const ServerProviderUsageLimits = Schema.Struct({
 });
 export type ServerProviderUsageLimits = typeof ServerProviderUsageLimits.Type;
 
-/**
- * Sparse by contract: Claude's `rate_limit_event` names one window at a time
- * and Codex documents its notification as a partial. Windows merge by `id` onto
- * the instance's published snapshot; omitted windows are unchanged.
- */
+/** Partial updates merge windows by id; omitted windows remain unchanged. */
 export const ProviderUsageLimitsUpdate = Schema.Struct({
   windows: Schema.Array(ServerProviderUsageWindow),
 });

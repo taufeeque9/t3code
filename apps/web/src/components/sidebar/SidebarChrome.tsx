@@ -156,7 +156,7 @@ function SidebarUtilityItem({
   );
 }
 
-export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
+const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const navigate = useNavigate();
   const navigateToMainApp = useNavigateToMainApp();
   const { isMobile, setOpenMobile } = useSidebar();
@@ -215,7 +215,7 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
           {pullRequestsSupported ? (
             <SidebarUtilityItem
               icon={<PullRequestGlyph.pullRequest />}
-              label="Pull Requests"
+              label="Pull requests"
               onClick={handlePullRequestsClick}
             />
           ) : null}

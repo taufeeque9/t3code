@@ -106,15 +106,12 @@ session. Each account remains a separate provider instance with its own
   Transfers preserve unrelated sessions and atomically publish the transcript.
   A missing or unreadable source fails the switch instead of sending a portable
   handoff. Switching back copies the updated native history back in full.
-- `Orchestrator.ts` classifies queued account switches against the native
-  thread's owner even after the composer selection changes.
-- `ClaudeAdapterV2.ts`'s query runner forks sessions and looks up subagent
-  transcripts through the CLI's `__claude-history` subcommand
-  (`claudeHistoryWorker.ts`) when the instance's `CLAUDE_CONFIG_DIR` differs
-  from the server's. The SDK helpers read the server's environment, so upstream
-  fails to fork any thread on an account with its own `homePath` ("Session …
-  not found in project directory"). Drop this once upstream passes the
-  instance environment to those helpers.
+- `ClaudeAdapterV2.ts`'s query runner looks up subagent transcripts through
+  upstream's Claude history worker (`claudeHistoryWorker.ts`, the
+  `getSubagentMessages` method) when the instance's `CLAUDE_CONFIG_DIR` differs
+  from the server's. Upstream already forks sessions that way but still reads
+  subagent transcripts in-process, which finds nothing for an account with its
+  own `homePath`. Drop this once upstream routes that lookup through the worker.
 
 Sharing a transcript tree through symlinks avoids copying. Distinct directories
 are supported without changing their links or account credentials. Claude ↔
@@ -126,21 +123,8 @@ preservation; provider-name equality alone is insufficient without making the
 native transcript available to the destination account.
 
 Upstream now scans every configured Claude, Codex, and Grok instance for usage
-history and collapses aliased homes. That behavior is no longer fork-owned.
-
-### Claude extra usage credits
-
-Upstream's Claude limits parser ignores `rate_limits.extra_usage`, so accounts on
-pay-as-you-go credits (the FAR account) see no credit balance. The fork adds the
-smallest edit on top of upstream's pipeline rather than a parallel view.
-
-- `packages/contracts/src/providerUsageLimits.ts`: `ServerProviderExtraUsage`,
-  optional `extraUsage` on `ServerProviderUsageLimits`
-- `apps/server/src/provider/claudeUsageLimits.ts`: `claudeExtraUsage`
-- `apps/web/src/components/usage/extraUsage.ts`, shown as an `Extra` row in the
-  account popover of upstream's `UsageLimitsPooled.tsx`
-
-**On conflict:** drop all of it the moment upstream reports extra usage itself.
+history and collapses aliased homes, and classifies queued account switches
+against the active provider thread. Neither is fork-owned any longer.
 
 ### Composer: warning when the thread's account is nearly spent
 
@@ -149,7 +133,9 @@ but no proactive warning before exhaustion. This warns in the thread at 95% of
 a session or weekly window.
 
 - `apps/web/src/components/usage/limitWarning.ts` and its test
-- `apps/web/src/components/ChatView.tsx`: `limitWarning` and its banner
+- `apps/web/src/components/usage/useLimitWarningBanner.tsx` builds the banner
+- `apps/web/src/components/ChatView.tsx`: calls the hook and stacks the banner
+  first in `composerBannerItems`
 
 The web/desktop warning follows the composer's selected account and model.
 Model-specific windows only warn for that model; shared windows always apply.
@@ -212,7 +198,7 @@ capability and viewer permission (triage access), an optional `assignees` list o
 `pullRequestReads.graphql`; regenerate `pullRequestReads.graphql.ts` with
 `vp run generate` in that package after a conflict there. `setAssignees` needs `source-control:write`, declared beside
 `setLabels` in `clientRpcPermissions.ts`, and a session without it sees the
-menu disabled like the label menu (`PullRequestDetailPanel.tsx`). Only the GitHub provider implements it; assignees ride upstream's
+menu disabled like the label menu (`usePullRequestDetail.ts`). Only the GitHub provider implements it; assignees ride upstream's
 core GraphQL detail query, so the detail costs no extra request. The UI lives in the
 fork-owned `PullRequestAssignees.tsx`; `PullRequestSummaryTab.tsx` only mounts it.
 There is no mobile assignee UI or agent MCP tool. GitHub can return success
@@ -254,10 +240,11 @@ the new thread's composer, to resend or edit it. It rides upstream's
 
 - `apps/web/src/components/chat/userMessageFork.ts` and its test map each run's
   starting message to the forkable run before it
-- `MessagesTimeline.tsx`: `ForkUserMessageButton`, the `userMessageForkSources`
-  prop, and an optional `prompt` on upstream's `onForkFromRun`
-- `ChatView.tsx`: computes the sources from the projection's runs and sets the
-  forked thread's draft before navigating
+- `TimelineUserMessageRow.tsx`: `ForkUserMessageButton`; `MessagesTimeline.tsx`
+  and `timelineRowContext.ts`: the `userMessageForkSources` prop and an optional
+  `prompt` on upstream's `onForkFromRun`
+- `ChatView.tsx` computes the sources from the projection's runs;
+  `useTimelineRewind.ts` sets the forked thread's draft before navigating
 
 A thread's first message has no run before it, so it gets no button. A message
 sent after a completed `/compact` run forks before that run, because Claude
@@ -293,9 +280,11 @@ button always keep full history.
 - `ComposerPrimaryActions.tsx`: the chip calls `onCompactAndSendMessage`; the
   send button no longer changes label or tooltip for compaction
 - `ChatComposer.tsx`: `handleCompactAndSendMessage` passes `compactFirst`
-  through `submitComposer` to `onSend`; the mobile collapsed send button sends
-- `ChatView.tsx`: `onSend` takes `compactFirst`; the per-thread full-history
-  toggle state is gone
+  through `submitComposer` to `onSend`, via `ComposerFooterControls.tsx`; the
+  mobile collapsed send button sends
+- `useComposerSend.ts`: `onSend` takes `compactFirst` and hands it to
+  `planComposerTurn` (`ChatView.logic.ts`); `ChatView.tsx` no longer keeps the
+  per-thread full-history toggle state
 - `docs/user/providers-claude.md`: the chip's description
 
 **On conflict:** keep upstream's offer conditions (`shouldOfferResumeCompaction`)
@@ -357,6 +346,13 @@ deleting the V1 code all three were built on.
 - The `worktreeBranchPrefix` setting gave way to upstream's `branchNamePrefix`;
   only the temporary-branch patch above survives.
 
+### Claude extra usage credits
+
+Retired on 2026-10-25 when upstream began reading `rate_limits.spend` and
+`rate_limits.extra_usage` into a "Monthly spend" window on the account's bar.
+The fork's `Extra` row also showed the credit amounts; upstream shows the
+percentage only.
+
 ### Fuzzy sidebar search over thread contents
 
 Retired on 2026-09-22 after upstream fed its thread search into the sidebar
@@ -390,7 +386,7 @@ Removed on 2026-09-05 when upstream shipped its own limits view. Do not revive.
 
 What survived the retirement: the sign-in flow above, and a `metric` search param
 on the usage route so the sidebar's Limits entry opens that view in one click
-(`apps/web/src/routes/usage.tsx`, `SidebarChrome.tsx`). Upstream later added a
+(`apps/web/src/routes/_chat.usage.tsx`, `SidebarChrome.tsx`). Upstream later added a
 stored metric preference; the route prop overrides it while the search param is
 present, so a deep link still wins and an ordinary visit resumes the last view.
 

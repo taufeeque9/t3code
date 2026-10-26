@@ -68,8 +68,13 @@ import Migration0062 from "./Migrations/061_PullRequestReviewGuides.ts";
 import Migration0063 from "./Migrations/062_ThreadFailureLookupIndex.ts";
 import Migration0064 from "./Migrations/063_DropUnusedV1Projections.ts";
 import Migration0065 from "./Migrations/064_CanonicalizeThreadPullRequestLinks.ts";
+import Migration0066 from "./Migrations/065_CodexUsageNativeTurnIndex.ts";
+import Migration0067 from "./Migrations/066_RepairClientSettlementTimestamps.ts";
+import Migration0068 from "./Migrations/067_WebhookDedupe.ts";
+import Migration0069 from "./Migrations/068_ShellStopRequestIndex.ts";
+import Migration0070 from "./Migrations/069_ThreadMessageSearch.ts";
 
-export const migrationEntries = [
+const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
   [2, "OrchestrationCommandReceipts", Migration0002],
   [3, "CheckpointDiffBlobs", Migration0003],
@@ -136,6 +141,11 @@ export const migrationEntries = [
   [63, "ThreadFailureLookupIndex", Migration0063],
   [64, "DropUnusedV1Projections", Migration0064],
   [65, "CanonicalizeThreadPullRequestLinks", Migration0065],
+  [66, "CodexUsageNativeTurnIndex", Migration0066],
+  [67, "RepairClientSettlementTimestamps", Migration0067],
+  [68, "WebhookDedupe", Migration0068],
+  [69, "ShellStopRequestIndex", Migration0069],
+  [70, "ThreadMessageSearch", Migration0070],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
@@ -152,12 +162,7 @@ const makeMigrationLoader = (throughId?: number) =>
 // V2's schema migrations start at 56 after the legacy schema migrations.
 const FIRST_V2_MIGRATION_ID = 56;
 
-/**
- * Fail before migrating when the migrator would skip one of V2's own
- * migrations. It skips every id up to the highest recorded one, whatever name
- * was recorded, so a database that took a V2 id for another migration would
- * start without V2's schema and fail on first use.
- */
+// Migrators skip ids up to the highest recorded; reject collisions that would skip V2 schema.
 const assertV2MigrationsCanRun = Effect.fn("assertV2MigrationsCanRun")(function* (
   throughId?: number,
 ) {
