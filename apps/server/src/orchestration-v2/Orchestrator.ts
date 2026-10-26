@@ -1626,9 +1626,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         projection.thread.modelSelection,
         queuedRun.modelSelection,
       );
-      // The picker may already have moved ahead of the native conversation.
+      // The picker may already have moved ahead of the native conversation, for a monitor update
+      // or for a user message queued after the selection changed.
       const switchFromActiveProvider =
-        followsCurrent &&
         activeProviderThread !== undefined &&
         activeProviderThread.providerInstanceId !== queuedRun.providerInstanceId;
       const switchPlan =

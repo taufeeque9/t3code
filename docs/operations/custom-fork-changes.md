@@ -106,6 +106,11 @@ session. Each account remains a separate provider instance with its own
   Transfers preserve unrelated sessions and atomically publish the transcript.
   A missing or unreadable source fails the switch instead of sending a portable
   handoff. Switching back copies the updated native history back in full.
+- `Orchestrator.ts` plans a queued run's switch from the active provider
+  thread's instance whenever they differ. Upstream does this only for monitor
+  updates (`followsCurrentConversation`), so a message queued after the picker
+  moved to another account would skip the native transfer. The fork drops that
+  condition from `switchFromActiveProvider`.
 - `ClaudeAdapterV2.ts`'s query runner looks up subagent transcripts through
   upstream's Claude history worker (`claudeHistoryWorker.ts`, the
   `getSubagentMessages` method) when the instance's `CLAUDE_CONFIG_DIR` differs
@@ -123,8 +128,7 @@ preservation; provider-name equality alone is insufficient without making the
 native transcript available to the destination account.
 
 Upstream now scans every configured Claude, Codex, and Grok instance for usage
-history and collapses aliased homes, and classifies queued account switches
-against the active provider thread. Neither is fork-owned any longer.
+history and collapses aliased homes. That behavior is no longer fork-owned.
 
 ### Composer: warning when the thread's account is nearly spent
 
