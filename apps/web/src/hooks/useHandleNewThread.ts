@@ -36,6 +36,7 @@ import {
 } from "../lib/chatThreadActions";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { readT3ProjectFile } from "../lib/t3ProjectFileDefaults";
+import { applyNewThreadAccountPick } from "../lib/newThreadAccount";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentSummaries } from "../state/presentation";
 import { environmentServerConfigsAtom } from "../state/server";
@@ -269,6 +270,7 @@ export function createNewThreadHandler(router: AnyRouter) {
               replaceOptions: true,
             });
           }
+          applyNewThreadAccountPick(emptyStoredDraftThread.draftId, projectRef);
         }
         // Remapping physical projects clears workspace context; preserve the branch and worktree.
         setLogicalProjectDraftThreadId(
@@ -379,6 +381,7 @@ export function createNewThreadHandler(router: AnyRouter) {
       if (modelSelectionOverride) {
         setModelSelection(draftId, modelSelectionOverride, { replaceOptions: true });
       }
+      applyNewThreadAccountPick(draftId, projectRef);
       await router.navigate({
         to: "/draft/$draftId",
         params: { draftId },

@@ -32,6 +32,7 @@ import {
   resolveNewTaskModelSelection,
   resolveSelectableModelSelection,
 } from "../../lib/modelOptions";
+import { useNowMinuteMs } from "../../lib/clock";
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { projectEnvironment } from "../../state/projects";
@@ -67,6 +68,7 @@ import {
   useSavedRemoteConnections,
 } from "../../state/use-remote-environment-registry";
 import { availableScratchWorkspaceRoot } from "@t3tools/client-runtime/operations/projects";
+import { resolveNewThreadAccountSelection } from "@t3tools/client-runtime/new-thread-account";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -422,12 +424,23 @@ export function NewTaskFlowProvider(
     selectedProject?.id ?? null,
   );
 
-  const selectedModel = resolveNewTaskModelSelection({
+  const defaultModelSelection = resolveNewTaskModelSelection({
     draftSelection: draftModelSelection,
     projectDefaultSelection: projectDefaultModelSelection,
     stickySelection: stickyModelSelection,
     modelOptions,
   });
+  const autoPickNow = useNowMinuteMs();
+  const selectedModel =
+    (draftModelSelection === null && selectedEnvironmentServerConfig
+      ? resolveNewThreadAccountSelection({
+          settings: selectedEnvironmentServerConfig.settings,
+          providers: selectedEnvironmentServerConfig.providers,
+          projectId: selectedProject?.id ?? null,
+          selection: defaultModelSelection,
+          now: autoPickNow,
+        })
+      : null) ?? defaultModelSelection;
   const selectedModelKey = selectedModel
     ? `${selectedModel.instanceId}:${selectedModel.model}`
     : null;

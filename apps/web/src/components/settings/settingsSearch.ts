@@ -425,6 +425,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "project-defaults",
   },
   {
+    id: "auto-pick-provider-account",
+    title: "Pick account by usage",
+    to: "/settings/providers",
+    scope: "environment-defaults",
+    searchTerms: [
+      "new thread account claude codex multiple accounts usage limits quota weekly session reset automatic choose switch",
+    ],
+  },
+  {
     id: "compact-idle-threads",
     title: "Compact idle threads",
     to: "/settings/providers",

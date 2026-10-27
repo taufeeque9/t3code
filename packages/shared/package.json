@@ -367,6 +367,10 @@
       "types": "./src/modelPickerQuota.ts",
       "import": "./src/modelPickerQuota.ts"
     },
+    "./providerAccountPick": {
+      "types": "./src/providerAccountPick.ts",
+      "import": "./src/providerAccountPick.ts"
+    },
     "./usageLimits": {
       "types": "./src/usageLimits.ts",
       "import": "./src/usageLimits.ts"

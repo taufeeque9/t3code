@@ -14,6 +14,7 @@ import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useScratchProject } from "~/hooks/useScratchProject";
 import { useClientSettings } from "~/hooks/useSettings";
 import { hasExplicitComposerModelSelection } from "~/lib/chatThreadActions";
+import { applyNewThreadAccountPick } from "~/lib/newThreadAccount";
 import {
   deriveLogicalProjectKeyFromSettings,
   selectProjectGroupingSettings,
@@ -200,6 +201,7 @@ export function DraftHeroHeadline({
           replaceOptions: true,
         });
       }
+      applyNewThreadAccountPick(draftId, scopeProjectRef(project.environmentId, project.id));
     }
   };
   const startScratch = async (): Promise<boolean> => {

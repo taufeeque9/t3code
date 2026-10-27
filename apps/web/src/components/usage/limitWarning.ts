@@ -1,7 +1,10 @@
 /** Model-aware warnings for the account selected in the composer. */
 import type { ServerProviderUsageWindow, UsageLimitsReport } from "@t3tools/contracts";
-
-const LIMIT_WARNING_PERCENT = 95;
+import {
+  LIMIT_WARNING_PERCENT,
+  usageWindowAppliesToModel,
+  usageWindowModelScope,
+} from "@t3tools/shared/providerAccountPick";
 
 type LimitAccount = UsageLimitsReport["accounts"][number];
 
@@ -12,33 +15,6 @@ export interface LimitWarning {
   readonly availability: string;
   /** Dismissals expire on reset or escalation from nearly spent to exhausted. */
   readonly key: string;
-}
-
-function normalize(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_|_$/g, "");
-}
-
-/** Claude's parser identifies model buckets as seven_day_<display_name>. */
-function modelScope(window: ServerProviderUsageWindow, driver: LimitAccount["driver"]) {
-  return driver === "claudeAgent" && window.id.startsWith("seven_day_")
-    ? window.id.slice("seven_day_".length)
-    : null;
-}
-
-/** Antigravity buckets are per family: Gemini has its own, Claude and GPT share `3p`. */
-function appliesToModel(window: ServerProviderUsageWindow, account: LimitAccount, model: string) {
-  const normalized = `_${normalize(model)}_`;
-  if (account.driver === "antigravity") {
-    const family = window.id.split("-")[0];
-    if (family === "gemini") return normalized.includes("_gemini_");
-    if (family === "3p") return !normalized.includes("_gemini_");
-    if (family === "claude" || family === "gpt") return normalized.includes(`_${family}_`);
-  }
-  const scope = modelScope(window, account.driver);
-  return scope === null || normalized.includes(`_${scope}_`);
 }
 
 function hasReset(window: ServerProviderUsageWindow, now: number) {
@@ -65,7 +41,7 @@ export function resolveLimitWarning(
   if (!account || account.limits.unavailable) return null;
   const now = Date.parse(report.createdAt);
   const relevantWindows = account.limits.windows.filter((window) =>
-    appliesToModel(window, account, model),
+    usageWindowAppliesToModel(window, account.driver, model),
   );
   const warningWindow = relevantWindows
     .filter((window) => window.usedPercent >= LIMIT_WARNING_PERCENT && !hasReset(window, now))
@@ -75,7 +51,11 @@ export function resolveLimitWarning(
   const scopedWindow = report.accounts
     .filter((candidate) => candidate.driver === account.driver)
     .flatMap((candidate) => candidate.limits.windows)
-    .find((window) => modelScope(window, account.driver) && appliesToModel(window, account, model));
+    .find(
+      (window) =>
+        usageWindowModelScope(window, account.driver) &&
+        usageWindowAppliesToModel(window, account.driver, model),
+    );
   const scopeLabel = scopedWindow?.label.split("·").at(-1)?.trim();
   const allowance = scopeLabel || "quota";
   const requiredIds = new Set(relevantWindows.map((window) => window.id));
@@ -105,7 +85,7 @@ export function resolveLimitWarning(
     if (candidate.driver !== account.driver || seen.has(key)) continue;
     seen.add(key);
     const windows = candidate.limits.windows.filter((window) =>
-      appliesToModel(window, candidate, model),
+      usageWindowAppliesToModel(window, candidate.driver, model),
     );
     if (candidate.limits.unavailable || windows.length === 0) {
       unknown = true;

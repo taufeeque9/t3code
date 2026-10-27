@@ -452,6 +452,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.snoozeLimitedThreads !== DEFAULT_UNIFIED_SETTINGS.snoozeLimitedThreads
       ? ["Snooze until limits reset"]
       : []),
+    ...(settings.autoPickProviderAccount !== DEFAULT_UNIFIED_SETTINGS.autoPickProviderAccount
+      ? ["Pick account by usage"]
+      : []),
     ...(settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? ["Word wrap"] : []),
     ...(settings.persistComposerContextStrip !==
     DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip
@@ -608,6 +611,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
       autoResumeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.autoResumeLimitedThreads,
       snoozeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.snoozeLimitedThreads,
+      autoPickProviderAccount: DEFAULT_UNIFIED_SETTINGS.autoPickProviderAccount,
       responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       continueThreadsAfterServerUpdate: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
@@ -1421,7 +1425,45 @@ export function DiffsSettingsPanel() {
   );
 }
 
-/** The Providers panel can render without a settings scope, as its tests do; this row needs one. */
+/** The Providers panel can render without a settings scope, as its tests do; these rows need one. */
+export function AutoPickProviderAccountRow() {
+  return useOptionalSettingsScope() === null ? null : <ScopedAutoPickProviderAccountRow />;
+}
+
+function ScopedAutoPickProviderAccountRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      serverScoped
+      settingKeys={["autoPickProviderAccount"]}
+      {...searchableSetting("auto-pick-provider-account")}
+      resetAction={
+        settings.autoPickProviderAccount !== DEFAULT_UNIFIED_SETTINGS.autoPickProviderAccount ? (
+          <SettingResetButton
+            label="pick account by usage"
+            onClick={() =>
+              updateSettings({
+                autoPickProviderAccount: DEFAULT_UNIFIED_SETTINGS.autoPickProviderAccount,
+              })
+            }
+          />
+        ) : null
+      }
+      control={
+        <ScopedSwitch
+          settingKeys={["autoPickProviderAccount"]}
+          checked={settings.autoPickProviderAccount}
+          onCheckedChange={(checked) =>
+            updateSettings({ autoPickProviderAccount: Boolean(checked) })
+          }
+          aria-label="Pick account by usage for new threads"
+        />
+      }
+    />
+  );
+}
+
 export function CompactIdleThreadsRow() {
   return useOptionalSettingsScope() === null ? null : <ScopedCompactIdleThreadsRow />;
 }
