@@ -332,6 +332,19 @@ the reconciliation implementation remains upstream-owned.
 **On conflict:** preserve the fork's ledger while taking upstream's migration
 implementations. Retiring a feature does not retire its applied migration.
 
+### Packaged backend ships zod for @cursor/sdk
+
+`@cursor/sdk` 1.0.38 moved `zod` from a dependency to a peer dependency. The
+desktop stage installs only the externals `apps/server/package.json` declares,
+so the 0.1.3 build shipped without `zod` and the backend exited on
+`Cannot find module 'zod/v4'`, leaving no window. The bundle self-check that
+would catch this (`bin.mjs --version`) runs only for Windows sidecar builds.
+
+- `apps/server/package.json` declares `zod`; `knip.jsonc` ignores it as unused.
+
+**On conflict:** take upstream's fix if it lands. Retire this once upstream
+declares `zod` for the server or `@cursor/sdk` lists it as a dependency again.
+
 ## Retired: superseded by upstream
 
 ### Native conversation forks, end-of-turn queue, worktree prefix setting
