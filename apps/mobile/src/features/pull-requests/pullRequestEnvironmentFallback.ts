@@ -1,3 +1,4 @@
+import { repositoryGroupingKeyOf } from "@t3tools/contracts";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/models";
 import type { EnvironmentConnectionSummary } from "@t3tools/client-runtime/state/presentation";
 
@@ -43,7 +44,8 @@ export function pullRequestFallbackEnvironment(
     (project) =>
       project.environmentId !== target.environmentId &&
       connectedEnvironmentIds.has(project.environmentId) &&
-      project.repositoryIdentity?.canonicalKey.toLowerCase() === key,
+      project.repositoryIdentity != null &&
+      repositoryGroupingKeyOf(project.repositoryIdentity).toLowerCase() === key,
   );
   return copy ? { environmentId: String(copy.environmentId), projectId: String(copy.id) } : null;
 }

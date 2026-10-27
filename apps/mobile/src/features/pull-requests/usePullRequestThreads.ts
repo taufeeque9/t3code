@@ -24,7 +24,7 @@ import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail"
 import { pullRequestComposerContext } from "../../lib/composerContext";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { uuidv4 } from "../../lib/uuid";
-import { useEnvironmentServerConfig } from "../../state/entities";
+import { useEnvironmentServerConfig, useProject } from "../../state/entities";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentScope } from "../../state/session";
@@ -53,6 +53,10 @@ export function usePullRequestThreads(
 ) {
   const target = pullRequestTarget(params);
   const config = useEnvironmentServerConfig(target.environmentId);
+  const project = useProject({
+    environmentId: target.environmentId,
+    projectId: target.input.projectId,
+  });
   const supported = threadPullRequestLinkMode(config?.environment.capabilities) === "multiple";
   const parsed = pr ? sourceControlClients.parseChangeRequestUrl(pr.url)?.link : undefined;
   const reference = {
@@ -97,6 +101,11 @@ export function usePullRequestThreads(
       if (connected && !thread && !canCheckout)
         throw new Error(
           `Starting work from this ${terminology.shortLabel} requires source control write access.`,
+        );
+      // New threads check out in the project root, which is not a submodule's checkout.
+      if (!thread && project !== null && pr.workspaceRoot !== project.workspaceRoot)
+        throw new Error(
+          `Starting work from a submodule's ${terminology.shortLabel} is not supported here.`,
         );
       await waitForComposerDraftsLoaded();
       const draftKey = thread

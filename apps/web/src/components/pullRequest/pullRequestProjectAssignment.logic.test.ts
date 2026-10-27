@@ -50,6 +50,26 @@ describe("one server per repository", () => {
     expect(plain(assignment)).toEqual({ "env-2": ["a2"] });
   });
 
+  it("keeps checkouts of different forks of one repository on their own servers", () => {
+    const fork = (id: string, environmentId: string, origin: string) => ({
+      ...project(id, environmentId),
+      repositoryIdentity: {
+        canonicalKey: "github.com/nvidia-nemo/rl",
+        origin: { canonicalKey: origin },
+      },
+    });
+    const assignment = assignProjectsToEnvironments(
+      [
+        fork("a1", "env-1", "github.com/alignmentresearch/nemo-rl"),
+        fork("a2", "env-2", "github.com/someone/nemo-rl"),
+        fork("a3", "env-2", "github.com/alignmentresearch/nemo-rl"),
+      ],
+      envs("env-1", "env-2"),
+      "env-1" as EnvironmentId,
+    );
+    expect(plain(assignment)).toEqual({ "env-1": ["a1"], "env-2": ["a2"] });
+  });
+
   it("keeps every copy of a project that has no identity to compare", () => {
     const assignment = assignProjectsToEnvironments(
       [project("p1", "env-1"), project("p2", "env-2")],

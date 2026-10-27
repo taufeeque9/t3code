@@ -357,6 +357,40 @@ shows a window label shows the spend without a contract change.
 **On conflict:** keep upstream's parsing and re-apply the label. Retire this
 once upstream shows the amounts itself.
 
+### Pull requests from forks and submodules
+
+Upstream lists one repository per project, the canonical one (`upstream`, else
+`origin`). A fork checkout then lists the original project's pull requests
+instead of the fork's, and a submodule's pull requests never show. The fork
+lists the fork (`RepositoryIdentity.origin`, which is itself fork-owned) in
+place of the canonical repository, and adds one entry per initialized direct
+submodule. Project grouping still uses the canonical identity.
+
+- `RepositoryIdentityResolver.ts`: `changeRequestRepositoryIdentity` rebuilds
+  an identity on its `origin` remote; `resolveSubmodules` reads the top-level
+  `.gitmodules` and keeps paths whose own checkout lies below the project's.
+  Test stubs of the resolver use `Layer.mock` so the extra method needs no stub.
+- `PullRequestService.ts`: `repositoryCheckouts` expands each project into its
+  checkouts before `resolveRemoteHosts`. Each `SupportedProject.project` is the
+  project shell with that checkout's `workspaceRoot` and identity, so every
+  provider call and `detail.workspaceRoot` already run in the submodule.
+  `requireProject` picks the project's entry for the requested repository
+  rather than `supported[0]`, and its host fallback prefers the requested
+  project, so a fork project's canonical pull requests stay on it. `listStats`
+  keys by repository. `checkout` exposes the shell to the review guide.
+- `PullRequestReviewGuideService.ts`: writes from `checkout`'s directory and
+  accepts the checkout's identity or, at the project root, the canonical one.
+- Web `PullRequestDetailPanel.tsx`: a submodule pull request checks out in
+  `detail.workspaceRoot`, offers no other environment, and a local checkout
+  leaves the thread's branch alone. `pullRequestProjectAssignment.logic.ts` and
+  mobile `pullRequestEnvironmentFallback.ts` match projects by the fork key.
+  Mobile `usePullRequestThreads.ts` refuses to start work on a submodule's pull
+  request, because its outbox checks out in the project root.
+
+**On conflict:** keep upstream's listing and re-apply `repositoryCheckouts`,
+the `requireProject` lookup, and the shell override. If upstream lists forks or
+submodules itself, compare and ask which to keep.
+
 ## Retired: superseded by upstream
 
 ### Native conversation forks, end-of-turn queue, worktree prefix setting

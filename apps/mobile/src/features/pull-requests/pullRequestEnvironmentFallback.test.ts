@@ -48,6 +48,25 @@ describe("pullRequestFallbackEnvironment", () => {
     expect(pullRequestFallbackEnvironment(target, projects, [environment("desktop")])).toBe(null);
   });
 
+  it("moves a fork's change request to a connected checkout of that fork", () => {
+    const fork = (environmentId: string, id: string) =>
+      ({
+        environmentId,
+        id,
+        repositoryIdentity: {
+          canonicalKey: "github.com/nvidia-nemo/rl",
+          origin: { canonicalKey: "github.com/alignmentresearch/nemo-rl" },
+        },
+      }) as unknown as EnvironmentProject;
+    expect(
+      pullRequestFallbackEnvironment(
+        { ...target, projectId: "rl", repository: "AlignmentResearch/nemo-rl" },
+        [fork("laptop", "rl"), fork("server", "rl-copy")],
+        [environment("server")],
+      ),
+    ).toEqual({ environmentId: "server", projectId: "rl-copy" });
+  });
+
   it("derives the host from the original project when the route has none", () => {
     const { host: _host, ...hostless } = target;
     expect(pullRequestFallbackEnvironment(hostless, projects, [environment("server")])).toEqual({

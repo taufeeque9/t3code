@@ -613,8 +613,13 @@ export function PullRequestDetailPanel({
   const actionPending = pendingAction !== null;
   const newThread = useNewThreadHandler();
   const { environments } = useEnvironments();
+  // A submodule's change request is checked out in a directory only this environment knows.
+  const submoduleRoot =
+    detail && project !== undefined && detail.workspaceRoot !== project.workspaceRoot
+      ? detail.workspaceRoot
+      : null;
   const pickableEnvironments =
-    context === "page"
+    context === "page" && submoduleRoot === null
       ? resolvePickableEnvironments(
           { environmentId, projectId: reference.projectId },
           projects,
@@ -635,7 +640,11 @@ export function PullRequestDetailPanel({
     pickableEnvironments.find((entry) => entry.environmentId === chosenEnvironmentId) ?? null;
   const actingEnvironmentId = acting?.environmentId ?? environmentId;
   const checkoutRoot =
-    acting?.workspaceRoot ?? detail?.workspaceRoot ?? project?.workspaceRoot ?? null;
+    submoduleRoot ??
+    acting?.workspaceRoot ??
+    detail?.workspaceRoot ??
+    project?.workspaceRoot ??
+    null;
   const canOperateThread = useEnvironmentScope(actingEnvironmentId, AuthOrchestrationOperateScope);
   const prepareThread = usePreparePullRequestThreadAction({
     environmentId: actingEnvironmentId,
@@ -913,7 +922,10 @@ export function PullRequestDetailPanel({
       return;
     }
     const pointed = await newThread(projectRef, {
-      branch: prepared.value.branch,
+      // A local thread runs in the project root, which a submodule checkout leaves on its branch.
+      ...(submoduleRoot !== null && prepared.value.worktreePath === null
+        ? {}
+        : { branch: prepared.value.branch }),
       worktreePath: prepared.value.worktreePath,
       envMode: prepared.value.worktreePath === null ? "local" : "worktree",
     }).then(

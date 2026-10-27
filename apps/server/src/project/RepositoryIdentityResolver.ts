@@ -17,6 +17,7 @@ const DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY = 512;
 // Minute-by-minute sweeps need cached hits; clone, publish and PR discovery force refresh.
 const DEFAULT_POSITIVE_CACHE_TTL = Duration.minutes(15);
 const DEFAULT_NEGATIVE_CACHE_TTL = Duration.minutes(1);
+const SUBMODULE_CONCURRENCY = 4;
 
 export interface RepositoryIdentityResolverOptions {
   readonly cacheCapacity?: number;
@@ -34,6 +35,10 @@ export class RepositoryIdentityResolver extends Context.Service<
       cwd: string,
       options?: { readonly refresh?: boolean },
     ) => Effect.Effect<RepositoryIdentity | null>;
+    /** The initialized direct submodules of the checkout at `cwd`, each rooted at its own checkout. */
+    readonly resolveSubmodules: (
+      cwd: string,
+    ) => Effect.Effect<ReadonlyArray<RepositoryIdentity & { readonly rootPath: string }>>;
   }
 >()("t3/project/RepositoryIdentityResolver") {}
 
@@ -106,7 +111,7 @@ function buildRepositoryIdentity(input: {
   readonly remoteName: string;
   readonly remoteUrl: string;
   readonly originUrl: string | undefined;
-  readonly rootPath: string;
+  readonly rootPath: string | undefined;
 }): RepositoryIdentity {
   const canonicalKey = sourceControlDefinitions.repositoryKeyFromRemote(input.remoteUrl);
   const sourceControlProvider = sourceControlDefinitions.recognizeRemote(input.remoteUrl);
@@ -123,13 +128,34 @@ function buildRepositoryIdentity(input: {
       remoteName: input.remoteName,
       remoteUrl: input.remoteUrl,
     },
-    rootPath: input.rootPath,
+    ...(input.rootPath === undefined ? {} : { rootPath: input.rootPath }),
     ...(repositoryPath ? { displayName: repositoryPath } : {}),
     ...(sourceControlProvider ? { provider: sourceControlProvider.kind } : {}),
     ...(owner ? { owner } : {}),
     ...(repositoryName ? { name: repositoryName } : {}),
     ...(origin ? { origin } : {}),
   };
+}
+
+/**
+ * The repository a checkout's change requests are opened on: its fork, the `origin` remote, when
+ * that differs from the canonical repository.
+ */
+export function changeRequestRepositoryIdentity(identity: RepositoryIdentity): RepositoryIdentity {
+  const remoteUrl = identity.origin?.remoteUrl;
+  if (remoteUrl === undefined) return identity;
+  const fork = buildRepositoryIdentity({
+    remoteName: "origin",
+    remoteUrl,
+    originUrl: undefined,
+    rootPath: identity.rootPath,
+  });
+  // A provider refined for the canonical repository's host holds for a fork on that host.
+  const hostOf = (key: string) => key.split("/")[0];
+  return identity.provider !== undefined &&
+    hostOf(fork.canonicalKey) === hostOf(identity.canonicalKey)
+    ? { ...fork, provider: identity.provider }
+    : fork;
 }
 
 class RepositoryIdentityCacheKey extends Data.Class<{
@@ -222,6 +248,35 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
     : null;
 });
 
+const readSubmodulePaths = Effect.fn("RepositoryIdentityResolver.readSubmodulePaths")(function* (
+  rootPath: string,
+) {
+  const processRunner = yield* ProcessRunner.ProcessRunner;
+  const result = yield* processRunner
+    .run({
+      command: "git",
+      args: [
+        "-C",
+        rootPath,
+        "config",
+        "--file",
+        ".gitmodules",
+        "-z",
+        "--get-regexp",
+        "^submodule\\..*\\.path$",
+      ],
+      timeoutBehavior: "timedOutResult",
+    })
+    .pipe(Effect.option);
+  if (result._tag === "None" || result.value.code !== 0) return [];
+  // `-z` ends each entry with NUL and separates its key from its value with a newline.
+  return result.value.stdout.split("\0").flatMap((entry) => {
+    const separator = entry.indexOf("\n");
+    const path = separator === -1 ? "" : entry.slice(separator + 1);
+    return path.length > 0 ? [path] : [];
+  });
+});
+
 export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
   options: RepositoryIdentityResolverOptions = {},
 ) {
@@ -260,6 +315,14 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
     { capacity: cacheCapacity, timeToLive },
   );
 
+  const submodulePathCache = yield* Cache.makeWith<string, ReadonlyArray<string>>(
+    (rootPath) =>
+      readSubmodulePaths(rootPath).pipe(
+        Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
+      ),
+    { capacity: cacheCapacity, timeToLive },
+  );
+
   const resolve: RepositoryIdentityResolver["Service"]["resolve"] = Effect.fnUntraced(
     function* (cwd, options) {
       if (options?.refresh) yield* Cache.invalidate(repositoryRootCache, cwd);
@@ -270,7 +333,23 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
     },
   );
 
-  return RepositoryIdentityResolver.of({ resolve });
+  const resolveSubmodules: RepositoryIdentityResolver["Service"]["resolveSubmodules"] = Effect.fn(
+    "RepositoryIdentityResolver.resolveSubmodules",
+  )(function* (cwd) {
+    const root = yield* Cache.get(repositoryRootCache, cwd);
+    if (root === null || root.isBare) return [];
+    const paths = yield* Cache.get(submodulePathCache, root.rootPath);
+    const identities = yield* Effect.forEach(paths, (path) => resolve(`${root.rootPath}/${path}`), {
+      concurrency: SUBMODULE_CONCURRENCY,
+    });
+    // An uninitialized submodule's empty directory resolves to the enclosing checkout.
+    return identities.filter(
+      (identity): identity is RepositoryIdentity & { readonly rootPath: string } =>
+        identity?.rootPath?.startsWith(`${root.rootPath}/`) === true,
+    );
+  });
+
+  return RepositoryIdentityResolver.of({ resolve, resolveSubmodules });
 });
 
 export const layer = Layer.effect(RepositoryIdentityResolver, make()).pipe(

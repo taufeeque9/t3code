@@ -161,6 +161,11 @@ Open **Pull requests** to review changes and comments, request reviewers, check 
 or merge. On GitHub you can also assign people to a pull request from its summary. You can edit review titles and descriptions and your own comments where the host allows it.
 GitLab calls these merge requests.
 
+A project cloned from your fork, with the original repository as its `upstream` remote, lists
+the fork's pull requests. A project also lists the pull requests of each initialized top-level
+submodule, and actions on them, including checkout, run in that submodule's directory. Start
+work on a submodule's pull request from desktop or web.
+
 On mobile, **Pull requests** lists reviews across your connected environments. Open a review
 to read its description, activity, commits, and changed files. Line comments stay as drafts
 until you submit the review. **Work on PR** opens a chat with the review attached; sending

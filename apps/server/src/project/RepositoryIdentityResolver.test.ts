@@ -263,6 +263,62 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
         remoteUrl: "git@github.com:julius/t3code-fork.git",
         displayName: "julius/t3code-fork",
       });
+
+      const fork = RepositoryIdentityResolver.changeRequestRepositoryIdentity(identity!);
+      expect(fork).toEqual({
+        canonicalKey: "github.com/julius/t3code-fork",
+        locator: {
+          source: "git-remote",
+          remoteName: "origin",
+          remoteUrl: "git@github.com:julius/t3code-fork.git",
+        },
+        rootPath: identity?.rootPath,
+        displayName: "julius/t3code-fork",
+        provider: "github",
+        owner: "julius",
+        name: "t3code-fork",
+      });
+    }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
+  );
+
+  it.effect("resolves only the initialized direct submodules of a checkout", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-repository-identity-submodules-test-",
+      });
+      const checkout = (root: string, remoteUrl: string, submodulePaths: ReadonlyArray<string>) =>
+        Effect.gen(function* () {
+          yield* fileSystem.makeDirectory(root, { recursive: true });
+          yield* git(root, ["init"]);
+          yield* git(root, ["remote", "add", "origin", remoteUrl]);
+          yield* fileSystem.writeFileString(
+            path.join(root, ".gitmodules"),
+            submodulePaths
+              .map((at) => `[submodule "${at}"]\n\tpath = ${at}\n\turl = ${remoteUrl}-${at}\n`)
+              .join(""),
+          );
+        });
+
+      const llm = path.join(cwd, "third_party", "llm");
+      yield* checkout(cwd, "git@github.com:AlignmentResearch/deception.git", [
+        "third_party/llm",
+        "third_party/uninitialized",
+        "third_party/missing",
+      ]);
+      yield* checkout(llm, "git@github.com:AlignmentResearch/llm.git", ["nested"]);
+      yield* checkout(path.join(llm, "nested"), "git@github.com:AlignmentResearch/nested.git", []);
+      yield* fileSystem.makeDirectory(path.join(cwd, "third_party", "uninitialized"));
+
+      const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+      const submodules = yield* resolver.resolveSubmodules(cwd);
+
+      expect(submodules.map(({ displayName }) => displayName)).toEqual(["AlignmentResearch/llm"]);
+      expect(normalizeResolvedPath(NodeFS.realpathSync.native(submodules[0]!.rootPath))).toBe(
+        normalizeResolvedPath(NodeFS.realpathSync.native(llm)),
+      );
+      expect(yield* resolver.resolveSubmodules(llm)).toHaveLength(1);
     }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
   );
 

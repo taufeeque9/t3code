@@ -95,24 +95,25 @@ const make = Effect.gen(function* () {
   });
 
   const requireOwnRepository = Effect.fn("PullRequestReviewGuideService.requireOwnRepository")(
-    function* (key: ThreadPullRequestKey, identity: RepositoryIdentity | null | undefined) {
-      const own =
-        identity == null
-          ? null
-          : pullRequestSyncKey(
-              {
-                projectId: ProjectId.make("own"),
-                number: key.number,
-                repository: sourceControlDefinitions.repositorySelector(identity) ?? "",
-              },
-              identity,
-            );
-      if (
-        identity == null ||
-        own === null ||
-        own.host !== key.host ||
-        own.repository !== key.repository
-      ) {
+    function* (
+      key: ThreadPullRequestKey,
+      identities: ReadonlyArray<RepositoryIdentity | null | undefined>,
+    ) {
+      const identity = identities.find((candidate) => {
+        const own =
+          candidate == null
+            ? null
+            : pullRequestSyncKey(
+                {
+                  projectId: ProjectId.make("own"),
+                  number: key.number,
+                  repository: sourceControlDefinitions.repositorySelector(candidate) ?? "",
+                },
+                candidate,
+              );
+        return own !== null && own.host === key.host && own.repository === key.repository;
+      });
+      if (identity == null) {
         return yield* new PullRequestOperationError({
           operation: "generateReviewGuide",
           detail:
@@ -440,8 +441,13 @@ const make = Effect.gen(function* () {
         detail: "Review guides are off. Turn them on in Settings → Source Control.",
       });
     }
-    const { key, workspaceRoot, identity } = yield* keyFor(input);
-    const locator = yield* requireOwnRepository(key, identity);
+    const { key, workspaceRoot: projectRoot, identity } = yield* keyFor(input);
+    const { workspaceRoot, repositoryIdentity } = yield* pullRequests.checkout(input);
+    // A project's checkout of its fork also fetches from the canonical repository.
+    const locator = yield* requireOwnRepository(key, [
+      repositoryIdentity,
+      ...(workspaceRoot === projectRoot ? [identity] : []),
+    ]);
     const runKey = keyString(key);
     yield* pullRequests.invalidate({ reference: input });
     const [detail, stored] = yield* Effect.all([pullRequests.detail(input), readStored(key)], {

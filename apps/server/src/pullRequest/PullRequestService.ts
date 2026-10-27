@@ -187,6 +187,10 @@ export class PullRequestService extends Context.Service<
     readonly routing: (
       input: PullRequestRef,
     ) => Effect.Effect<PullRequestRoutingResult, PullRequestError>;
+    /** The project as seen from its checkout of the change request's repository. */
+    readonly checkout: (
+      input: PullRequestRef,
+    ) => Effect.Effect<OrchestrationProjectShell, PullRequestError>;
     readonly routingIdentity: (
       input: PullRequestRoutingIdentityInput,
     ) => Effect.Effect<PullRequestRoutingIdentityResult, PullRequestError>;
@@ -327,6 +331,7 @@ const ASSIGNEES_UNSUPPORTED = "This host cannot change who a change request is a
 
 export interface SupportedProject {
   readonly cursorKey: string;
+  /** Seen from its checkout of `repository`: a submodule's directory for a submodule's repository. */
   readonly project: OrchestrationProjectShell;
   readonly api: PullRequestProviderApi;
   readonly repository: string;
@@ -842,6 +847,42 @@ export const make = Effect.gen(function* () {
     ).pipe(Effect.map((resolved) => new Map(resolved)));
   });
 
+  /**
+   * The checkouts whose change requests each project lists, as the project seen from each: its
+   * own, then its initialized direct submodules', each on its fork when it has one. A repository
+   * opened as a project outranks the same repository as another project's submodule.
+   */
+  const repositoryCheckouts = (projects: ReadonlyArray<OrchestrationProjectShell>) =>
+    Effect.forEach(
+      projects,
+      (project) =>
+        repositoryIdentities.resolveSubmodules(project.workspaceRoot).pipe(
+          Effect.map((submodules) =>
+            submodules.map((identity) => ({
+              ...project,
+              workspaceRoot: identity.rootPath,
+              repositoryIdentity:
+                RepositoryIdentityResolver.changeRequestRepositoryIdentity(identity),
+            })),
+          ),
+        ),
+      { concurrency: REPOSITORY_CONCURRENCY },
+    ).pipe(
+      Effect.map((submodules) => [
+        ...projects.map((project) =>
+          project.repositoryIdentity == null
+            ? project
+            : {
+                ...project,
+                repositoryIdentity: RepositoryIdentityResolver.changeRequestRepositoryIdentity(
+                  project.repositoryIdentity,
+                ),
+              },
+        ),
+        ...submodules.flat(),
+      ]),
+    );
+
   const listWorkspaceProjects = (
     filter: Pick<PullRequestListInput, "projectId" | "projectIds" | "host">,
   ): Effect.Effect<WorkspaceProjects, PullRequestError> =>
@@ -871,6 +912,7 @@ export const make = Effect.gen(function* () {
           { concurrency: REPOSITORY_CONCURRENCY },
         ),
       ),
+      Effect.flatMap(repositoryCheckouts),
       Effect.flatMap((projects) =>
         resolveRemoteHosts(projects, filter).pipe(
           Effect.map((remoteHosts) => ({ remoteHosts, projects })),
@@ -943,14 +985,16 @@ export const make = Effect.gen(function* () {
   const requireProject = (ref: PullRequestRef): Effect.Effect<SupportedProject, PullRequestError> =>
     listWorkspaceProjects({ projectId: ref.projectId }).pipe(
       Effect.flatMap(({ supported }): Effect.Effect<SupportedProject, PullRequestError> => {
-        const own = supported[0];
         const repository = ref.repository.trim();
         const host = ref.host?.trim().toLowerCase();
-        if (own !== undefined && own.repository.toLowerCase() === repository.toLowerCase()) {
-          if (host === undefined || host === own.host) return Effect.succeed(own);
-        }
+        const own = supported.find(
+          (candidate) =>
+            candidate.repository.toLowerCase() === repository.toLowerCase() &&
+            (host === undefined || host === candidate.host),
+        );
+        if (own !== undefined) return Effect.succeed(own);
         if (host === undefined) {
-          if (own === undefined) {
+          if (supported.length === 0) {
             return Effect.fail(new PullRequestUnavailableError({ reason: "provider-unsupported" }));
           }
           return Effect.fail(
@@ -979,6 +1023,10 @@ export const make = Effect.gen(function* () {
                 (candidate) =>
                   candidate.repositoryKey === null &&
                   candidate.repository.toLowerCase() === repository.toLowerCase(),
+              ) ??
+              onHost.find(
+                (candidate) =>
+                  candidate.repositoryKey === null && candidate.project.id === ref.projectId,
               ) ??
               onHost.find((candidate) => candidate.repositoryKey === null);
             if (route === undefined) {
@@ -2636,21 +2684,21 @@ export const make = Effect.gen(function* () {
   )(function* (input) {
     if (input.refs.length === 0) return { stats: [] };
     const { supported } = yield* listWorkspaceProjects({});
-    const byProject = new Map(supported.map((project) => [project.project.id, project]));
+    const repositoryOf = (projectId: string, repository: string) =>
+      `${projectId} ${repository.trim().toLowerCase()}`;
+    const byRepository = new Map(
+      supported.map((project) => [repositoryOf(project.project.id, project.repository), project]),
+    );
     const wanted = new Map<
       string,
       { readonly project: SupportedProject; readonly number: number }
     >();
     for (const ref of input.refs) {
-      const project = byProject.get(ref.projectId);
-      if (
-        project === undefined ||
-        project.api.listChangeRequestStats === undefined ||
-        project.repository.toLowerCase() !== ref.repository.trim().toLowerCase()
-      ) {
+      const project = byRepository.get(repositoryOf(ref.projectId, ref.repository));
+      if (project === undefined || project.api.listChangeRequestStats === undefined) {
         continue;
       }
-      wanted.set(`${project.project.id} ${ref.number}`, { project, number: ref.number });
+      wanted.set(`${project.cursorKey} ${ref.number}`, { project, number: ref.number });
     }
     const byHost = new Map<string, Array<{ project: SupportedProject; number: number }>>();
     for (const entry of wanted.values()) {
@@ -3710,6 +3758,7 @@ export const make = Effect.gen(function* () {
 
   return PullRequestService.of({
     routing,
+    checkout: (input) => requireProject(input).pipe(Effect.map(({ project }) => project)),
     routingIdentity,
     withRoutingCredential,
     list,

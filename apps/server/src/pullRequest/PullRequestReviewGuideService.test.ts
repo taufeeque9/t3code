@@ -147,6 +147,19 @@ const stack = (repositories: {
   ],
 });
 
+const projectShell = (input: {
+  readonly workspace: string;
+  readonly remote: string;
+  readonly identity?: typeof ACME_APP;
+}) => ({
+  id: projectId,
+  workspaceRoot: input.workspace,
+  repositoryIdentity: {
+    ...(input.identity ?? ACME_APP),
+    locator: { ...ACME_APP.locator, remoteUrl: input.remote },
+  },
+});
+
 const makeLayer = (input: {
   readonly root: string;
   readonly remote: string;
@@ -159,6 +172,8 @@ const makeLayer = (input: {
   readonly enabled?: boolean;
   readonly currentHead?: Ref.Ref<string>;
   readonly identity?: typeof ACME_APP;
+  /** The project, when the pull request's checkout is one of its submodules. */
+  readonly parent?: { readonly workspace: string; readonly remote: string };
 }) =>
   PullRequestReviewGuideService.layer.pipe(
     Layer.provide(
@@ -186,19 +201,27 @@ const makeLayer = (input: {
         activity: () => Effect.succeed(activity),
         invalidate: () => Effect.void,
         stack: () => Effect.succeed(stack(input)),
+        checkout: () => Effect.succeed(projectShell(input)),
       } as unknown as PullRequestService.PullRequestService["Service"]),
     ),
     Layer.provide(
       Layer.succeed(ProjectService.ProjectService, {
         getShell: () =>
-          Effect.succeedSome({
-            id: projectId,
-            workspaceRoot: input.workspace,
-            repositoryIdentity: {
-              ...(input.identity ?? ACME_APP),
-              locator: { ...ACME_APP.locator, remoteUrl: input.remote },
-            },
-          }),
+          Effect.succeedSome(
+            projectShell(
+              input.parent === undefined
+                ? input
+                : {
+                    ...input.parent,
+                    identity: {
+                      ...ACME_APP,
+                      canonicalKey: "github.com/acme/parent",
+                      displayName: "acme/parent",
+                      name: "parent",
+                    },
+                  },
+            ),
+          ),
       } as unknown as ProjectService.ProjectService["Service"]),
     ),
     Layer.provide(
@@ -541,6 +564,30 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
         );
         const result = yield* Effect.flip(service.generate(reference));
         assert.include(result.message, "in another repository");
+      }),
+    ),
+  );
+
+  it.effect("writes a submodule's guide from the submodule's checkout", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const repositories = yield* makeRepositories;
+        const stored = yield* Deferred.make<void>();
+        const context = yield* Layer.build(
+          makeLayer({
+            ...repositories,
+            stored,
+            parent: { workspace: `${repositories.root}/parent`, remote: "/nowhere/parent.git" },
+            generate: () => Effect.succeed({ stops: [] }),
+          }),
+        );
+        const service = Context.get(
+          context,
+          PullRequestReviewGuideService.PullRequestReviewGuideService,
+        );
+        yield* service.generate(reference);
+        yield* Deferred.await(stored);
+        assert.strictEqual((yield* service.get(reference)).guide?.headSha, repositories.headSha);
       }),
     ),
   );

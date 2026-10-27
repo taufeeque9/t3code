@@ -198,6 +198,7 @@ function makeService(input: {
   readonly providers: ReadonlyArray<PullRequestProviderApi>;
   readonly resolveHandle?: SourceControlProviderRegistry.SourceControlProviderRegistry["Service"]["resolveHandle"];
   readonly resolveRepositoryIdentity?: RepositoryIdentityResolver.RepositoryIdentityResolver["Service"]["resolve"];
+  readonly resolveSubmodules?: RepositoryIdentityResolver.RepositoryIdentityResolver["Service"]["resolveSubmodules"];
 }) {
   // Build in the test scope; per-call Effect.provide would close the marks database on service acquisition.
   return Effect.flatMap(
@@ -229,6 +230,7 @@ function makeService(input: {
         }),
         Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
           resolve: input.resolveRepositoryIdentity ?? (() => Effect.succeed(null)),
+          resolveSubmodules: input.resolveSubmodules ?? (() => Effect.succeed([])),
         }),
         SourceControlRateLimit.layer,
         PullRequestFilesViewed.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
@@ -4475,4 +4477,165 @@ it.effect.each(["expiry", "commit expiry", "cache hit", "commit cache hit", "ref
       assert.strictEqual(error.reason, "not-found");
       assert.strictEqual(diffReads, 2);
     }),
+);
+
+function forkProject(): OrchestrationProjectShell {
+  const base = project({
+    id: "rl",
+    title: "nemo-rl",
+    workspaceRoot: "/nemo-rl",
+    repository: "NVIDIA-NeMo/RL",
+  });
+  const identity = base.repositoryIdentity!;
+  return {
+    ...base,
+    repositoryIdentity: {
+      ...identity,
+      locator: { ...identity.locator, remoteName: "upstream" },
+      origin: {
+        canonicalKey: "github.com/alignmentresearch/nemo-rl",
+        remoteUrl: "https://github.com/AlignmentResearch/nemo-rl.git",
+        displayName: "AlignmentResearch/nemo-rl",
+      },
+    },
+  };
+}
+
+it.effect(
+  "lists a fork project's change requests from its fork, not the canonical repository",
+  () =>
+    Effect.gen(function* () {
+      const listed: Array<string> = [];
+      const acted: Array<readonly [string, string]> = [];
+      const service = yield* makeService({
+        projects: [forkProject()],
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+            listChangeRequests: ({ repository }) => {
+              listed.push(repository);
+              return Effect.succeed({
+                items: [changeRequest(7, "2026-07-05T00:00:00Z")],
+                truncated: false,
+                continues: false,
+              });
+            },
+            runAction: ({ cwd, repository }) => Effect.sync(() => acted.push([cwd, repository])),
+          }),
+        ],
+      });
+
+      const result = yield* service.list({ state: "open" });
+      assert.deepStrictEqual(listed, ["AlignmentResearch/nemo-rl"]);
+      assert.deepStrictEqual(
+        result.entries.map(({ projectId, repository, number }) => [projectId, repository, number]),
+        [["rl", "AlignmentResearch/nemo-rl", 7]],
+      );
+
+      yield* service.runAction({
+        projectId: "rl" as ProjectId,
+        host: "github.com",
+        repository: "AlignmentResearch/nemo-rl",
+        number: 7,
+        action: "close",
+      });
+      assert.deepStrictEqual(acted, [["/nemo-rl", "AlignmentResearch/nemo-rl"]]);
+    }),
+);
+
+it.effect("keeps a fork project's canonical change requests on that project", () =>
+  Effect.gen(function* () {
+    const acted: Array<readonly [string, string]> = [];
+    const service = yield* makeService({
+      projects: [
+        project({ id: "web", title: "web", workspaceRoot: "/web", repository: "acme/web" }),
+        forkProject(),
+      ],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          runAction: ({ cwd, repository }) => Effect.sync(() => acted.push([cwd, repository])),
+        }),
+      ],
+    });
+
+    yield* service.runAction({
+      projectId: "rl" as ProjectId,
+      host: "github.com",
+      repository: "NVIDIA-NeMo/RL",
+      number: 3,
+      action: "close",
+    });
+    assert.deepStrictEqual(acted, [["/nemo-rl", "NVIDIA-NeMo/RL"]]);
+  }),
+);
+
+it.effect("lists a direct submodule's change requests and acts on them from its checkout", () =>
+  Effect.gen(function* () {
+    const submoduleRoot = "/deception/third_party/llm";
+    const submodule = {
+      ...project({
+        id: "llm",
+        title: "llm",
+        workspaceRoot: "",
+        repository: "AlignmentResearch/llm",
+      }).repositoryIdentity!,
+      rootPath: submoduleRoot,
+    };
+    const listed: Array<readonly [string, string]> = [];
+    const read: Array<string> = [];
+    const acted: Array<readonly [string, string]> = [];
+    const service = yield* makeService({
+      projects: [
+        project({ id: "web", title: "web", workspaceRoot: "/web", repository: "acme/web" }),
+        project({
+          id: "deception",
+          title: "deception",
+          workspaceRoot: "/deception",
+          repository: "AlignmentResearch/deception",
+        }),
+      ],
+      resolveSubmodules: (cwd) => Effect.succeed(cwd === "/deception" ? [submodule] : []),
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          listChangeRequests: ({ cwd, repository }) => {
+            listed.push([cwd, repository]);
+            return Effect.succeed({
+              items:
+                repository === "AlignmentResearch/llm"
+                  ? [changeRequest(3, "2026-07-05T00:00:00Z")]
+                  : [],
+              truncated: false,
+              continues: false,
+            });
+          },
+          getChangeRequest: ({ cwd }) =>
+            Effect.sync(() => {
+              read.push(cwd);
+              return { ...hostedChangeRequest("Description"), number: 3 };
+            }),
+          runAction: ({ cwd, repository }) => Effect.sync(() => acted.push([cwd, repository])),
+        }),
+      ],
+    });
+
+    const result = yield* service.list({ state: "open" });
+    assert.deepInclude(listed, [submoduleRoot, "AlignmentResearch/llm"]);
+    assert.deepStrictEqual(
+      result.entries.map(({ projectId, repository, number }) => [projectId, repository, number]),
+      [["deception", "AlignmentResearch/llm", 3]],
+    );
+
+    const reference = {
+      projectId: "deception" as ProjectId,
+      host: "github.com",
+      repository: "AlignmentResearch/llm",
+      number: 3,
+    };
+    const detail = yield* service.detail(reference);
+    assert.strictEqual(detail.workspaceRoot, submoduleRoot);
+    assert.strictEqual(detail.projectId, "deception");
+    assert.deepStrictEqual(read, [submoduleRoot]);
+
+    yield* service.runAction({ ...reference, action: "close" });
+    assert.deepStrictEqual(acted, [[submoduleRoot, "AlignmentResearch/llm"]]);
+  }),
 );
