@@ -1,7 +1,7 @@
 /** Model-aware warnings for the account selected in the composer. */
 import type { ServerProviderUsageWindow, UsageLimitsReport } from "@t3tools/contracts";
 
-export const LIMIT_WARNING_PERCENT = 95;
+const LIMIT_WARNING_PERCENT = 95;
 
 type LimitAccount = UsageLimitsReport["accounts"][number];
 

@@ -2,7 +2,7 @@ import { memo, type MouseEventHandler, type PointerEventHandler } from "react";
 import { CheckIcon, ChevronDownIcon, ChevronLeftIcon, Minimize2Icon, PlayIcon } from "lucide-react";
 import { CornerUpRight, ListPlus } from "lucide";
 import { MorphIcon } from "~/components/MorphIcon";
-import { useClientSettings, useEnvironmentIdentificationMode } from "~/hooks/useSettings";
+import { useEnvironmentIdentificationMode } from "~/hooks/useSettings";
 import { formatContextWindowTokens } from "~/lib/contextWindow";
 import { cn } from "~/lib/utils";
 import { useShortcutModifierState } from "../../shortcutModifierState";
@@ -111,7 +111,6 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     ? { onPointerDown: preventPointerFocus }
     : undefined;
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
-  const redesign = useClientSettings((s) => s.redesignEnabled);
   const shortcutModifiers = useShortcutModifierState();
   const isQueuing =
     !isEditingQueuedMessage &&
@@ -358,11 +357,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           render={
             <button
               type="button"
-              className={
-                redesign
-                  ? "flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-(--control-radius) px-2 font-medium text-base text-foreground/80 tabular-nums outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-64 sm:text-sm aria-pressed:bg-accent/60 aria-pressed:text-foreground [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:text-muted-foreground"
-                  : "flex h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-warning/40 px-2.5 text-xs tabular-nums text-warning outline-none transition-colors hover:bg-warning/8 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-64 sm:h-8 [&_svg]:pointer-events-none [&_svg]:size-3.5"
-              }
+              className="flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-(--control-radius) px-2 font-medium text-base text-foreground/80 tabular-nums outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-64 sm:text-sm aria-pressed:bg-accent/60 aria-pressed:text-foreground [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:text-muted-foreground"
               {...pointerFocusProps}
               aria-label={`Compact ${compactTokens} tokens of history, then send`}
               disabled={!canOperateThread || sendUnavailable || !hasSendableContent}
@@ -371,15 +366,8 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           }
         >
           <Minimize2Icon aria-hidden="true" />
-          {/* The new design keeps the token count in the tooltip so the permission label keeps its room. */}
-          {redesign ? (
-            "Compact"
-          ) : (
-            <>
-              Compact
-              <span>{compactTokens}</span>
-            </>
-          )}
+          {/* The token count lives in the tooltip so the permission label keeps its room. */}
+          Compact
         </TooltipTrigger>
         <TooltipPopup>{`Summarize ${compactTokens} tokens of history, then send`}</TooltipPopup>
       </Tooltip>

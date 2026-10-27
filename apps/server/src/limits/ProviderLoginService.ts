@@ -1,13 +1,6 @@
 /**
- * ProviderLoginService - signs a Claude provider instance back in.
- *
- * `claude auth login` prints an authorization URL and then blocks on stdin for
- * the code the browser hands back, so one sign-in spans two client calls:
- * `start` returns the URL, `submit` feeds the code in and waits for the CLI to
- * exit. The child therefore has to outlive the first call, which is why it is
- * held here rather than scoped to the request.
- *
- * @module ProviderLoginService
+ * Signs a Claude instance back in. `claude auth login` prints a URL, then blocks on stdin for the
+ * code, so `start` returns the URL and `submit` feeds the code: the child outlives one request.
  */
 // @effect-diagnostics nodeBuiltinImport:off - the login child outlives the
 // request that spawned it, which Effect's scoped spawner cannot express.
@@ -320,12 +313,3 @@ export const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(ProviderLoginService, make);
-
-export const layerTest = Layer.succeed(
-  ProviderLoginService,
-  ProviderLoginService.of({
-    start: () =>
-      Effect.succeed({ loginId: "login-1", authorizeUrl: "https://example.test/oauth/authorize" }),
-    submit: () => Effect.succeed({ accountLabel: null }),
-  }),
-);

@@ -72,7 +72,6 @@ export function useLimitWarningBanner(input: {
   return {
     id: `limit-warning:${warning.key}`,
     variant: "warning",
-    priority: "urgent",
     icon: <TriangleAlertIcon />,
     title: `${warning.accountLabel}: ${warning.usedPercent}% of ${warning.windowLabel} used`,
     children: <p className="text-xs text-muted-foreground">{warning.availability}</p>,

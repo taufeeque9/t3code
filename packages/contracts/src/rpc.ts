@@ -925,13 +925,13 @@ const WsServerGetUsageSummaryRpc = Rpc.make(WS_METHODS.serverGetUsageSummary, {
   error: Schema.Union([EnvironmentAuthorizationError, UsageReadError]),
 });
 
-export const WsServerStartProviderLoginRpc = Rpc.make(WS_METHODS.serverStartProviderLogin, {
+const WsServerStartProviderLoginRpc = Rpc.make(WS_METHODS.serverStartProviderLogin, {
   payload: ProviderLoginStartInput,
   success: ProviderLoginStartResult,
   error: Schema.Union([ProviderLoginError, EnvironmentAuthorizationError]),
 });
 
-export const WsServerSubmitProviderLoginRpc = Rpc.make(WS_METHODS.serverSubmitProviderLogin, {
+const WsServerSubmitProviderLoginRpc = Rpc.make(WS_METHODS.serverSubmitProviderLogin, {
   payload: ProviderLoginSubmitInput,
   success: ProviderLoginSubmitResult,
   error: Schema.Union([ProviderLoginError, EnvironmentAuthorizationError]),
