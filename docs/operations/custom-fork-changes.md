@@ -176,6 +176,31 @@ quota text and the `quota` row prop live in upstream's
 **On conflict:** compare quota selection and account placement before replacing
 this with upstream's picker. Retire the helper when upstream covers both clients.
 
+### New threads: pick the account by usage limits
+
+A new thread on web, desktop, or mobile moves its default selection (project
+default, carried selection, or sticky last pick) to the same-driver account with
+the best usable limits for that model, keeping the model and options. An explicit
+composer pick wins, and the auto pick is never written as the sticky selection.
+Agent-created threads, scheduled tasks, and existing threads are unchanged.
+Upstream always starts on the default account.
+
+- `packages/shared/src/providerAccountPick.ts` and its test: the ranking heuristic,
+  plus the model-scope helpers and 95% threshold the composer warning now imports
+- `packages/client-runtime/src/newThreadAccount.ts` and its test: candidate
+  filtering (same driver, enabled for the project, available, signed in, has the model)
+- `apps/web/src/lib/newThreadAccount.ts`, called after the defaults in
+  `hooks/useHandleNewThread.ts` and `components/chat/DraftHeroHeadline.tsx`
+- `apps/mobile/src/features/threads/new-task-flow-provider.tsx`: derives
+  `selectedModel` through the same helper when the draft has no explicit pick
+- `autoPickProviderAccount` server setting (default on) in `packages/contracts/src/settings.ts`;
+  the toggle is `AutoPickProviderAccountRow` in Settings → Providers → Advanced, with a
+  settings-search entry. Mobile has no toggle; it follows the server setting.
+
+**On conflict:** keep the call after upstream's default resolution in each
+new-thread path. If upstream adds account selection for new threads, compare its
+ranking with this one and ask before retiring either.
+
 ### Limits bars: per-instance colour and short names
 
 Upstream paints every account in a pool with one hardcoded driver colour and
