@@ -3758,7 +3758,10 @@ export const make = Effect.gen(function* () {
 
   return PullRequestService.of({
     routing,
-    checkout: (input) => requireProject(input).pipe(Effect.map(({ project }) => project)),
+    checkout: Effect.fn("PullRequestService.checkout")(function* (input) {
+      const { project } = yield* requireProject(input);
+      return project;
+    }),
     routingIdentity,
     withRoutingCredential,
     list,
