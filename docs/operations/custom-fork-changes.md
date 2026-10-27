@@ -32,7 +32,10 @@ The reason the fork exists: an independently branded, self-installing build.
   sources, and counting untracked files let the updater's own output block
   every later run until the checkout was cleaned by hand. Its active-session
   guard counts live Orchestration V2 runs in `statev2.sqlite`, falling back to
-  the V1 session table in `state.sqlite` until a V2 build has seeded it.
+  the V1 session table in `state.sqlite` until a V2 build has seeded it. With
+  no `-shm` file nothing has the WAL database open, and a read-only connection
+  cannot create one, so the guard reads it as immutable; otherwise an install
+  that broke the backend could never be replaced.
   Dependency installation sets `CI=true` so pnpm can replace a stale layout
   without a TTY. Staged bundles are signed with a stable local identity and
   verified before installation; preserving it avoids changing macOS's app identity

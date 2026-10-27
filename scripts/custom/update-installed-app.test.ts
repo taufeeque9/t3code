@@ -116,4 +116,65 @@ exit 14
       }),
     ),
   );
+
+  it.effect("counts active runs in a WAL database that no process has open", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const updaterScript = path.join(import.meta.dirname, "update-installed-app.sh");
+        const fixtureDirectory = yield* fs.makeTempDirectoryScoped({
+          prefix: "t3-custom-updater-",
+        });
+        const binDirectory = path.join(fixtureDirectory, "bin");
+        const userdataDirectory = path.join(fixtureDirectory, "userdata");
+        const database = path.join(userdataDirectory, "statev2.sqlite");
+        yield* fs.makeDirectory(binDirectory, { recursive: true });
+        yield* fs.makeDirectory(userdataDirectory, { recursive: true });
+
+        const seed = yield* spawner.spawn(
+          ChildProcess.make("sqlite3", [
+            database,
+            "PRAGMA journal_mode = WAL; CREATE TABLE orchestration_v2_projection_runs (status TEXT); INSERT INTO orchestration_v2_projection_runs VALUES ('running'), ('completed');",
+          ]),
+        );
+        assert.equal(Number(yield* seed.exitCode), 0);
+        // Apple's sqlite3 keeps the checkpointed WAL files; the server's SQLite deletes them on close.
+        yield* fs.remove(`${database}-wal`, { force: true });
+        yield* fs.remove(`${database}-shm`, { force: true });
+
+        const gitStub = path.join(binDirectory, "git");
+        yield* fs.writeFileString(
+          gitStub,
+          "#!/bin/bash\nprintf '77aab3ebb9ff5a0126c588cc4711225bb71dce6f\\trefs/heads/custom\\n'\n",
+        );
+        yield* fs.chmod(gitStub, 0o755);
+
+        const updater = yield* spawner.spawn(
+          ChildProcess.make("/bin/bash", [updaterScript, "--status"], {
+            stdout: "pipe",
+            stderr: "pipe",
+            env: {
+              ...process.env,
+              PATH: `${binDirectory}:${process.env.PATH ?? ""}`,
+              T3CODE_CUSTOM_UPDATER_HOME: path.join(fixtureDirectory, "state"),
+              T3CODE_CUSTOM_USERDATA: userdataDirectory,
+              T3CODE_CUSTOM_DESTINATION: path.join(fixtureDirectory, "T3 Code Custom.app"),
+            },
+          }),
+        );
+        const stdout = yield* updater.stdout.pipe(
+          Stream.decodeText(),
+          Stream.runFold(
+            () => "",
+            (output, chunk) => output + chunk,
+          ),
+        );
+
+        assert.equal(Number(yield* updater.exitCode), 0);
+        assert.include(stdout, "active_sessions=1");
+      }),
+    ),
+  );
 });

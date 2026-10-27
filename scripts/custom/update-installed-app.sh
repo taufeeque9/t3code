@@ -26,6 +26,17 @@ read_state() {
   fi
 }
 
+read_database() {
+  local database="$1" query="$2"
+  # A read-only connection cannot create the WAL index. Its absence means no process has the
+  # database open, so reading it as immutable is safe.
+  if [[ -f "$database-shm" ]]; then
+    sqlite3 -readonly "$database" "$query"
+  else
+    sqlite3 "file:$database?mode=ro&immutable=1" "$query"
+  fi
+}
+
 active_session_count() {
   # Orchestration V2 keeps its state in statev2.sqlite, seeded once from state.sqlite.
   local database="$userdata_dir/statev2.sqlite"
@@ -37,12 +48,12 @@ active_session_count() {
     return
   fi
   # V2 tracks live work as runs; builds before V2 only have the session table.
-  if [[ -n "$(sqlite3 -readonly "$database" \
+  if [[ -n "$(read_database "$database" \
     "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'orchestration_v2_projection_runs';")" ]]; then
-    sqlite3 -readonly "$database" \
+    read_database "$database" \
       "SELECT COUNT(*) FROM orchestration_v2_projection_runs WHERE status IN ('preparing', 'starting', 'running', 'waiting');"
   else
-    sqlite3 -readonly "$database" \
+    read_database "$database" \
       "SELECT COUNT(*) FROM projection_thread_sessions WHERE status IN ('starting', 'running');"
   fi
 }
