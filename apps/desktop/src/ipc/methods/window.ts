@@ -38,6 +38,7 @@ import * as ElectronTheme from "../../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as Electron from "electron";
 import * as MacPermissions from "../../permissions/MacPermissions.ts";
+import * as DesktopWindow from "../../window/DesktopWindow.ts";
 import { safariPermissionCheck } from "../../preview/BrowserImport/SafariPermission.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
@@ -268,10 +269,14 @@ export const showContextMenu = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.CONTEXT_MENU_CHANNEL,
   payload: ContextMenuInput,
   result: Schema.NullOr(Schema.String),
-  handler: Effect.fn("desktop.ipc.window.showContextMenu")(function* (input) {
+  handler: Effect.fn("desktop.ipc.window.showContextMenu")(function* (input, event) {
     const electronMenu = yield* ElectronMenu.ElectronMenu;
     const electronWindow = yield* ElectronWindow.ElectronWindow;
-    const window = yield* electronWindow.focusedMainOrFirst;
+    const senderWindow =
+      event === undefined ? Option.none() : yield* electronWindow.appWindowFor(event.sender.id);
+    const window = Option.isSome(senderWindow)
+      ? senderWindow
+      : yield* electronWindow.focusedMainOrFirst;
     if (Option.isNone(window)) {
       return null;
     }
@@ -336,16 +341,10 @@ export const pasteAsText = DesktopIpc.makeIpcMethod({
   payload: Schema.Undefined,
   result: Schema.Void,
   handler: Effect.fn("desktop.ipc.window.pasteAsText")(function* (_input, event) {
+    if (event === undefined) return;
     const electronWindow = yield* ElectronWindow.ElectronWindow;
-    const window = yield* electronWindow.main;
-    if (
-      event === undefined ||
-      Option.isNone(window) ||
-      window.value.isDestroyed() ||
-      window.value.webContents.id !== event.sender.id
-    ) {
-      return;
-    }
+    const window = yield* electronWindow.appWindowFor(event.sender.id);
+    if (Option.isNone(window)) return;
     const focused = Electron.webContents.getFocusedWebContents();
     if (
       focused &&
@@ -362,16 +361,24 @@ export const revealWindow = DesktopIpc.makeIpcMethod({
   payload: Schema.Undefined,
   result: Schema.Void,
   handler: Effect.fn("desktop.ipc.window.revealWindow")(function* (_input, event) {
+    if (event === undefined) return;
     const electronWindow = yield* ElectronWindow.ElectronWindow;
-    const window = yield* electronWindow.main;
-    if (
-      event === undefined ||
-      Option.isNone(window) ||
-      window.value.webContents.id !== event.sender.id
-    ) {
-      return;
-    }
+    const window = yield* electronWindow.appWindowFor(event.sender.id);
+    if (Option.isNone(window)) return;
     yield* electronWindow.reveal(window.value);
+  }),
+});
+
+export const openWindow = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.OPEN_WINDOW_CHANNEL,
+  payload: Schema.String,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.window.openWindow")(function* (route, event) {
+    if (event === undefined || !route.startsWith("/")) return;
+    const electronWindow = yield* ElectronWindow.ElectronWindow;
+    if (Option.isNone(yield* electronWindow.appWindowFor(event.sender.id))) return;
+    const desktopWindow = yield* DesktopWindow.DesktopWindow;
+    yield* desktopWindow.openWindow(Option.some(route));
   }),
 });
 

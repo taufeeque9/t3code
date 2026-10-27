@@ -416,6 +416,39 @@ submodule. Project grouping still uses the canonical identity.
 the `requireProject` lookup, and the shell override. If upstream lists forks or
 submodules itself, compare and ask which to keep.
 
+### Desktop: secondary windows
+
+Upstream's desktop app has one window. The fork opens more, so two threads can
+be watched side by side: File → New Window (`CmdOrCtrl+Alt+Shift+N`, since
+`mod+shift+n` is `chat.newLocal`) duplicates the focused window's route, and the
+thread context menu's "Open in new window" opens that thread.
+
+- `DesktopWindow.ts`: `openWindow` calls `createWindow` with a route. A
+  secondary window cascades from the focused one, loads `#<route>`, skips
+  saved bounds and `previewManager.setMainWindow`, and refuses webviews.
+  `zoomMain` and `runMainContentsCommand` act on `ElectronWindow.focusedApp`.
+- `ElectronWindow.ts`: `addSecondary`, `focusedApp` and `appWindowFor` track app
+  windows apart from popups, and `currentMainOrFirst` skips secondaries so a
+  closed main is recreated (Dock click or New Window) instead of a secondary
+  standing in for it. `ipc/methods/window.ts` uses `appWindowFor` for
+  `pasteAsText`, `revealWindow`, `showContextMenu` and the new `openWindow`.
+- `preload.ts`: a secondary window (`SECONDARY_WINDOW_ARGUMENT`) gets the bridge
+  without `preview`, `webLinks` and `appActivation`, which the main process ties
+  to the main window, and with `secondaryWindow: true`. The web then treats it
+  like a browser client: the panel uses the server browser.
+- Web: `ElectronBrowserHost`, `rendersServerTabNatively` and
+  `useDesktopHostedPreviewSessions` check `isPreviewSupportedInRuntime()`
+  instead of `isElectron`; a tab main hosts shows upstream's "open in the
+  desktop app" placeholder. In secondary windows `ThreadNotificationCoordinator`
+  reads the notification mode as `"off"` (in-app toasts only),
+  `setNotificationBadge` is a no-op, and guide notifications do not start, so
+  sound, OS alerts and the dock badge come from main alone.
+  `scripts/verify-preload-bundle.mjs` stubs `process.argv` for the preload.
+
+**On conflict:** keep the `isSecondary` branches in `createWindow` and the
+preload split. If upstream adds multi-window support, compare and ask which to
+keep.
+
 ## Retired: superseded by upstream
 
 ### Native conversation forks, end-of-turn queue, worktree prefix setting

@@ -50,6 +50,15 @@ const dispatchMenuAction = Effect.fn("desktop.menu.dispatchMenuAction")(function
   });
 });
 
+const openNewWindow = Effect.fn("desktop.menu.openNewWindow")(function* (): Effect.fn.Return<
+  void,
+  DesktopWindow.DesktopWindowError,
+  DesktopWindow.DesktopWindow
+> {
+  const desktopWindow = yield* DesktopWindow.DesktopWindow;
+  yield* desktopWindow.openWindow(Option.none());
+});
+
 const zoomMainWindow = Effect.fn("desktop.menu.zoomMainWindow")(function* (
   direction: DesktopWindow.MainWindowZoomDirection,
 ): Effect.fn.Return<void, never, DesktopWindow.DesktopWindow> {
@@ -190,6 +199,12 @@ export const make = Effect.gen(function* () {
       {
         label: "File",
         submenu: [
+          {
+            label: "New Window",
+            accelerator: "CmdOrCtrl+Alt+Shift+N",
+            click: () => runMenuEffect("new-window", openNewWindow()),
+          },
+          { type: "separator" },
           ...(environment.platform === "darwin"
             ? []
             : [

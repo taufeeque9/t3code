@@ -190,7 +190,7 @@ export function startAppServices(): AppRouter {
   startLegacyThreadMigrationToast();
   startPermissionUpdateNotices(router);
   startThreadNotifications(appAtomRegistry, router);
-  startGuideRunNotifications(appAtomRegistry, router);
+  if (!window.desktopBridge?.secondaryWindow) startGuideRunNotifications(appAtomRegistry, router);
   if (isElectron) startDesktopUpdateLaunchNotice();
 
   return router;

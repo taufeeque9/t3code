@@ -21,6 +21,10 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock(import("~/env"), async (original) => ({ ...(await original()), isElectron: true }));
+vi.mock(import("~/previewStateStore"), async (original) => ({
+  ...(await original()),
+  isPreviewSupportedInRuntime: () => true,
+}));
 
 vi.mock(import("~/state/session"), async (original) => ({
   ...(await original()),

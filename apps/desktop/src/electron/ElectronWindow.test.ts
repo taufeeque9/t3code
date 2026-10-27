@@ -4,6 +4,7 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import type * as Electron from "electron";
 import { beforeEach, vi } from "vite-plus/test";
 
@@ -130,6 +131,50 @@ describe("ElectronWindow", () => {
       assert.lengthOf(window.getNativeWindowHandle.mock.calls, 1);
       assert.lengthOf(window.getTitle.mock.calls, 0);
     }).pipe(Effect.provide(layerTestFor("win32"))),
+  );
+
+  it.effect(
+    "targets the focused app window and never a popup, a stale secondary, or another sender",
+    () =>
+      Effect.gen(function* () {
+        const makeAppWindow = (webContentsId: number) => {
+          const listeners = new Map<string, () => void>();
+          return {
+            window: {
+              isDestroyed: () => false,
+              webContents: { id: webContentsId },
+              once: (eventName: string, listener: () => void) => listeners.set(eventName, listener),
+            } as unknown as Electron.BrowserWindow,
+            close: () => listeners.get("closed")?.(),
+          };
+        };
+        const main = makeAppWindow(1);
+        const secondary = makeAppWindow(2);
+        const popup = makeAppWindow(3);
+        const electronWindow = yield* ElectronWindow.ElectronWindow;
+        yield* electronWindow.setMain(main.window);
+        yield* electronWindow.addSecondary(secondary.window);
+
+        getFocusedWindowMock.mockReturnValue(secondary.window);
+        assert.strictEqual(Option.getOrNull(yield* electronWindow.focusedApp), secondary.window);
+        getFocusedWindowMock.mockReturnValue(popup.window);
+        assert.strictEqual(Option.getOrNull(yield* electronWindow.focusedApp), main.window);
+
+        assert.strictEqual(
+          Option.getOrNull(yield* electronWindow.appWindowFor(2)),
+          secondary.window,
+        );
+        assert.isTrue(Option.isNone(yield* electronWindow.appWindowFor(3)));
+
+        yield* electronWindow.clearMain(Option.some(main.window));
+        getAllWindowsMock.mockReturnValue([secondary.window]);
+        assert.isTrue(Option.isNone(yield* electronWindow.currentMainOrFirst));
+
+        secondary.close();
+        getFocusedWindowMock.mockReturnValue(secondary.window);
+        assert.isTrue(Option.isNone(yield* electronWindow.focusedApp));
+        assert.isTrue(Option.isNone(yield* electronWindow.appWindowFor(2)));
+      }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("preserves destroy failures and continues with later windows", () =>

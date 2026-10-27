@@ -48,6 +48,7 @@ import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import { SNAP_SHOT_EVENT_CHANNEL } from "../ipc/channels.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
+import { SECONDARY_WINDOW_ARGUMENT } from "./SecondaryWindow.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 import * as PreviewPasskeys from "../preview/Passkeys.ts";
 
@@ -102,7 +103,7 @@ function makeFakeBrowserWindow() {
     isMaximized: vi.fn(() => false),
     isMinimized: vi.fn(() => false),
     isVisible: vi.fn(() => true),
-    loadURL: vi.fn(() => Promise.resolve()),
+    loadURL: vi.fn((_url: string) => Promise.resolve()),
     maximize: vi.fn(),
     on: vi.fn((eventName: string, listener: (...args: readonly unknown[]) => void) => {
       windowListeners.set(eventName, listener);
@@ -280,6 +281,9 @@ function layerTest(input: {
       input.focusedWindow === undefined
         ? Ref.get(input.mainWindow)
         : Effect.succeedSome(input.focusedWindow),
+    focusedApp: Ref.get(input.mainWindow),
+    appWindowFor: () => Effect.succeedNone,
+    addSecondary: () => Effect.void,
     setMain: (window) => Ref.set(input.mainWindow, Option.some(window)),
     clearMain: () => Ref.set(input.mainWindow, Option.none()),
     prepareReveal: () => Effect.succeed(false),
@@ -401,6 +405,9 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
       main: Ref.get(mainWindow),
       currentMainOrFirst,
       focusedMainOrFirst: currentMainOrFirst,
+      focusedApp: Ref.get(mainWindow),
+      appWindowFor: () => Effect.succeedNone,
+      addSecondary: () => Effect.void,
       setMain: (window) => Ref.set(mainWindow, Option.some(window)),
       clearMain: () => Ref.set(mainWindow, Option.none()),
       prepareReveal: () => Effect.succeed(false),
@@ -780,6 +787,54 @@ describe("DesktopWindow", () => {
           ),
         );
       }),
+  );
+
+  it.effect("opens a secondary window that leaves the browser panel and saved bounds to main", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      fakeWindow.getNormalBounds.mockReturnValue({ x: 100, y: 80, width: 1200, height: 800 });
+      fakeWindow.window.webContents.getURL = () => "t3code-dev://app/#/env-1/thread-1";
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make(Option.some(fakeWindow.window));
+      const createdWindowOptions: Electron.BrowserWindowConstructorOptions[] = [];
+      const previewMainWindows: Electron.BrowserWindow[] = [];
+      const layer = layerTest({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        createdWindowOptions,
+        setPreviewMainWindow: (window) => Effect.sync(() => void previewMainWindows.push(window)),
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.openWindow(Option.none());
+        yield* desktopWindow.openWindow(Option.some("/env-1/thread-2"));
+
+        assert.deepEqual(
+          createdWindowOptions.map(({ x, y, webPreferences }) => ({
+            x,
+            y,
+            additionalArguments: webPreferences?.additionalArguments,
+          })),
+          [
+            { x: 132, y: 112, additionalArguments: [SECONDARY_WINDOW_ARGUMENT] },
+            { x: 132, y: 112, additionalArguments: [SECONDARY_WINDOW_ARGUMENT] },
+          ],
+        );
+        assert.deepEqual(
+          fakeWindow.loadURL.mock.calls.map(([url]) => URL.parse(url)?.hash),
+          ["#/env-1/thread-1", "#/env-1/thread-2"],
+        );
+        assert.deepEqual(previewMainWindows, []);
+        assert.isFalse(fakeWindow.windowListeners.has("close"));
+
+        const attachWebview = fakeWindow.webContentsListeners.get("will-attach-webview");
+        const preventDefault = vi.fn();
+        attachWebview?.({ preventDefault }, {}, { partition: "persist:t3code-preview-test" });
+        assert.equal(preventDefault.mock.calls.length, 1);
+      }).pipe(Effect.provide(layer));
+    }),
   );
 
   it.effect("persists normal bounds and state for a maximized window", () =>

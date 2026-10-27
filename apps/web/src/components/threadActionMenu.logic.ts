@@ -2,6 +2,7 @@ import type { ContextMenuItem } from "@t3tools/contracts";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 
 export type ThreadActionMenuId =
+  | "open-in-new-window"
   | "new-thread-on-branch"
   | "filter-by-project"
   | "project-settings"
@@ -89,11 +90,13 @@ export interface ThreadActionMenuState {
   readonly snoozePresets: ReadonlyArray<SnoozePreset>;
   /** Guest links need their own grant, so the caller checks it instead of `canOperate`. */
   readonly canShareWithGuest?: boolean;
+  readonly canOpenInNewWindow?: boolean;
 }
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
 export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean {
   return ![
+    "open-in-new-window",
     "new-thread-on-branch",
     "project-settings",
     "mark-unread",
@@ -109,6 +112,9 @@ export function buildThreadActionMenuItems(
   state: ThreadActionMenuState,
 ): ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> {
   const items: ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> = [
+    ...(state.canOpenInNewWindow
+      ? [{ id: "open-in-new-window" as const, label: "Open in new window" }]
+      : []),
     ...(state.branch
       ? [
           {

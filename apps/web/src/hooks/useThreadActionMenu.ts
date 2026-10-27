@@ -42,6 +42,8 @@ import {
   selectProjectGroupingSettings,
 } from "../logicalProject";
 import { buildPhysicalToLogicalProjectKeyMap } from "../sidebarProjectGrouping";
+import { buildThreadRouteParams } from "../threadRoutes";
+import { canOpenDesktopWindows } from "../env";
 import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
 import { useCopyToClipboard } from "./useCopyToClipboard";
 import { useNewThreadHandler } from "./useHandleNewThread";
@@ -144,6 +146,7 @@ export function useThreadActionMenu(input: {
         supports,
         snoozePresets,
         canShareWithGuest,
+        canOpenInNewWindow: canOpenDesktopWindows,
       });
       const clicked = await settlePromise(() => api.contextMenu.show(items, position));
       if (clicked._tag === "Failure" || clicked.value === null) return;
@@ -180,6 +183,14 @@ export function useThreadActionMenu(input: {
         }
       };
       switch (action) {
+        case "open-in-new-window":
+          void window.desktopBridge?.openWindow?.(
+            router.buildLocation({
+              to: "/$environmentId/$threadId",
+              params: buildThreadRouteParams(threadRef),
+            }).pathname,
+          );
+          return;
         case "project-settings": {
           const project = projects.find(
             (candidate) =>

@@ -115,6 +115,12 @@ export class ElectronWindow extends Context.Service<
     readonly main: Effect.Effect<Option.Option<Electron.BrowserWindow>>;
     readonly currentMainOrFirst: Effect.Effect<Option.Option<Electron.BrowserWindow>>;
     readonly focusedMainOrFirst: Effect.Effect<Option.Option<Electron.BrowserWindow>>;
+    /** The focused app window (main or secondary), falling back to main; never a popup. */
+    readonly focusedApp: Effect.Effect<Option.Option<Electron.BrowserWindow>>;
+    readonly appWindowFor: (
+      webContentsId: number,
+    ) => Effect.Effect<Option.Option<Electron.BrowserWindow>>;
+    readonly addSecondary: (window: Electron.BrowserWindow) => Effect.Effect<void>;
     readonly setMain: (window: Electron.BrowserWindow) => Effect.Effect<void>;
     readonly clearMain: (window: Option.Option<Electron.BrowserWindow>) => Effect.Effect<void>;
     readonly prepareReveal: (window: Electron.BrowserWindow) => Effect.Effect<boolean>;
@@ -141,6 +147,7 @@ export const make = Effect.gen(function* () {
   const captureRevealWindows = new Set<number>();
   yield* Effect.addFinalizer(() => Effect.sync(() => windowsForegroundFocus?.close()));
   const mainWindowRef = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+  const secondaryWindows = new Set<Electron.BrowserWindow>();
 
   const listWindows = Effect.try({
     try: () => Electron.BrowserWindow.getAllWindows(),
@@ -181,7 +188,10 @@ export const make = Effect.gen(function* () {
       return main;
     }
 
-    const first = Option.fromNullishOr((yield* listWindows)[0] ?? null);
+    // A secondary window must not stand in for main, or a closed main is never recreated.
+    const first = Option.fromNullishOr(
+      (yield* listWindows).find((window) => !secondaryWindows.has(window)) ?? null,
+    );
     if (Option.isNone(first) || (yield* isWindowDestroyed(first.value))) {
       return Option.none<Electron.BrowserWindow>();
     }
@@ -204,6 +214,21 @@ export const make = Effect.gen(function* () {
       return focused;
     }
     return yield* currentMainOrFirst;
+  });
+
+  const isAppWindow = Effect.fn("ElectronWindow.isAppWindow")(function* (
+    window: Electron.BrowserWindow,
+  ) {
+    if (yield* isWindowDestroyed(window)) return false;
+    if (secondaryWindows.has(window)) return true;
+    const main = yield* liveMain;
+    return Option.isSome(main) && main.value === window;
+  });
+
+  const focusedApp = Effect.gen(function* () {
+    const focused = Option.fromNullishOr(Electron.BrowserWindow.getFocusedWindow() ?? null);
+    if (Option.isSome(focused) && (yield* isAppWindow(focused.value))) return focused;
+    return yield* liveMain;
   });
 
   return ElectronWindow.of({
@@ -239,6 +264,22 @@ export const make = Effect.gen(function* () {
     main: liveMain,
     currentMainOrFirst,
     focusedMainOrFirst,
+    focusedApp,
+    appWindowFor: Effect.fn("ElectronWindow.appWindowFor")(function* (webContentsId) {
+      const main = yield* liveMain;
+      const candidates = [...Option.toArray(main), ...secondaryWindows];
+      return Option.fromNullishOr(
+        candidates.find(
+          (window) => !window.isDestroyed() && window.webContents.id === webContentsId,
+        ) ?? null,
+      );
+    }),
+    addSecondary: Effect.fn("ElectronWindow.addSecondary")(function (window) {
+      return Effect.sync(() => {
+        secondaryWindows.add(window);
+        window.once("closed", () => secondaryWindows.delete(window));
+      });
+    }),
     setMain: Effect.fn("ElectronWindow.setMain")(function (window) {
       return Ref.set(mainWindowRef, Option.some(window));
     }),

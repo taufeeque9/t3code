@@ -79,7 +79,7 @@ import {
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
-import { isElectron } from "../env";
+import { canOpenDesktopWindows, isElectron } from "../env";
 import {
   resolveShortcutCommand,
   shortcutLabelForCommand,
@@ -2398,6 +2398,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               canShareWithGuest: appAtomRegistry.get(
                 canShareWithGuestAtom(threadRef.environmentId),
               ),
+              canOpenInNewWindow: canOpenDesktopWindows,
               supports: {
                 settlement: supportsSettlement,
                 autoSettleOptOut: supportsAutoSettleOptOut,
@@ -2421,6 +2422,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           return;
         }
         switch (clicked.value) {
+          case "open-in-new-window":
+            void window.desktopBridge?.openWindow?.(
+              router.buildLocation({
+                to: "/$environmentId/$threadId",
+                params: buildThreadRouteParams(threadRef),
+              }).pathname,
+            );
+            return;
           case "filter-by-project":
             if (threadProjectGroup) {
               setProjectScopeKey(

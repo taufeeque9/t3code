@@ -49,6 +49,11 @@ interface WatchedEnvironment {
   readonly gate: ReturnType<typeof createThreadNotificationGate<ThreadId>>;
 }
 
+// Secondary desktop windows show in-app toasts; the main window owns sound, OS alerts and the badge.
+function readNotificationMode(): ClientSettings["notificationMode"] {
+  return window.desktopBridge?.secondaryWindow ? "off" : getClientSettings().notificationMode;
+}
+
 /**
  * Turns thread status transitions in every connected environment into sounds, in-app toasts,
  * and desktop notifications, and keeps the dock badge in step with the unread ones.
@@ -78,7 +83,8 @@ export function startThreadNotifications(
     kind: ThreadNotificationKind,
   ) => {
     const { thread, status } = state;
-    const { notificationMode: mode, inAppNotificationsEnabled } = getClientSettings();
+    const { inAppNotificationsEnabled } = getClientSettings();
+    const mode = readNotificationMode();
     const active = (router.state.matches.at(-1)?.params ?? {}) as {
       environmentId?: string;
       threadId?: string;
@@ -96,9 +102,7 @@ export function startThreadNotifications(
                 ? "Guest request"
                 : "Input needed";
     if (hasNotificationSound(mode)) {
-      void playNotificationSound(kind, () =>
-        hasNotificationSound(getClientSettings().notificationMode),
-      );
+      void playNotificationSound(kind, () => hasNotificationSound(readNotificationMode()));
     }
     if (
       inAppNotificationsEnabled &&
@@ -280,7 +284,7 @@ export function startThreadNotifications(
   let appliedMode: ClientSettings["notificationMode"] | null = null;
   let stopModeListeners = () => {};
   const applyMode = () => {
-    const nextMode = getClientSettings().notificationMode;
+    const nextMode = readNotificationMode();
     if (nextMode === appliedMode) return;
     appliedMode = nextMode;
     stopModeListeners();

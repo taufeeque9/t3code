@@ -34,6 +34,7 @@ import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import { makeQuitShortcutHandler } from "./QuitHold.ts";
+import { SECONDARY_WINDOW_ARGUMENT } from "./SecondaryWindow.ts";
 import { copyContextMenuImage } from "./ContextMenuImage.ts";
 
 const TITLEBAR_HEIGHT = 40;
@@ -61,6 +62,7 @@ const RENDERER_RECOVERY_RELOAD_DELAY_MS = 500;
 const RENDERER_RECOVERY_MAX_ATTEMPTS = 3;
 const RENDERER_RECOVERY_WINDOW_MS = 60_000;
 const DEVELOPMENT_RETRYABLE_LOAD_ERROR_CODES = new Set([-2, -7, -9, -102, -105, -106, -118]);
+const SECONDARY_WINDOW_CASCADE_OFFSET = 32;
 
 type WindowTitleBarOptions = Pick<
   Electron.BrowserWindowConstructorOptions,
@@ -108,6 +110,8 @@ export class DesktopWindow extends Context.Service<
     readonly dispatchSnapShotEvent: (
       event: DesktopSnapShotEvent,
     ) => Effect.Effect<void, DesktopWindowError>;
+    /** Opens a secondary window at a renderer route, or the focused window's route. */
+    readonly openWindow: (route: Option.Option<string>) => Effect.Effect<void, DesktopWindowError>;
     // Electron zoom roles target focused guests; zoomMain must always target the app.
     readonly zoomMain: (direction: MainWindowZoomDirection) => Effect.Effect<void>;
     readonly runMainContentsCommand: (command: MainWindowContentsCommand) => Effect.Effect<void>;
@@ -337,11 +341,12 @@ export const make = Effect.gen(function* () {
     yield* previewManager.reapplyZoom();
   });
 
-  const createWindow = Effect.fn("desktop.window.createWindow")(function* (): Effect.fn.Return<
-    Option.Option<Electron.BrowserWindow>,
-    DesktopWindowError
-  > {
+  const createWindow = Effect.fn("desktop.window.createWindow")(function* (
+    secondaryRoute: Option.Option<string> = Option.none(),
+  ): Effect.fn.Return<Option.Option<Electron.BrowserWindow>, DesktopWindowError> {
     if (yield* Ref.get(desktopState.quitting)) return Option.none();
+    const isSecondary = Option.isSome(secondaryRoute);
+    const cascadeFrom = isSecondary ? yield* electronWindow.focusedApp : Option.none();
     yield* previewManager.getBrowserSession();
     const applicationUrl = getDesktopUrl(environment.isDevelopment);
     const iconPaths = yield* assets.iconPaths;
@@ -365,9 +370,23 @@ export const make = Effect.gen(function* () {
         : yield* logWindowWarning("failed to read connected displays; using defaults", {
             cause: displayBoundsResult.cause,
           }).pipe(Effect.as<readonly Electron.Rectangle[]>([]));
-    const initialBounds = resolveInitialMainWindowBounds(persistedBounds, displayBounds);
+    const initialBounds = Option.match(cascadeFrom, {
+      onNone: () => resolveInitialMainWindowBounds(persistedBounds, displayBounds),
+      onSome: (source) => {
+        const bounds = source.getNormalBounds();
+        return {
+          ...bounds,
+          x: bounds.x + SECONDARY_WINDOW_CASCADE_OFFSET,
+          y: bounds.y + SECONDARY_WINDOW_CASCADE_OFFSET,
+        };
+      },
+    });
     const restoredPersistedBounds = persistedBounds !== null && initialBounds === persistedBounds;
-    if (persistedBounds !== null && initialBounds === DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE) {
+    if (
+      !isSecondary &&
+      persistedBounds !== null &&
+      initialBounds === DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE
+    ) {
       yield* logWindowWarning("saved main window bounds could not be restored; using defaults");
     }
     if (yield* Ref.get(desktopState.quitting)) return Option.none();
@@ -392,6 +411,7 @@ export const make = Effect.gen(function* () {
         webviewTag: true,
         // Guest fullscreen propagates to the embedder; both must opt out to keep it inside the webview.
         disableHtmlFullscreenWindowResize: true,
+        ...(isSecondary ? { additionalArguments: [SECONDARY_WINDOW_ARGUMENT] } : {}),
       },
     });
     if (yield* Ref.get(desktopState.quitting)) {
@@ -488,15 +508,17 @@ export const make = Effect.gen(function* () {
         fiber === undefined ? Effect.void : Fiber.join(fiber).pipe(Effect.asVoid),
       ),
     );
-    flushMainWindowBounds = flushBoundsPersist;
-
-    yield* previewManager.setMainWindow(window);
+    if (!isSecondary) {
+      flushMainWindowBounds = flushBoundsPersist;
+      yield* previewManager.setMainWindow(window);
+    }
     if (yield* Ref.get(desktopState.quitting)) {
       yield* electronWindow.destroyAll;
       return Option.none();
     }
     window.webContents.on("will-attach-webview", (event, webPreferences, params) => {
       if (
+        isSecondary ||
         typeof params.partition !== "string" ||
         !previewManager.isBrowserPartition(params.partition)
       ) {
@@ -664,13 +686,15 @@ export const make = Effect.gen(function* () {
       event.preventDefault();
       window.setTitle(environment.displayName);
     });
-    window.on("resize", scheduleBoundsPersist);
-    window.on("move", scheduleBoundsPersist);
-    window.on("maximize", scheduleBoundsPersist);
-    window.on("unmaximize", scheduleBoundsPersist);
-    window.on("close", () => {
-      runFork(flushBoundsPersist);
-    });
+    if (!isSecondary) {
+      window.on("resize", scheduleBoundsPersist);
+      window.on("move", scheduleBoundsPersist);
+      window.on("maximize", scheduleBoundsPersist);
+      window.on("unmaximize", scheduleBoundsPersist);
+      window.on("close", () => {
+        runFork(flushBoundsPersist);
+      });
+    }
 
     if (environment.platform === "darwin") {
       window.on("enter-full-screen", () => {
@@ -697,7 +721,11 @@ export const make = Effect.gen(function* () {
       if (window.isDestroyed()) {
         return;
       }
-      void window.loadURL(applicationUrl).catch(() => undefined);
+      const url = Option.match(secondaryRoute, {
+        onNone: () => applicationUrl,
+        onSome: (route) => `${applicationUrl}#${route}`,
+      });
+      void window.loadURL(url).catch(() => undefined);
     };
     const scheduleDevelopmentLoadRetry = () => {
       if (developmentLoadRetryFiber !== undefined || window.isDestroyed()) {
@@ -808,14 +836,14 @@ export const make = Effect.gen(function* () {
       if (!window.isDestroyed()) {
         window.webContents.setBackgroundThrottling(true);
       }
-      if (persistedSettings.mainWindowMaximized) {
+      if (!isSecondary && persistedSettings.mainWindowMaximized) {
         window.maximize();
       }
       void runPromise(Effect.andThen(electronWindow.reveal(window), dismissConnectingSplash));
     });
 
     loadApplication();
-    if (environment.isDevelopment) {
+    if (environment.isDevelopment && !isSecondary) {
       window.webContents.openDevTools({ mode: "detach" });
     }
 
@@ -836,6 +864,22 @@ export const make = Effect.gen(function* () {
     }
     return window;
   }).pipe(Effect.withSpan("desktop.window.createMain"));
+
+  const focusedRoute = Effect.gen(function* () {
+    const focused = yield* electronWindow.focusedApp;
+    if (Option.isNone(focused)) return "/";
+    const hash = URL.parse(focused.value.webContents.getURL())?.hash.slice(1) ?? "";
+    return hash.startsWith("/") ? hash : "/";
+  });
+
+  const openSecondaryWindow = Effect.fn("desktop.window.openSecondaryWindow")(function* (
+    route: string,
+  ) {
+    const window = yield* createWindow(Option.some(route));
+    if (Option.isNone(window)) return;
+    yield* electronWindow.addSecondary(window.value);
+    yield* logWindowInfo("secondary window created");
+  });
 
   const ensureMain = Effect.gen(function* () {
     if (yield* Ref.get(desktopState.quitting)) return Option.none<Electron.BrowserWindow>();
@@ -1000,9 +1044,16 @@ export const make = Effect.gen(function* () {
         reveal: event.type === "started",
       });
     }),
+    openWindow: Effect.fn("desktop.window.openWindow")(function* (route) {
+      if (Option.isNone(yield* electronWindow.main)) {
+        yield* createMainIfBackendReady;
+        return;
+      }
+      yield* openSecondaryWindow(Option.isSome(route) ? route.value : yield* focusedRoute);
+    }),
     zoomMain: Effect.fn("desktop.window.zoomMain")(function* (direction) {
       yield* Effect.annotateCurrentSpan({ direction });
-      const window = yield* electronWindow.main;
+      const window = yield* electronWindow.focusedApp;
       if (Option.isNone(window) || window.value.isDestroyed()) {
         return;
       }
@@ -1011,7 +1062,7 @@ export const make = Effect.gen(function* () {
     runMainContentsCommand: Effect.fn("desktop.window.runMainContentsCommand")(function* (command) {
       yield* Effect.annotateCurrentSpan({ command });
       // A focused OAuth popup must not receive the app's Reload command.
-      const window = yield* electronWindow.main;
+      const window = yield* electronWindow.focusedApp;
       if (Option.isNone(window) || window.value.isDestroyed()) return;
       const webContents = window.value.webContents;
       if (command === "reload") webContents.reload();

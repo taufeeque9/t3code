@@ -12,6 +12,7 @@ import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
 
 import * as IpcChannels from "./ipc/channels.ts";
 import { mergeLegacyLocalStorage } from "./legacyLocalStorageMerge.ts";
+import { SECONDARY_WINDOW_ARGUMENT } from "./window/SecondaryWindow.ts";
 
 const SNAP_SHOT_EVENT_TYPES = new Set([
   "requested",
@@ -73,7 +74,7 @@ function unwrapEnsureSshEnvironmentResult(result: unknown) {
   return result as Awaited<ReturnType<DesktopBridge["ensureSshEnvironment"]>>;
 }
 
-contextBridge.exposeInMainWorld("desktopBridge", {
+const desktopBridge = {
   getAppBranding: () => {
     const result = ipcRenderer.sendSync(IpcChannels.GET_APP_BRANDING_CHANNEL);
     if (typeof result !== "object" || result === null) {
@@ -98,6 +99,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     return () => ipcRenderer.removeListener(IpcChannels.TRACKPAD_SCROLL_END_CHANNEL, handler);
   },
   revealWindow: () => ipcRenderer.invoke(IpcChannels.REVEAL_WINDOW_CHANNEL),
+  openWindow: (route) => ipcRenderer.invoke(IpcChannels.OPEN_WINDOW_CHANNEL, route),
   getSystemLocale: () => {
     const result = ipcRenderer.sendSync(IpcChannels.GET_SYSTEM_LOCALE_CHANNEL);
     return typeof result === "string" ? result : null;
@@ -440,4 +442,20 @@ contextBridge.exposeInMainWorld("desktopBridge", {
         ipcRenderer.removeListener(IpcChannels.PREVIEW_OPEN_LINK_CHANNEL, wrappedListener);
     },
   },
-} satisfies DesktopBridge);
+} satisfies DesktopBridge;
+
+// Electron hands webPreferences.additionalArguments to sandboxed preloads in process.argv.
+const isSecondaryWindow = process.argv.includes(SECONDARY_WINDOW_ARGUMENT);
+// The browser panel, external links and app activation are bound to the main window.
+const {
+  preview: _preview,
+  webLinks: _webLinks,
+  appActivation: _appActivation,
+  ...shared
+} = desktopBridge;
+contextBridge.exposeInMainWorld(
+  "desktopBridge",
+  isSecondaryWindow
+    ? ({ ...shared, secondaryWindow: true } satisfies DesktopBridge)
+    : desktopBridge,
+);
