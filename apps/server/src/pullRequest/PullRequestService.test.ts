@@ -4568,6 +4568,37 @@ it.effect("keeps a fork project's canonical change requests on that project", ()
   }),
 );
 
+it.effect("keeps a fork's upstream change requests off a plain clone of that upstream", () =>
+  Effect.gen(function* () {
+    const acted: Array<readonly [string, string]> = [];
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "rl-clone",
+          title: "RL",
+          workspaceRoot: "/rl",
+          repository: "NVIDIA-NeMo/RL",
+        }),
+        forkProject(),
+      ],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          runAction: ({ cwd, repository }) => Effect.sync(() => acted.push([cwd, repository])),
+        }),
+      ],
+    });
+
+    yield* service.runAction({
+      projectId: "rl" as ProjectId,
+      host: "github.com",
+      repository: "NVIDIA-NeMo/RL",
+      number: 3,
+      action: "close",
+    });
+    assert.deepStrictEqual(acted, [["/nemo-rl", "NVIDIA-NeMo/RL"]]);
+  }),
+);
+
 it.effect("lists a direct submodule's change requests and acts on them from its checkout", () =>
   Effect.gen(function* () {
     const submoduleRoot = "/deception/third_party/llm";

@@ -341,6 +341,8 @@ export interface SupportedProject {
   readonly repositoryKey: string | null;
 }
 
+type ResolvedProject = Effect.Effect<SupportedProject, PullRequestError>;
+
 interface WorkspaceProjects {
   readonly supported: ReadonlyArray<SupportedProject>;
   readonly unimplemented: ReadonlyMap<
@@ -981,10 +983,32 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  /** The upstream a fork project tracks while its change-request features target the fork. */
+  const trackedRepository = (projectId: ProjectId) =>
+    projects.getShell(projectId).pipe(
+      Effect.flatMap(
+        Option.match({
+          onNone: () => Effect.succeed(null),
+          onSome: (shell) =>
+            (shell.repositoryIdentity != null
+              ? Effect.succeed(shell.repositoryIdentity)
+              : repositoryIdentities.resolve(shell.workspaceRoot)
+            ).pipe(
+              Effect.map((identity) => ({
+                root: shell.workspaceRoot,
+                repository: sourceControlDefinitions.repositorySelector(identity),
+              })),
+            ),
+        }),
+      ),
+      Effect.orElseSucceed(() => null),
+    );
+
   // Azure derives organization from the checkout; require the matching repository.
   const requireProject = (ref: PullRequestRef): Effect.Effect<SupportedProject, PullRequestError> =>
     listWorkspaceProjects({ projectId: ref.projectId }).pipe(
-      Effect.flatMap(({ supported }): Effect.Effect<SupportedProject, PullRequestError> => {
+      Effect.zip(trackedRepository(ref.projectId)),
+      Effect.flatMap(([{ supported }, tracked]): ResolvedProject => {
         const repository = ref.repository.trim();
         const host = ref.host?.trim().toLowerCase();
         const own = supported.find(
@@ -993,6 +1017,20 @@ export const make = Effect.gen(function* () {
             (host === undefined || host === candidate.host),
         );
         if (own !== undefined) return Effect.succeed(own);
+        const forkRoot = supported.find(
+          (candidate) =>
+            candidate.project.workspaceRoot === tracked?.root &&
+            (host === undefined || host === candidate.host),
+        );
+        if (forkRoot && tracked?.repository?.toLowerCase() === repository.toLowerCase()) {
+          return Effect.succeed({
+            ...forkRoot,
+            repository,
+            remote: sourceControlDefinitions.repositoryKeyFromRemote(
+              `https://${forkRoot.host}/${repository}`,
+            ),
+          });
+        }
         if (host === undefined) {
           if (supported.length === 0) {
             return Effect.fail(new PullRequestUnavailableError({ reason: "provider-unsupported" }));
