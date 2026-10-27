@@ -4595,7 +4595,16 @@ it.effect("keeps a fork's upstream change requests off a plain clone of that ups
       number: 3,
       action: "close",
     });
-    assert.deepStrictEqual(acted, [["/nemo-rl", "NVIDIA-NeMo/RL"]]);
+    yield* service.runAction({
+      projectId: "rl" as ProjectId,
+      repository: "NVIDIA-NeMo/RL",
+      number: 4,
+      action: "close",
+    });
+    assert.deepStrictEqual(acted, [
+      ["/nemo-rl", "NVIDIA-NeMo/RL"],
+      ["/nemo-rl", "NVIDIA-NeMo/RL"],
+    ]);
   }),
 );
 
