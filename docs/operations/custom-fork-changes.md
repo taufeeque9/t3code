@@ -348,6 +348,15 @@ would catch this (`bin.mjs --version`) runs only for Windows sidecar builds.
 **On conflict:** take upstream's fix if it lands. Retire this once upstream
 declares `zod` for the server or `@cursor/sdk` lists it as a dependency again.
 
+### Monthly spend amounts
+
+`claudeUsageLimits.ts` labels upstream's "Monthly spend" window with the amounts
+it already reads, such as "Monthly spend · $46.31 of $500", so every client that
+shows a window label shows the spend without a contract change.
+
+**On conflict:** keep upstream's parsing and re-apply the label. Retire this
+once upstream shows the amounts itself.
+
 ## Retired: superseded by upstream
 
 ### Native conversation forks, end-of-turn queue, worktree prefix setting
@@ -370,8 +379,8 @@ deleting the V1 code all three were built on.
 
 Retired on 2026-10-25 when upstream began reading `rate_limits.spend` and
 `rate_limits.extra_usage` into a "Monthly spend" window on the account's bar.
-The fork's `Extra` row also showed the credit amounts; upstream shows the
-percentage only.
+Upstream shows the percentage only; the fork keeps the amounts in that window's
+label (see "Monthly spend amounts").
 
 ### Fuzzy sidebar search over thread contents
 

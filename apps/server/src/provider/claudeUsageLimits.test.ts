@@ -131,7 +131,7 @@ describe("claudeUsageResponseToLimits", () => {
   const monthlyWindow = {
     id: "monthly_spend",
     kind: "monthly",
-    label: "Monthly spend",
+    label: "Monthly spend · $46.31 of $500",
     usedPercent: expect.closeTo(9.262, 10),
   };
 
@@ -196,7 +196,7 @@ describe("claudeUsageResponseToLimits", () => {
     };
     expect(
       claudeUsageResponseToLimits({ checkedAt, response: utilizationOnly }).limits.windows,
-    ).toEqual([monthlyWindow]);
+    ).toEqual([{ ...monthlyWindow, label: "Monthly spend" }]);
   });
 
   it("omits disabled budgets and refuses invalid money without an enabled fallback", () => {

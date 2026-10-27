@@ -81,7 +81,27 @@ function percentFromAmounts(used: number | null | undefined, limit: number | nul
   return Number.isFinite(percent) ? clampPercent(percent) : undefined;
 }
 
-function readSpendPercent(rateLimits: NonNullable<SDKControlGetUsageResponse["rate_limits"]>) {
+interface SpendAmounts {
+  readonly usedMinor: number;
+  readonly limitMinor: number;
+  readonly currency: string;
+  readonly exponent: number;
+}
+
+interface MonthlySpend {
+  readonly percent: number;
+  readonly amounts: SpendAmounts | undefined;
+}
+
+// `extra_usage` reports its currency and scale beyond the SDK's typings.
+interface ExtraUsageMoney {
+  readonly currency?: string | null;
+  readonly decimal_places?: number | null;
+}
+
+function readMonthlySpend(
+  rateLimits: NonNullable<SDKControlGetUsageResponse["rate_limits"]>,
+): MonthlySpend | undefined {
   const spend = Option.getOrUndefined(
     decodeSpendBudget((rateLimits as { readonly spend?: unknown }).spend),
   );
@@ -93,15 +113,62 @@ function readSpendPercent(rateLimits: NonNullable<SDKControlGetUsageResponse["ra
     spend.used.exponent === spend.limit.exponent
   ) {
     const percent = percentFromAmounts(spend.used.amount_minor, spend.limit.amount_minor);
-    if (percent !== undefined) return percent;
+    if (percent !== undefined) {
+      return {
+        percent,
+        amounts: {
+          usedMinor: spend.used.amount_minor,
+          limitMinor: spend.limit.amount_minor,
+          currency: spend.used.currency.trim(),
+          exponent: spend.used.exponent,
+        },
+      };
+    }
   }
 
   const extra = rateLimits.extra_usage;
   if (extra?.is_enabled !== true) return undefined;
-  const percent = percentFromAmounts(extra.used_credits, extra.monthly_limit) ?? extra.utilization;
-  return typeof percent === "number" && Number.isFinite(percent) && percent >= 0
-    ? clampPercent(percent)
-    : undefined;
+  const usedMinor = extra.used_credits;
+  const limitMinor = extra.monthly_limit;
+  const fromAmounts = percentFromAmounts(usedMinor, limitMinor);
+  const percent = fromAmounts ?? extra.utilization;
+  if (typeof percent !== "number" || !Number.isFinite(percent) || percent < 0) return undefined;
+  const money: ExtraUsageMoney = extra;
+  const currency = money.currency?.trim();
+  const exponent = money.decimal_places;
+  return {
+    percent: clampPercent(percent),
+    amounts:
+      fromAmounts !== undefined &&
+      typeof usedMinor === "number" &&
+      typeof limitMinor === "number" &&
+      currency &&
+      typeof exponent === "number" &&
+      Number.isInteger(exponent) &&
+      exponent >= 0
+        ? { usedMinor, limitMinor, currency, exponent }
+        : undefined,
+  };
+}
+
+function formatMoney(amountMinor: number, currency: string, exponent: number): string | undefined {
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency,
+      minimumFractionDigits: 0,
+      maximumFractionDigits: Math.min(exponent, 20),
+    }).format(amountMinor / 10 ** exponent);
+  } catch {
+    return undefined;
+  }
+}
+
+function monthlySpendLabel(amounts: SpendAmounts | undefined): string {
+  if (!amounts) return "Monthly spend";
+  const used = formatMoney(amounts.usedMinor, amounts.currency, amounts.exponent);
+  const limit = formatMoney(amounts.limitMinor, amounts.currency, amounts.exponent);
+  return used && limit ? `Monthly spend · ${used} of ${limit}` : "Monthly spend";
 }
 
 /**
@@ -201,13 +268,13 @@ export function claudeUsageResponseToLimits(input: {
     );
     overageIncluded ??= entry.display_name;
   }
-  const spendPercent = readSpendPercent(response.rate_limits);
-  if (spendPercent !== undefined) {
+  const monthlySpend = readMonthlySpend(response.rate_limits);
+  if (monthlySpend !== undefined) {
     windows.push({
       id: "monthly_spend",
       kind: "monthly",
-      label: "Monthly spend",
-      usedPercent: spendPercent,
+      label: monthlySpendLabel(monthlySpend.amounts),
+      usedPercent: monthlySpend.percent,
     });
   }
   return {
