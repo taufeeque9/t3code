@@ -449,6 +449,21 @@ thread context menu's "Open in new window" opens that thread.
 preload split. If upstream adds multi-window support, compare and ask which to
 keep.
 
+### Telemetry is opt-in
+
+Upstream sends product analytics to `ingest.t3.codes` unless
+`T3CODE_TELEMETRY_ENABLED=false`. The fork defaults it to off, so a missing
+variable (a fresh shell, the devbox server) never sends events.
+`T3CODE_TELEMETRY_ENABLED=true` turns it back on.
+
+- `AnalyticsService.ts`: the `T3CODE_TELEMETRY_ENABLED` default is `false`.
+- `otelEnvironment.ts`: `isRelayTracingEnabled` requires the variable to be
+  `true`. Fork builds carry no relay trace credentials, so this only matters if
+  some are configured.
+- `docs/user/telemetry.md` describes the opt-in.
+
+**On conflict:** take upstream's code and re-apply both defaults.
+
 ## Retired: superseded by upstream
 
 ### Native conversation forks, end-of-turn queue, worktree prefix setting
