@@ -182,8 +182,11 @@ A new thread on web, desktop, or mobile moves its default selection (project
 default, carried selection, or sticky last pick) to the same-driver account with
 the best usable limits for that model, keeping the model and options. An explicit
 composer pick wins, and the auto pick is never written as the sticky selection.
-Agent-created threads, scheduled tasks, and existing threads are unchanged.
-Upstream always starts on the default account.
+`delegate_task` and `create_threads` targets without a `providerInstanceId` pick
+the same way among accounts of the target driver (the parent's when none is given),
+keeping the parent's model and options when the driver matches. Scheduled tasks and
+existing threads are unchanged. Upstream starts new threads on the default account
+and child threads on the parent's account.
 
 - `packages/shared/src/providerAccountPick.ts` and its test: the ranking heuristic,
   plus the model-scope helpers and 95% threshold the composer warning now imports
@@ -196,10 +199,14 @@ Upstream always starts on the default account.
 - `autoPickProviderAccount` server setting (default on) in `packages/contracts/src/settings.ts`;
   the toggle is `AutoPickProviderAccountRow` in Settings → Providers → Advanced, with a
   settings-search entry. Mobile has no toggle; it follows the server setting.
+- `apps/server/src/mcp/OrchestratorMcpService.ts`: `pickAccountByLimits`, called at the
+  top of `resolveTarget`, and `inheritsSelection` covering a picked same-driver account;
+  tested in `OrchestratorMcpService.test.ts` ("delegation with … by usage limits")
 
 **On conflict:** keep the call after upstream's default resolution in each
-new-thread path. If upstream adds account selection for new threads, compare its
-ranking with this one and ask before retiring either.
+new-thread path, and keep the pick ahead of upstream's driver-only fallback in
+`resolveTarget`. If upstream adds account selection for new or child threads,
+compare its ranking with this one and ask before retiring either.
 
 ### Limits bars: per-instance colour and short names
 

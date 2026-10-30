@@ -430,7 +430,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/providers",
     scope: "environment-defaults",
     searchTerms: [
-      "new thread account claude codex multiple accounts usage limits quota weekly session reset automatic choose switch",
+      "new thread subagent delegate account claude codex multiple accounts usage limits quota weekly session reset automatic choose switch",
     ],
   },
   {

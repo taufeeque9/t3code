@@ -67,6 +67,7 @@ import {
   isOrchestrationV2WorkActive,
 } from "@t3tools/contracts";
 import { getProviderOptionCurrentValue } from "@t3tools/shared/model";
+import { pickProviderAccountByLimits } from "@t3tools/shared/providerAccountPick";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import {
@@ -1327,6 +1328,47 @@ const make = Effect.gen(function* () {
     );
   };
 
+  /** Without an explicit account, child work goes to the same-driver account with the best usable limits. */
+  const pickAccountByLimits = Effect.fn("OrchestratorMcpService.pickAccountByLimits")(
+    function* (input: {
+      readonly parent: Pick<OrchestrationV2ThreadProjection, "thread">;
+      readonly driver: ServerProvider["driver"];
+      readonly model: string | undefined;
+      readonly providers: ReadonlyArray<ServerProvider>;
+      readonly orchestrationCapableInstanceIds: ReadonlySet<ProviderInstanceId>;
+      readonly skipProjectEnablementFilter: boolean | undefined;
+    }) {
+      const settings = yield* serverSettings.getSettings.pipe(
+        Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
+      );
+      if (!settings.autoPickProviderAccount) return undefined;
+      const candidates = yield* Effect.filter(
+        input.providers.filter(
+          (provider) =>
+            provider.driver === input.driver &&
+            provider.usageLimits !== undefined &&
+            input.orchestrationCapableInstanceIds.has(provider.instanceId) &&
+            providerConstraints(provider, true).length === 0 &&
+            (input.model === undefined ||
+              provider.models.some((model) => model.slug === input.model) ||
+              (provider.instanceId === input.parent.thread.modelSelection.instanceId &&
+                input.model === input.parent.thread.modelSelection.model)),
+        ),
+        (provider) =>
+          input.skipProjectEnablementFilter === true
+            ? Effect.succeed(true)
+            : threadManagement.isProviderInstanceEnabledForProject({
+                projectId: input.parent.thread.projectId,
+                instanceId: provider.instanceId,
+              }),
+      );
+      const model = input.model ?? candidates[0]?.models[0]?.slug;
+      if (model === undefined) return undefined;
+      const now = yield* Clock.currentTimeMillis;
+      return pickProviderAccountByLimits(candidates, model, now) ?? undefined;
+    },
+  );
+
   const resolveTarget = Effect.fn("OrchestratorMcpService.resolveTarget")(function* (input: {
     readonly parent: Pick<OrchestrationV2ThreadProjection, "thread">;
     readonly target: OrchestratorMcpTarget | undefined;
@@ -1337,7 +1379,25 @@ const make = Effect.gen(function* () {
     const requestedInstanceId = input.target?.providerInstanceId;
     const requestedDriver = input.target?.driverKind;
     const orchestrationCapableInstanceIds = yield* loadOrchestrationCapableInstanceIds();
-    let instanceId = requestedInstanceId;
+    const inheritedSelection = input.parent.thread.modelSelection;
+    const inheritedDriver = input.providers.find(
+      (provider) => provider.instanceId === inheritedSelection.instanceId,
+    )?.driver;
+    const pickDriver = requestedDriver ?? inheritedDriver;
+    const pickedInstanceId =
+      requestedInstanceId === undefined && pickDriver !== undefined
+        ? yield* pickAccountByLimits({
+            parent: input.parent,
+            driver: pickDriver,
+            model:
+              input.target?.model ??
+              (pickDriver === inheritedDriver ? inheritedSelection.model : undefined),
+            providers: input.providers,
+            orchestrationCapableInstanceIds,
+            skipProjectEnablementFilter: input.skipProjectEnablementFilter,
+          })
+        : undefined;
+    let instanceId = requestedInstanceId ?? pickedInstanceId;
 
     if (instanceId === undefined && requestedDriver !== undefined) {
       const candidates = input.providers.filter(
@@ -1408,13 +1468,12 @@ const make = Effect.gen(function* () {
       );
     }
 
-    const inheritedSelection = input.parent.thread.modelSelection;
+    const inheritsSelection =
+      instanceId === inheritedSelection.instanceId ||
+      (instanceId === pickedInstanceId && provider.driver === inheritedDriver);
     const requestedModel = input.target?.model;
     const model =
-      requestedModel ??
-      (instanceId === inheritedSelection.instanceId
-        ? inheritedSelection.model
-        : provider?.models[0]?.slug);
+      requestedModel ?? (inheritsSelection ? inheritedSelection.model : provider?.models[0]?.slug);
     if (model === undefined) {
       return yield* failure(
         "model_unavailable",
@@ -1446,8 +1505,7 @@ const make = Effect.gen(function* () {
       }
     }
 
-    const inheritsOptions =
-      instanceId === inheritedSelection.instanceId && model === inheritedSelection.model;
+    const inheritsOptions = inheritsSelection && model === inheritedSelection.model;
     let options = inheritsOptions ? inheritedSelection.options : undefined;
     if (requestedOptions !== undefined) {
       const selections = new Map(

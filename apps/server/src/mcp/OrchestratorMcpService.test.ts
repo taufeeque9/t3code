@@ -1717,6 +1717,105 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
   );
 
+  it.effect.each([
+    { name: "no target", target: undefined, autoPick: true, expected: "codex-alt" },
+    {
+      name: "a driver-only target",
+      target: { driverKind: ProviderDriverKind.make("codex") },
+      autoPick: true,
+      expected: "codex-alt",
+    },
+    {
+      name: "an explicit account",
+      target: { providerInstanceId: codexInstanceId },
+      autoPick: true,
+      expected: "codex",
+    },
+    { name: "the setting off", target: undefined, autoPick: false, expected: "codex" },
+  ])("delegation with $name picks $expected by usage limits", (testCase) =>
+    Effect.gen(function* () {
+      const altInstanceId = ProviderInstanceId.make("codex-alt");
+      const options = [{ id: "effort", value: "high" }];
+      const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
+      const withWeekly = (provider: ServerProvider, usedPercent: number, resetsAt: string) => ({
+        ...provider,
+        usageLimits: {
+          checkedAt: "2026-10-29T00:00:00.000Z",
+          windows: [
+            { id: "weekly", kind: "weekly" as const, label: "Weekly", usedPercent, resetsAt },
+          ],
+        },
+      });
+      const layerDependencies = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          hasReceipt: () => Effect.succeed(false),
+          getThreadRecords: () =>
+            Effect.succeed(
+              parentProjection([], { instanceId: codexInstanceId, model: "gpt-5.4", options }),
+            ),
+          isProviderInstanceEnabledForProject: () => Effect.succeed(true),
+          dispatch: (command) =>
+            Ref.update(dispatched, (commands) => [...commands, command]).pipe(
+              Effect.as({
+                sequence: 1,
+                storedEvents: [
+                  {
+                    sequence: 1,
+                    commandId: null,
+                    event: { type: "subagent.updated", payload: { id: taskId } },
+                  },
+                ],
+              } as never),
+            ),
+        }),
+        providerRegistryLayer([
+          withWeekly(
+            providerSnapshot({
+              instanceId: codexInstanceId,
+              driver: ProviderDriverKind.make("codex"),
+              model: "gpt-5.4",
+            }),
+            10,
+            "2026-11-05T00:00:00.000Z",
+          ),
+          withWeekly(
+            providerSnapshot({
+              instanceId: altInstanceId,
+              driver: ProviderDriverKind.make("codex"),
+              model: "gpt-5.4",
+            }),
+            50,
+            "2026-11-01T00:00:00.000Z",
+          ),
+        ]),
+        adapterRegistryLayer([codexInstanceId, altInstanceId]),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        ServerSettings.layerTest({ autoPickProviderAccount: testCase.autoPick }),
+      );
+
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        yield* service
+          .delegateTask(scope, {
+            task: "Summarize the diff.",
+            ...(testCase.target === undefined ? {} : { target: testCase.target }),
+            mode: "async",
+            clientRequestId: `delegate-limits-${testCase.name}`,
+          })
+          .pipe(Effect.ignore);
+        const [command] = yield* Ref.get(dispatched);
+        assert.deepEqual((command as { modelSelection: unknown }).modelSelection, {
+          instanceId: testCase.expected,
+          model: "gpt-5.4",
+          options,
+        });
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
+    }),
+  );
+
   it.live.each([
     { name: "parent instance", parentEnabled: true, model: "gpt-5.4" },
     { name: "alternate instance", parentEnabled: false, model: "gpt-5.5" },

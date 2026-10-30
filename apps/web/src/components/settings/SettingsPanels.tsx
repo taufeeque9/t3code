@@ -1457,7 +1457,7 @@ function ScopedAutoPickProviderAccountRow() {
           onCheckedChange={(checked) =>
             updateSettings({ autoPickProviderAccount: Boolean(checked) })
           }
-          aria-label="Pick account by usage for new threads"
+          aria-label="Pick account by usage for new threads and subagents"
         />
       }
     />

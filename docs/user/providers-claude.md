@@ -36,9 +36,11 @@ state. Claude does not have Codex's shared-home and shadow-home arrangement.
 
 With several accounts signed in, a new thread starts on an account whose usage is
 not nearly spent, favoring the weekly allowance that resets soonest. The model and
-its options stay the same, and an account you pick in the composer wins. Turn off
-**Pick account by usage** in **Settings > Providers** to keep the default account.
-This also applies to multiple Codex accounts.
+its options stay the same, and an account you pick in the composer wins. Subagents
+and threads an agent creates follow the same rule unless the agent names an account.
+Turn off **Pick account by usage** in **Settings > Providers** to keep the default
+account, and the parent's account for subagents. This also applies to multiple Codex
+accounts.
 
 For presets that differ only in API keys or endpoints, use the instance's
 **Environment variables**. Variable assignments do not belong in **Launch arguments**.
