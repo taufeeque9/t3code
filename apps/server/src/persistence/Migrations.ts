@@ -73,6 +73,13 @@ import Migration0067 from "./Migrations/066_RepairClientSettlementTimestamps.ts"
 import Migration0068 from "./Migrations/067_WebhookDedupe.ts";
 import Migration0069 from "./Migrations/068_ShellStopRequestIndex.ts";
 import Migration0070 from "./Migrations/069_ThreadMessageSearch.ts";
+import Migration0071 from "./Migrations/070_PeerLinks.ts";
+import Migration0072 from "./Migrations/071_PeerLinkFence.ts";
+import Migration0073 from "./Migrations/072_WaitingLinkRequestIndex.ts";
+import Migration0074 from "./Migrations/073_ActiveTurnItemIndexes.ts";
+import Migration0075 from "./Migrations/074_ExcludeAttachmentPlaceholdersFromSearch.ts";
+import Migration0076 from "./Migrations/075_SubagentDeliveryState.ts";
+import Migration0077 from "./Migrations/076_ProjectionProjectsPinArchive.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -146,6 +153,13 @@ const migrationEntries = [
   [68, "WebhookDedupe", Migration0068],
   [69, "ShellStopRequestIndex", Migration0069],
   [70, "ThreadMessageSearch", Migration0070],
+  [71, "PeerLinks", Migration0071],
+  [72, "PeerLinkFence", Migration0072],
+  [73, "WaitingLinkRequestIndex", Migration0073],
+  [74, "ActiveTurnItemIndexes", Migration0074],
+  [75, "ExcludeAttachmentPlaceholdersFromSearch", Migration0075],
+  [76, "SubagentDeliveryState", Migration0076],
+  [77, "ProjectionProjectsPinArchive", Migration0077],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

@@ -15,6 +15,7 @@ import {
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
 import type { Popover as PopoverPrimitive } from "@base-ui/react/popover";
+import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
 import { AlertTriangleIcon, ExternalLinkIcon, TicketIcon } from "lucide-react";
 import {
   createContext,
@@ -260,6 +261,7 @@ function ActiveSegmentPopover({
   // The trigger is gone, so the popup has nothing to anchor to: an exit transition would
   // slide it to the viewport origin. Unmount it outright, which also clears Base UI's
   // active-trigger bookkeeping so the segment can open again when it comes back.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- closes the popover handle and unmounts the Base UI popup before paint when its trigger is gone
   useLayoutEffect(() => {
     if (available) return;
     handle.close();
@@ -354,9 +356,6 @@ function SegmentTriggers({
   const [segmentRef, paceMark] = usePaceMark(timeLeft);
   const resetsIn = formatResetsIn(window, now);
   const credits = account.limits.resetCredits?.availableCount ?? 0;
-  // The colour configured for this instance is how the user already tells these
-  // accounts apart elsewhere; the driver colour would paint them all alike.
-  const segmentColor = account.accentColor ?? color;
   return (
     <>
       <PopoverTrigger
@@ -379,7 +378,7 @@ function SegmentTriggers({
             <div
               aria-hidden
               className="absolute inset-y-0 left-0 rounded-md opacity-35"
-              style={{ width: `${remaining}%`, backgroundColor: segmentColor }}
+              style={{ width: `${remaining}%`, backgroundColor: color }}
             />
             {remaining < 100 && reset && refillPercent > 0 ? (
               <div
@@ -387,7 +386,7 @@ function SegmentTriggers({
                 className="absolute inset-y-0 right-0 opacity-20"
                 style={{
                   width: `${Math.min(100 - remaining, refillPercent)}%`,
-                  backgroundImage: `repeating-linear-gradient(135deg, ${segmentColor} 0 1px, transparent 1px 5px)`,
+                  backgroundImage: `repeating-linear-gradient(135deg, ${color} 0 1px, transparent 1px 5px)`,
                 }}
               />
             ) : null}
@@ -439,7 +438,7 @@ function SegmentTriggers({
           ) : null}
         </div>
       </PopoverTrigger>
-      <LegendRow payload={payload} color={segmentColor} now={now} index={index} />
+      <LegendRow payload={payload} color={color} now={now} index={index} />
     </>
   );
 }
@@ -525,7 +524,7 @@ function PoolBar({
               window={member.window}
               reset={restores.get(member.account.key)}
               refillPercent={member.refillPercent}
-              color={color}
+              color={normalizeProviderAccentColor(member.account.accentColor) ?? color}
               now={now}
               index={position + 1}
               showAccountName={pool.columns.length > 1}
@@ -670,6 +669,9 @@ export function UsageLimitsPooled({
             ) : null}
             <div className="min-w-0 space-y-1">
               <h2 className="text-sm font-medium">{link.label}</h2>
+              <p className="text-xs break-words text-muted-foreground">
+                {link.accounts.join(", ")}
+              </p>
               {link.url === CHATGPT_USAGE_URL ? (
                 <p className="text-xs text-muted-foreground">
                   View usage in ChatGPT with your connected account.

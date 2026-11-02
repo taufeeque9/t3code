@@ -203,24 +203,29 @@ and child threads on the parent's account.
   top of `resolveTarget`, and `inheritsSelection` covering a picked same-driver account;
   tested in `OrchestratorMcpService.test.ts` ("delegation with … by usage limits")
 
-**On conflict:** keep the call after upstream's default resolution in each
-new-thread path, and keep the pick ahead of upstream's driver-only fallback in
-`resolveTarget`. If upstream adds account selection for new or child threads,
-compare its ranking with this one and ask before retiring either.
+Upstream's `fallbackModelSelection` setting (#26164) swaps an exhausted default
+for one configured fallback model, on any driver. Both run: upstream's
+`resolveNewThreadModelSelection` first, then the fork's pick on its result, so a
+fallback lands on the best account of the fallback's driver. With no fallback
+configured (the default) upstream's step changes nothing.
 
-### Limits bars: per-instance colour and short names
+**On conflict:** keep the call after upstream's default and fallback resolution
+in each new-thread path, and keep the pick ahead of upstream's driver-only
+fallback in `resolveTarget`. If upstream adds account ranking for new or child
+threads, compare it with this one and ask before retiring either.
 
-Upstream paints every account in a pool with one hardcoded driver colour and
-prints the full instance name on each bar, so four Claude accounts look alike
-and each row repeats the heading's own word.
+### Limits bars: short names
+
+Upstream prints the full instance name on each bar, so each row repeats the
+heading's own word.
 
 - `apps/web/src/components/usage/accountName.ts` and its test
-- `apps/web/src/components/usage/UsageLimitsPooled.tsx`: `segmentColor` from
-  `account.accentColor`, and the `shortAccountName` call in `AccountName`
+- `apps/web/src/components/usage/UsageLimitsPooled.tsx`: the `shortAccountName`
+  call in `AccountName`
 
-The accent colour already reaches the client on `UsageLimitsReport`; upstream
-only uses it for the avatar. Popover titles and aria-labels keep the full name,
-which is read without the heading for context.
+Popover titles and aria-labels keep the full name, which is read without the
+heading for context. Per-instance bar colours were retired on 2026-11-01 when
+upstream painted each bar with its account's accent colour (#24630).
 
 ### Pull request assignees (GitHub)
 
@@ -279,10 +284,11 @@ the new thread's composer, to resend or edit it. It rides upstream's
 
 - `apps/web/src/components/chat/userMessageFork.ts` and its test map each run's
   starting message to the forkable run before it
-- `TimelineUserMessageRow.tsx`: `ForkUserMessageButton`; `MessagesTimeline.tsx`
-  and `timelineRowContext.ts`: the `userMessageForkSources` prop and an optional
-  `prompt` on upstream's `onForkFromRun`
-- `ChatView.tsx` computes the sources from the projection's runs;
+- `TimelineUserMessageRow.tsx`: `ForkUserMessageButton` in upstream's
+  `messageActions`; `MessagesTimeline.tsx` and `timelineRowContext.ts`: the
+  `userMessageForkSources` prop and an optional `prompt` on upstream's `onForkFromRun`
+- `ChatView.tsx` computes the sources from the projection's runs and passes them
+  only outside side chats, alongside upstream's `onForkFromRun`;
   `useTimelineRewind.ts` sets the forked thread's draft before navigating
 
 A thread's first message has no run before it, so it gets no button. A message
@@ -316,8 +322,9 @@ before the message. Taufeeque wants a normal send by default. The chip is a
 one-click "compact, then send" button instead of a toggle; Enter and the send
 button always keep full history.
 
-- `ComposerPrimaryActions.tsx`: the chip calls `onCompactAndSendMessage`; the
-  send button no longer changes label or tooltip for compaction
+- `ComposerPrimaryActions.tsx`: the chip calls `onCompactAndSendMessage` and
+  keeps upstream's narrow-composer layout; the send button no longer changes
+  label or tooltip for compaction
 - `ChatComposer.tsx`: `handleCompactAndSendMessage` passes `compactFirst`
   through `submitComposer` to `onSend`, via `ComposerFooterControls.tsx`; the
   mobile collapsed send button sends
@@ -356,7 +363,8 @@ in installed databases. Keep that migration and its unused table. Upstream's
 migrations from ID 50 onward run one ID later here (`OrchestrationV2` is 56).
 Preserve every released ID/name pair in `Migrations.ts`; renumbering would make
 a later schema change look already applied. `FIRST_V2_MIGRATION_ID` is 56 for the same reason, and
-`Migrations.test.ts` names IDs one higher than upstream's copy. Append incoming upstream migrations
+`Migrations.test.ts` names IDs one higher than upstream's copy, and its file
+registration check compares names only. Append incoming upstream migrations
 at the next free fork ID and adjust tests that name migration IDs, including
 the dev-database migration test.
 
@@ -409,7 +417,9 @@ submodule. Project grouping still uses the canonical identity.
   `requireProject` picks the project's entry for the requested repository
   rather than `supported[0]`, and its host fallback prefers the requested
   project, so a fork project's canonical pull requests stay on it. `listStats`
-  keys by repository. `checkout` exposes the shell to the review guide.
+  keys by repository. `checkout` exposes the shell to the review guide. The
+  tracked-upstream lookup reads the project shell through `readShell`, which
+  shares upstream's per-sweep cache (`withSharedProjectReads`).
 - `PullRequestReviewGuideService.ts`: writes from `checkout`'s directory and
   accepts the checkout's identity or, at the project root, the canonical one.
 - Web `PullRequestDetailPanel.tsx`: a submodule pull request checks out in
@@ -435,12 +445,14 @@ thread context menu's "Open in new window" opens that thread.
   saved bounds and `previewManager.setMainWindow`, and refuses webviews.
   `zoomMain` and `runMainContentsCommand` act on `ElectronWindow.focusedApp`.
 - `ElectronWindow.ts`: `addSecondary`, `focusedApp` and `appWindowFor` track app
-  windows apart from popups, and `currentMainOrFirst` skips secondaries so a
+  windows apart from popups, and `currentMainOrFirst` skips secondaries (as well
+  as upstream's auxiliary windows) so a
   closed main is recreated (Dock click or New Window) instead of a secondary
   standing in for it. `ipc/methods/window.ts` uses `appWindowFor` for
   `pasteAsText`, `revealWindow`, `showContextMenu` and the new `openWindow`.
 - `preload.ts`: a secondary window (`SECONDARY_WINDOW_ARGUMENT`) gets the bridge
-  without `preview`, `webLinks` and `appActivation`, which the main process ties
+  without `preview`, `webLinks` and `appActivation` (optional in `DesktopBridge`
+  for that reason), which the main process ties
   to the main window, and with `secondaryWindow: true`. The web then treats it
   like a browser client: the panel uses the server browser.
 - Web: `ElectronBrowserHost`, `rendersServerTabNatively` and

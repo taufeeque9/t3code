@@ -16,6 +16,8 @@ import { gitHubViewerPermissions, loginAvatarUrl, make } from "./GitHubPullReque
 import type { GitHubReviewThreadComments } from "./gitHubPullRequestJson.ts";
 
 const coreFields = {
+  maintainerCanModify: true,
+  canEditMaintainerEdits: false,
   reviewRequestTeams: [],
   checksTruncated: false,
   comparison: { behindBy: 0, viewerCanUpdate: true },
@@ -208,6 +210,7 @@ describe("gitHubViewerPermissions", () => {
       });
 
       expect(detail.viewerPermissions).toEqual({
+        maintainerEdits: false,
         actions: ["ready", "draft", "close", "reopen"],
         comment: true,
         resolve: false,
@@ -249,7 +252,6 @@ describe("gitHubViewerPermissions", () => {
               ...coreFields,
               comparison: null,
               viewerAccess: { ...coreFields.viewerAccess, canWrite: false, canTriage: false },
-              authorId: null,
               number: 7,
               title: "Pull request 7",
               url: "https://github.com/acme/web/pull/7",
@@ -341,7 +343,6 @@ describe("gitHubViewerPermissions", () => {
           getPullRequestDetail: () =>
             Effect.succeed({
               ...coreFields,
-              authorId: null,
               number: 7,
               title: "Pull request 7",
               url: "https://github.com/acme/web/pull/7",
@@ -404,7 +405,6 @@ describe("gitHubViewerPermissions", () => {
 
 const openDetail = {
   ...coreFields,
-  authorId: null,
   number: 7,
   title: "Pull request 7",
   url: "https://github.com/acme/web/pull/7",
@@ -610,7 +610,6 @@ describe("getViewerPermissions", () => {
 
 describe("getChangeRequest commits", () => {
   const baseDetail = {
-    authorId: null,
     number: 7,
     title: "Pull request 7",
     url: "https://github.com/acme/web/pull/7",
@@ -795,7 +794,6 @@ describe("listChangeRequestsAcross", () => {
     title: "Change",
     url: `https://github.com/${repository}/pull/1`,
     author: null,
-    authorId: null,
     headBranch: "feature",
     baseBranch: "main",
     state: "open" as const,
