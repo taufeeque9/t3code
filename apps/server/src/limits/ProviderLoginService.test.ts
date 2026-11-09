@@ -4,6 +4,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
@@ -14,6 +15,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as ProviderLoginService from "./ProviderLoginService.ts";
 
 const AUTHORIZE_URL = "https://claude.test/cai/oauth/authorize?state=stub";
+const inheritedPath = process.env.PATH ?? "";
 
 /**
  * Stands in for `claude auth login`: prints the authorization URL, then accepts
@@ -82,7 +84,9 @@ const setup = (source: string) =>
 
 const makeService = (settings: Parameters<typeof ServerSettings.layerTest>[0]) =>
   ProviderLoginService.make.pipe(
-    Effect.provide(Layer.mergeAll(NodeServices.layer, ServerSettings.layerTest(settings))),
+    Effect.provide(
+      Layer.mergeAll(NodeCrypto.layer, NodeServices.layer, ServerSettings.layerTest(settings)),
+    ),
   );
 
 describe("ProviderLoginService", () => {
@@ -114,7 +118,7 @@ describe("ProviderLoginService", () => {
             environment: [
               {
                 name: "PATH",
-                value: `${home}${NodePath.delimiter}${process.env.PATH ?? ""}`,
+                value: `${home}${NodePath.delimiter}${inheritedPath}`,
                 sensitive: false,
               },
             ],

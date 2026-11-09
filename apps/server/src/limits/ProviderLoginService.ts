@@ -16,7 +16,7 @@ import {
 } from "@t3tools/contracts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -108,7 +108,7 @@ function lastMeaningfulLine(output: string): string | null {
 
 export const make = Effect.gen(function* () {
   const settingsService = yield* ServerSettingsService;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   // Held here so the service's own signature stays context-free.
   const path = yield* Path.Path;
   const pendingByLoginId = new Map<string, PendingLogin>();
@@ -177,7 +177,7 @@ export const make = Effect.gen(function* () {
       { env: environment, stdio: ["pipe", "pipe", "pipe"] },
     ) as NodeChildProcess.ChildProcessWithoutNullStreams;
 
-    const loginId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+    const loginId = yield* random.uuidV4();
     const pending: PendingLogin = {
       loginId,
       instanceId: input.instanceId,

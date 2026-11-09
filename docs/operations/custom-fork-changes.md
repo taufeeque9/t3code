@@ -121,6 +121,10 @@ session. Each account remains a separate provider instance with its own
   subagent transcripts in-process, which finds nothing for an account with its
   own `homePath`. Drop this once upstream routes that lookup through the worker.
 
+A queued account switch is a `restart_and_resume`, so upstream's queue hold in
+`Orchestrator.ts` applies: it waits while the replaced session runs background work,
+even between separate transcript trees.
+
 Sharing a transcript tree through symlinks avoids copying. Distinct directories
 are supported without changing their links or account credentials. Claude ↔
 Codex switches still use upstream's portable handoff.
@@ -333,6 +337,12 @@ button always keep full history.
   per-thread full-history toggle state
 - `docs/user/providers-claude.md`: the chip's description
 
+`submitComposer` also forwards `compactFirst` through `submitComposerRef`, so a
+chip click during dictation still compacts once the transcript lands. Upstream's
+`/clear` wins over the chip: an armed fresh session never compacts. This is web
+and desktop only. Upstream's mobile composer has no chip and compacts an eligible
+send first (#27935).
+
 **On conflict:** keep upstream's offer conditions (`shouldOfferResumeCompaction`)
 and re-apply the opt-in wiring. Retire it if upstream makes plain send the
 default.
@@ -374,19 +384,6 @@ the reconciliation implementation remains upstream-owned.
 
 **On conflict:** preserve the fork's ledger while taking upstream's migration
 implementations. Retiring a feature does not retire its applied migration.
-
-### Packaged backend ships zod for @cursor/sdk
-
-`@cursor/sdk` 1.0.38 moved `zod` from a dependency to a peer dependency. The
-desktop stage installs only the externals `apps/server/package.json` declares,
-so the 0.1.3 build shipped without `zod` and the backend exited on
-`Cannot find module 'zod/v4'`, leaving no window. The bundle self-check that
-would catch this (`bin.mjs --version`) runs only for Windows sidecar builds.
-
-- `apps/server/package.json` declares `zod`; `knip.jsonc` ignores it as unused.
-
-**On conflict:** take upstream's fix if it lands. Retire this once upstream
-declares `zod` for the server or `@cursor/sdk` lists it as a dependency again.
 
 ### Monthly spend amounts
 
@@ -449,7 +446,7 @@ thread context menu's "Open in new window" opens that thread.
   as upstream's auxiliary windows) so a
   closed main is recreated (Dock click or New Window) instead of a secondary
   standing in for it. `ipc/methods/window.ts` uses `appWindowFor` for
-  `pasteAsText`, `revealWindow`, `showContextMenu` and the new `openWindow`.
+  `pasteAsText`, `readMedia`, `revealWindow`, `showContextMenu` and the new `openWindow`.
 - `preload.ts`: a secondary window (`SECONDARY_WINDOW_ARGUMENT`) gets the bridge
   without `preview`, `webLinks` and `appActivation` (optional in `DesktopBridge`
   for that reason), which the main process ties
@@ -475,7 +472,8 @@ Upstream sends product analytics to `ingest.t3.codes` unless
 variable (a fresh shell, the devbox server) never sends events.
 `T3CODE_TELEMETRY_ENABLED=true` turns it back on.
 
-- `AnalyticsService.ts`: the `T3CODE_TELEMETRY_ENABLED` default is `false`.
+- `AnalyticsService.ts`: the `T3CODE_TELEMETRY_ENABLED` default is `false`, both
+  at startup and in the desktop shell-consent read inside `telemetryEnabled`.
 - `otelEnvironment.ts`: `isRelayTracingEnabled` requires the variable to be
   `true`. Fork builds carry no relay trace credentials, so this only matters if
   some are configured.
@@ -484,6 +482,11 @@ variable (a fresh shell, the devbox server) never sends events.
 **On conflict:** take upstream's code and re-apply both defaults.
 
 ## Retired: superseded by upstream
+
+### Packaged backend ships zod for @cursor/sdk
+
+Retired on 2026-11-09: upstream's `apps/server/package.json` declares `zod` (#25841),
+so the fork's dependency and its knip ignore went with it.
 
 ### Native conversation forks, end-of-turn queue, worktree prefix setting
 
