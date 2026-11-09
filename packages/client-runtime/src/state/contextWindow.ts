@@ -234,9 +234,9 @@ export function shouldOfferResumeCompaction(input: {
 }
 
 /**
- * Whether a plain send into an idle thread compacts it first, as web's composer does under
- * "When you return". Web reads the same state for its "Compact and send" button. A send that
- * hands off to another conversation starts that one fresh, so only the resumed one counts.
+ * Whether a mobile send into an idle thread compacts it first under "When you return". Web's
+ * Compact chip offers the same compaction on request. A send that hands off to another
+ * conversation starts that one fresh, so only the resumed one counts.
  */
 export function shouldCompactBeforeSend(input: {
   readonly projection: Pick<

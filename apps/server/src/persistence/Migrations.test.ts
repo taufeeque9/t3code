@@ -165,6 +165,27 @@ describe("runMigrations", () => {
   );
 });
 
+it.effect("upgrades the desktop launch fixture", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const filename = yield* fs.makeTempFileScoped({ suffix: ".sqlite" });
+    yield* fs.copyFile(
+      path.join(import.meta.dirname, "../../../../scripts/fixtures/desktop-launch/statev2.sqlite"),
+      filename,
+    );
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations();
+      assert.deepStrictEqual(yield* history, migrationManifest);
+      const threads = yield* sql<{ readonly title: string }>`
+        SELECT title FROM orchestration_v2_projection_threads WHERE title = 'Release launch check'
+      `;
+      assert.lengthOf(threads, 1);
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename })));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 // The npm launcher reads the highest migration id from these file names.
 it.effect("registers every migration file", () =>
   Effect.gen(function* () {

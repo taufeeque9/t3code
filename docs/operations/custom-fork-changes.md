@@ -379,6 +379,10 @@ registration check compares names only. Append incoming upstream migrations
 at the next free fork ID and adjust tests that name migration IDs, including
 the dev-database migration test.
 
+`scripts/fixtures/desktop-launch/statev2.sqlite` carries the fork's ledger too, with
+migration 50's tables added, and `Migrations.test.ts` upgrades it. If upstream replaces
+the fixture, redo that: shift its IDs from 50 up by one and add the row and tables.
+
 `reconcileV2PreviewMigration` only matches an `OrchestrationV2` row at 53 or 54,
 which the fork's ledger does not use. Its upstream fixture test is removed;
 the reconciliation implementation remains upstream-owned.
