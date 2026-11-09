@@ -11,7 +11,7 @@ import type {
   PullRequestRef,
 } from "@t3tools/contracts";
 import { CheckIcon, UserPlusIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
@@ -106,15 +106,11 @@ function PullRequestAssigneePicker({
     reportFailure: false,
   });
 
-  const candidates = useMemo(
-    () => (candidatesQuery.data?.candidates ?? []).filter((entry) => matches(entry, query)),
-    [candidatesQuery.data, query],
+  const candidates = (candidatesQuery.data?.candidates ?? []).filter((entry) =>
+    matches(entry, query),
   );
 
-  const assignedLogins = useMemo(
-    () => new Set(assignees.map((actor) => actor.login.toLowerCase())),
-    [assignees],
-  );
+  const assignedLogins = new Set(assignees.map((actor) => actor.login.toLowerCase()));
   const isAssigned = (candidate: PullRequestAssigneeCandidate) =>
     assignedLogins.has(candidate.login.toLowerCase());
 

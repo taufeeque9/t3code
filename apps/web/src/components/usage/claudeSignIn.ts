@@ -1,12 +1,6 @@
 /**
- * Claude accounts the Limits view can offer a sign-in for.
- *
- * Upstream reports a broken account as a notice string, which is enough to
- * explain a missing bar but not to repair it. Claude is the one driver whose
- * CLI T3 Code can drive through a sign-in, so those accounts are collected
- * separately with the identity a sign-in needs.
- *
- * @module claudeSignIn
+ * Claude accounts the Limits view can offer a sign-in for, collected apart from
+ * upstream's notice strings because a sign-in needs the account's identity.
  */
 import type { EnvironmentId, ProviderInstanceId, ServerProvider } from "@t3tools/contracts";
 import { isProviderAvailable } from "@t3tools/contracts";

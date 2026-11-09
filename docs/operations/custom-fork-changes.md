@@ -108,7 +108,8 @@ session. Each account remains a separate provider instance with its own
   actually ran that native conversation, then resumes the same native ID.
   Transfers preserve unrelated sessions and atomically publish the transcript.
   A missing or unreadable source fails the switch instead of sending a portable
-  handoff. Switching back copies the updated native history back in full.
+  handoff. Switching back copies the updated native history back in full. Accounts
+  with the same continuation key share a tree, so nothing is transferred.
 - `Orchestrator.ts` plans a queued run's switch from the active provider
   thread's instance whenever they differ. Upstream does this only for monitor
   updates (`followsCurrentConversation`), so a message queued after the picker
@@ -419,6 +420,8 @@ submodule. Project grouping still uses the canonical identity.
   shares upstream's per-sweep cache (`withSharedProjectReads`).
 - `PullRequestReviewGuideService.ts`: writes from `checkout`'s directory and
   accepts the checkout's identity or, at the project root, the canonical one.
+- Web `pullRequestDiffStatKey` includes the repository, because one project can list
+  the same number twice.
 - Web `PullRequestDetailPanel.tsx`: a submodule pull request checks out in
   `detail.workspaceRoot`, offers no other environment, and a local checkout
   leaves the thread's branch alone. `pullRequestProjectAssignment.logic.ts` and
@@ -473,7 +476,8 @@ variable (a fresh shell, the devbox server) never sends events.
 `T3CODE_TELEMETRY_ENABLED=true` turns it back on.
 
 - `AnalyticsService.ts`: the `T3CODE_TELEMETRY_ENABLED` default is `false`, both
-  at startup and in the desktop shell-consent read inside `telemetryEnabled`.
+  at startup and in the desktop shell-consent read inside `telemetryEnabled`. That
+  read decides on its own, because the startup value predates the shell profile.
 - `otelEnvironment.ts`: `isRelayTracingEnabled` requires the variable to be
   `true`. Fork builds carry no relay trace credentials, so this only matters if
   some are configured.

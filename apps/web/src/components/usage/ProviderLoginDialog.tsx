@@ -1,6 +1,6 @@
 import type { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 import { ExternalLinkIcon } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 
 import {
   isAtomCommandInterrupted,
@@ -57,7 +57,9 @@ export function ProviderLoginDialog(props: {
 
   // Each target opens its own sign-in, so nothing from a previous account may
   // survive into it.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Starts the provider's sign-in process for the target.
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- Clears the previous account's sign-in before starting this one.
     setLoginId(null);
     setAuthorizeUrl(null);
     setCode("");
@@ -94,7 +96,7 @@ export function ProviderLoginDialog(props: {
 
   // An empty code is meaningful: the provider's own browser callback may have
   // completed the sign-in, and the server then just waits for its CLI to exit.
-  const submit = useCallback(async () => {
+  const submit = async () => {
     if (!target || loginId === null) {
       return;
     }
@@ -113,7 +115,7 @@ export function ProviderLoginDialog(props: {
     }
     onSignedIn();
     onOpenChange(false);
-  }, [code, loginId, onOpenChange, onSignedIn, submitLogin, target]);
+  };
 
   return (
     <Dialog open={target !== null} onOpenChange={onOpenChange}>

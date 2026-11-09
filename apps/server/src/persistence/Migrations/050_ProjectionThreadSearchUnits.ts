@@ -2,14 +2,8 @@ import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
 /**
- * One row per searchable unit — a thread title, a URL seen in an assistant
- * message, or a user message. Fuzzy matching runs per row, so a match can never
- * span two units: that boundary is what keeps a loose query from stitching the
- * end of one message to the start of the next.
- *
- * Rows are derived, never authoritative. `projection_thread_search_state`
- * records the thread `updated_at` each thread was last indexed at, so a stale
- * thread is re-extracted on demand and the table needs no backfill of its own.
+ * One derived row per searchable unit: a thread title, an assistant URL, or a user message.
+ * `projection_thread_search_state` records each thread's last indexed `updated_at`.
  */
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

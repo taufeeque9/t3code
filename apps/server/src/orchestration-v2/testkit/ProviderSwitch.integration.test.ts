@@ -2837,7 +2837,7 @@ describe("orchestration v2 provider switching", () => {
                 getMetadata: () =>
                   Effect.succeed({
                     driver: CLAUDE_DRIVER,
-                    continuationKey: "claude:projects:/shared-native-account-history",
+                    continuationKey: "claude:shared-native-account-history",
                     enabled: true,
                     capabilities: ClaudeProviderCapabilitiesV2,
                   }),

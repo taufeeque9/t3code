@@ -86,9 +86,18 @@ describe("visible pull request line-count targets", () => {
       {
         environmentId: ENV_1,
         projectId: "project-1",
+        repository: "pingdotgg/t3code",
         number: 1,
         additions: 1,
         deletions: 1,
+      },
+      {
+        environmentId: ENV_1,
+        projectId: "project-1",
+        repository: "pingdotgg/submodule",
+        number: 2,
+        additions: 3,
+        deletions: 3,
       },
     ]);
 

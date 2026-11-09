@@ -23,11 +23,9 @@ const FORKABLE_RUN_STATUSES: ReadonlySet<OrchestrationV2Run["status"]> = new Set
 ]);
 
 /**
- * Forking from a user message forks after the run before it, so the new thread
- * can resend that message (or an edit of it). Keyed by the message that started
- * each run; a thread's first message and runs after a busy one have no entry.
- * A completed `/compact` run leaves no assistant reply to fork at, so the
- * message after it forks where the `/compact` message does.
+ * Keyed by the message that started each run; forking it forks after the run before it. A first
+ * message and runs after a busy one have no entry. A message after a completed `/compact` run
+ * forks where the `/compact` message does, since that run leaves no reply to fork at.
  */
 export function resolveUserMessageForkSources(
   runs: ReadonlyArray<

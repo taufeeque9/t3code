@@ -1300,6 +1300,7 @@ export const layer: Layer.Layer<
               }
               const source = yield* adapters.getMetadata(previousNativeRun.providerInstanceId);
               const target = yield* adapters.getMetadata(run.providerInstanceId);
+              if (source.continuationKey === target.continuationKey) return providerThread;
               const prefix = "claude:projects:";
               if (
                 source.driver !== "claudeAgent" ||

@@ -6,6 +6,8 @@ import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
+const inheritedEnv = process.env;
+
 it.layer(NodeServices.layer)("custom app updater", (it) => {
   it.effect("installs the staged app after exit without Git or session storage", () =>
     Effect.scoped(
@@ -82,8 +84,8 @@ exit 14
             stdout: "pipe",
             stderr: "pipe",
             env: {
-              ...process.env,
-              PATH: `${binDirectory}:${process.env.PATH ?? ""}`,
+              ...inheritedEnv,
+              PATH: `${binDirectory}:${inheritedEnv.PATH ?? ""}`,
               T3_TEST_GIT_INVOCATION: gitInvocationPath,
               T3_TEST_SQLITE_INVOCATION: sqliteInvocationPath,
               T3_TEST_RESTART_INVOCATION: restartInvocationPath,
@@ -156,8 +158,8 @@ exit 14
             stdout: "pipe",
             stderr: "pipe",
             env: {
-              ...process.env,
-              PATH: `${binDirectory}:${process.env.PATH ?? ""}`,
+              ...inheritedEnv,
+              PATH: `${binDirectory}:${inheritedEnv.PATH ?? ""}`,
               T3CODE_CUSTOM_UPDATER_HOME: path.join(fixtureDirectory, "state"),
               T3CODE_CUSTOM_USERDATA: userdataDirectory,
               T3CODE_CUSTOM_DESTINATION: path.join(fixtureDirectory, "T3 Code Custom.app"),

@@ -63,6 +63,7 @@ export function resolveAccountPickerQuota(
 
 export function formatPickerQuota(quota: PickerQuota): string {
   const remaining = quota.remainingPercent;
+  // oxlint-disable-next-line t3code/no-em-dash-copy -- A placeholder for an unknown balance, not prose.
   if (remaining === null) return "—";
   if (remaining > 0 && remaining < 1) return "<1% left";
   return `${Math.floor(remaining)}% left`;
