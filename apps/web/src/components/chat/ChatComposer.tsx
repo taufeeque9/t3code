@@ -2194,21 +2194,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     );
   };
   const handleSubmitMessageStable = useStableCallback(handleSubmitMessage);
-  const handleCompactAndSendMessage = (event: React.MouseEvent<HTMLButtonElement>) => {
-    event.preventDefault();
-    submitComposer(
-      event,
-      resolveComposerDispatchMode({
-        running: phase === "running",
-        alternateModifier: false,
-        activeTurnDefault: followUpBehavior,
-        canSteer: !isCompacting,
-      }),
-      undefined,
-      true,
-    );
-  };
-  const handleCompactAndSendMessageStable = useStableCallback(handleCompactAndSendMessage);
   const submitCitationAndSend = () => {
     submitComposer(
       undefined,
@@ -2245,6 +2230,25 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onCompactContext();
   };
   const compactThreadContextStable = useStableCallback(compactThreadContext);
+  const handleCompactAndSendMessage = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    if (!composerSendState.hasSendableContent && !voiceInputActive) {
+      compactThreadContext();
+      return;
+    }
+    submitComposer(
+      event,
+      resolveComposerDispatchMode({
+        running: phase === "running",
+        alternateModifier: false,
+        activeTurnDefault: followUpBehavior,
+        canSteer: !isCompacting,
+      }),
+      undefined,
+      true,
+    );
+  };
+  const handleCompactAndSendMessageStable = useStableCallback(handleCompactAndSendMessage);
   const expandMobileComposer = () => {
     if (composerBlurFrameRef.current !== null) {
       window.cancelAnimationFrame(composerBlurFrameRef.current);
@@ -3623,6 +3627,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                     onInterrupt={handleInterruptPrimaryActionStable}
                     compactBeforeSendTokens={props.resumeCompactionTokens}
+                    compactUnavailable={compactDisabled}
                     onCompactAndSendMessage={handleCompactAndSendMessageStable}
                   >
                     {speechInput.available ? (

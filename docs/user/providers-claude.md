@@ -66,7 +66,7 @@ compacts automatically. To see context usage, see
 When you return to a large thread after Claude's prompt cache expires, a
 **Compact** chip with the thread's token count shows
 next to the send button. Click it to summarize the history first, then send your
-message. Enter and the send button always send with the full history. The mobile
+message. With an empty message, it only summarizes. Enter and the send button always send with the full history. The mobile
 app shows no chip: an eligible message sent from it summarizes first. The cache lasts about an hour on a Claude
 subscription and 5 minutes with an API key, Bedrock, or Vertex. See [commands and skills](./composer.md#commands-and-skills) for using
 composer commands.

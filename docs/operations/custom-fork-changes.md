@@ -325,7 +325,8 @@ Upstream's Compact chip (shown after Claude's prompt cache expires on a 100k+
 token thread) is on by default, so Enter and the send button run `/compact`
 before the message. Taufeeque wants a normal send by default. The chip is a
 one-click "compact, then send" button instead of a toggle; Enter and the send
-button always keep full history.
+button always keep full history. On an empty draft the chip stays enabled and
+runs upstream's standalone `/compact` (`compactThreadContext`).
 
 - `ComposerPrimaryActions.tsx`: the chip calls `onCompactAndSendMessage` and
   keeps upstream's narrow-composer layout; the send button no longer changes

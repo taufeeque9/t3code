@@ -215,6 +215,7 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
   compactBeforeSendTokens: number | null;
+  compactUnavailable: boolean;
   onCompactAndSendMessage: MouseEventHandler<HTMLButtonElement>;
 }) {
   return (
@@ -242,6 +243,7 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
         onPreviousPendingQuestion={props.onPreviousPendingQuestion}
         onInterrupt={props.onInterrupt}
         compactBeforeSendTokens={props.compactBeforeSendTokens}
+        compactUnavailable={props.compactUnavailable}
         onCompactAndSendMessage={props.onCompactAndSendMessage}
       >
         {props.children}

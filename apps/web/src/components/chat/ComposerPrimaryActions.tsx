@@ -49,6 +49,8 @@ interface ComposerPrimaryActionsProps {
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
   compactBeforeSendTokens?: number | null;
+  /** Blocks the chip on an empty draft, where a click compacts without sending. */
+  compactUnavailable?: boolean;
   onCompactAndSendMessage?: MouseEventHandler<HTMLButtonElement>;
 }
 
@@ -101,6 +103,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   onPreviousPendingQuestion,
   onInterrupt,
   compactBeforeSendTokens = null,
+  compactUnavailable = false,
   onCompactAndSendMessage,
 }: ComposerPrimaryActionsProps) {
   const pointerFocusProps = preserveComposerFocusOnPointerDown
@@ -301,6 +304,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     );
   }
 
+  const compactLabel = `${compactTokens} tokens of history${hasSendableContent ? ", then send" : ""}`;
   return (
     <div data-chat-composer-compact-send="true" className="flex items-center gap-2">
       <Tooltip>
@@ -310,8 +314,10 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
               type="button"
               className="flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-(--control-radius) px-2 font-medium text-base text-foreground/80 tabular-nums outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-64 sm:text-sm aria-pressed:bg-accent/60 aria-pressed:text-foreground [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:text-muted-foreground"
               {...pointerFocusProps}
-              aria-label={`Compact ${compactTokens} tokens of history, then send`}
-              disabled={!canOperateThread || sendUnavailable || !hasSendableContent}
+              aria-label={`Compact ${compactLabel}`}
+              disabled={
+                !canOperateThread || sendUnavailable || (!hasSendableContent && compactUnavailable)
+              }
               onClick={onCompactAndSendMessage}
             />
           }
@@ -320,7 +326,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           <span className="@max-[480px]/composer-surface:hidden">Compact</span>
           <span className="text-muted-foreground">{compactTokens}</span>
         </TooltipTrigger>
-        <TooltipPopup>{`Summarize ${compactTokens} tokens of history, then send`}</TooltipPopup>
+        <TooltipPopup>{`Summarize ${compactLabel}`}</TooltipPopup>
       </Tooltip>
       {children}
       {submit}
