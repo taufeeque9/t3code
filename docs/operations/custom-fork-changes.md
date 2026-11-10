@@ -349,6 +349,25 @@ send first (#27935).
 and re-apply the opt-in wiring. Retire it if upstream makes plain send the
 default.
 
+### Composer: context window circle
+
+Upstream removed the composer's context window circle in #33131 and moved
+context usage to the thread details card. Taufeeque wants the circle back. It
+shows whenever the provider reports usage, with no setting, and its hover card
+offers **Compact context** when the provider has `/compact`.
+
+- `ContextWindowMeter.tsx`: upstream's deleted meter, restored without the model
+  name and disabled-reason text
+- `ComposerFooterControls.tsx`: `ComposerFooterPrimaryActions` renders the
+  meter, or a placeholder while thread detail loads
+- `ChatComposer.tsx`: passes the snapshot, placeholder flag and
+  `compactThreadContext`; `compaction.logic.ts` exports
+  `providerSupportsManualCompaction` for it
+- `ChatView.tsx`: passes `activeContextWindow` and the loading flag
+
+**On conflict:** re-apply the props on upstream's footer. Retire it if upstream
+brings back a composer context indicator.
+
 ### Temporary worktree branches use the branch-name prefix
 
 Upstream names worktree branches `t3/<hex>` and only applies the

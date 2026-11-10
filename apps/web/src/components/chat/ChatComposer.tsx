@@ -204,6 +204,7 @@ import {
 } from "./ComposerAttachmentStrip";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ComposerFooterPrimaryActions } from "./ComposerFooterControls";
+import { providerSupportsManualCompaction } from "./compaction.logic";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import { buildPullRequestReferenceContext } from "../pullRequest/pullRequestDetail.logic";
@@ -242,6 +243,7 @@ import {
   resolveComposerDispatchMode,
   type ComposerDispatchMode,
 } from "@t3tools/client-runtime/state/composer-dispatch";
+import type { ContextWindowSnapshot } from "@t3tools/client-runtime/state/context-window";
 import {
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
@@ -413,6 +415,8 @@ export interface ChatComposerProps {
 
   compactThreadUnavailable: boolean;
   compactDisabled: boolean;
+  contextWindow: ContextWindowSnapshot | null;
+  contextWindowLoading: boolean;
 
   resolvedTheme: "light" | "dark";
   settings: UnifiedSettings;
@@ -531,6 +535,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     projectName,
     compactThreadUnavailable,
     compactDisabled,
+    contextWindow,
+    contextWindowLoading,
     resolvedTheme,
     settings,
     keybindings,
@@ -3589,6 +3595,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   <ComposerFooterPrimaryActions
                     compact={isComposerPrimaryActionsCompact}
                     canOperateThread={canOperateThread}
+                    contextWindow={contextWindow}
+                    reserveContextWindowMeter={
+                      contextWindowLoading &&
+                      (selectedProviderStatus === null ||
+                        selectedProviderStatus.reportsContextWindow === true)
+                    }
+                    onCompactContext={
+                      providerSupportsManualCompaction(selectedProviderEntry)
+                        ? compactThreadContextStable
+                        : undefined
+                    }
+                    compactContextDisabled={compactDisabled || noProviderAvailable || isSendBusy}
                     pendingAction={pendingPrimaryAction}
                     isRunning={phase === "running"}
                     canInterrupt={canInterrupt}
