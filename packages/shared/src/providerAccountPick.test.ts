@@ -193,4 +193,18 @@ describe("usageWindowAppliesToModel", () => {
   ])("%s applies to %s: %s", (id, model, expected) => {
     expect(usageWindowAppliesToModel(weekly(0, DAY, id), claude, model)).toBe(expected);
   });
+
+  const antigravity = ProviderDriverKind.make("antigravity");
+  it.each([
+    ["gemini-wtu-weekly", "gemini-4-pro", true],
+    ["gemini-wtu-weekly", "gemini-4-carbon", false],
+    ["gemini-carbon-wtu-weekly", "gemini-4-carbon", true],
+    ["gemini-carbon-wtu-weekly", "gemini-4-pro", false],
+    ["gemini-argon-5h", "gemini-4-argon", true],
+    ["gemini-argon-5h", "gemini-4-carbon", false],
+    ["3p-5h", "claude-opus-5", true],
+    ["3p-5h", "gemini-4-pro", false],
+  ])("antigravity %s applies to %s: %s", (id, model, expected) => {
+    expect(usageWindowAppliesToModel(weekly(0, DAY, id), antigravity, model)).toBe(expected);
+  });
 });

@@ -194,7 +194,9 @@ existing threads are unchanged. Upstream starts new threads on the default accou
 and child threads on the parent's account.
 
 - `packages/shared/src/providerAccountPick.ts` and its test: the ranking heuristic,
-  plus the model-scope helpers and 95% threshold the composer warning now imports
+  plus the model-scope helpers and 95% threshold the composer warning now imports.
+  Antigravity's Gemini Argon and Carbon buckets apply only to their own models,
+  matching upstream's separate metering.
 - `packages/client-runtime/src/newThreadAccount.ts` and its test: candidate
   filtering (same driver, enabled for the project, available, signed in, has the model)
 - `apps/web/src/lib/newThreadAccount.ts`, called after the defaults in
@@ -473,7 +475,11 @@ thread context menu's "Open in new window" opens that thread.
   as upstream's auxiliary windows) so a
   closed main is recreated (Dock click or New Window) instead of a secondary
   standing in for it. `ipc/methods/window.ts` uses `appWindowFor` for
-  `pasteAsText`, `readMedia`, `revealWindow`, `showContextMenu` and the new `openWindow`.
+  `pasteAsText`, `readMedia`, `revealWindow`, `showContextMenu`, `syncHtmlFullscreen` and the new `openWindow`.
+- `ipc/DesktopIpc.ts`: upstream's trusted-sender guard accepts any app window's
+  main frame (`appWindowFor`), not only main's, and `createWindow` registers a
+  secondary with `addSecondary` before loading it, as upstream does with
+  `setMain`. Preview guests stay rejected.
 - `preload.ts`: a secondary window (`SECONDARY_WINDOW_ARGUMENT`) gets the bridge
   without `preview`, `webLinks` and `appActivation` (optional in `DesktopBridge`
   for that reason), which the main process ties
@@ -505,7 +511,8 @@ variable (a fresh shell, the devbox server) never sends events.
 - `otelEnvironment.ts`: `isRelayTracingEnabled` requires the variable to be
   `true`. Fork builds carry no relay trace credentials, so this only matters if
   some are configured.
-- `docs/user/telemetry.md` describes the opt-in.
+- `docs/user/telemetry.md` describes the opt-in, and the onboarding
+  `WelcomePage.tsx` telemetry notice says usage data is sent only after opting in.
 
 **On conflict:** take upstream's code and re-apply both defaults.
 

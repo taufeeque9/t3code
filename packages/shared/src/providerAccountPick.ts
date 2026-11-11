@@ -27,7 +27,12 @@ export function usageWindowModelScope(
     : null;
 }
 
-/** Antigravity buckets are per family: Gemini has its own, Claude and GPT share `3p`. */
+const SEPARATELY_METERED_GEMINI = ["argon", "carbon"];
+
+/**
+ * Antigravity buckets are per family: Gemini has its own, Claude and GPT share `3p`.
+ * Gemini Argon and Carbon have their own buckets apart from the default Gemini ones.
+ */
 export function usageWindowAppliesToModel(
   window: ServerProviderUsageWindow,
   driver: ProviderDriverKind,
@@ -36,7 +41,16 @@ export function usageWindowAppliesToModel(
   const normalized = `_${normalizeModel(model)}_`;
   if (driver === "antigravity") {
     const family = window.id.split("-")[0];
-    if (family === "gemini") return normalized.includes("_gemini_");
+    if (family === "gemini") {
+      if (!normalized.includes("_gemini_")) return false;
+      const bucketVariant = window.id.split("-")[1] ?? "";
+      const modelVariant = SEPARATELY_METERED_GEMINI.find((variant) =>
+        normalized.includes(`_${variant}_`),
+      );
+      return SEPARATELY_METERED_GEMINI.includes(bucketVariant)
+        ? modelVariant === bucketVariant
+        : modelVariant === undefined;
+    }
     if (family === "3p") return !normalized.includes("_gemini_");
     if (family === "claude" || family === "gpt") return normalized.includes(`_${family}_`);
   }
