@@ -122,6 +122,10 @@ session. Each account remains a separate provider instance with its own
   subagent transcripts in-process, which finds nothing for an account with its
   own `homePath`. Drop this once upstream routes that lookup through the worker.
 
+Upstream refuses `thread.model-selection.set` across instances while a run is
+active (#22755), so a switch made mid-run reaches the server only through the
+queued message's own selection; the fork's integration test sends it that way.
+
 A queued account switch is a `restart_and_resume`, so upstream's queue hold in
 `Orchestrator.ts` applies: it waits while the replaced session runs background work,
 even between separate transcript trees.
@@ -385,6 +389,9 @@ prefix (`tf-c/<hex>`), still recognising upstream's `t3` and legacy shapes.
 - `docs/user/project-settings.md`: one sentence under "Worktree branch names"
 
 Mobile still sends `t3/<hex>` names, which the server recognises and renames.
+Upstream's static naming mode formats the temporary name from its prefix
+(#35718); the fork's prefix applies in every mode, and a failed settings read
+falls back to `t3/<hex>` as upstream does.
 
 **On conflict:** re-apply the optional parameter. Retire it once upstream
 names temporary branches from its prefix setting.
