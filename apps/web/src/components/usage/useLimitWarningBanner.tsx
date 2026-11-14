@@ -32,6 +32,7 @@ export function useLimitWarningBanner(input: {
   readonly instanceId: ProviderInstanceId | null;
   readonly threadModelSelection: ModelSelection | null | undefined;
   readonly projectModelSelection: ModelSelection | null | undefined;
+  readonly threadStarted: boolean;
   readonly settings: UnifiedSettings;
   readonly usageLimitSources: UsageLimitSourceSnapshots;
   readonly nowMinute: string;
@@ -45,6 +46,7 @@ export function useLimitWarningBanner(input: {
     selectedInstanceId: input.instanceId ?? NO_PROVIDER_MODEL_SELECTION.instanceId,
     threadModelSelection: input.threadModelSelection,
     projectModelSelection: input.projectModelSelection,
+    threadStarted: input.threadStarted,
     settings: input.settings,
   });
   const warning = resolveLimitWarning(

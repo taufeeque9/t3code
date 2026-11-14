@@ -72,5 +72,5 @@ it.effect("answers only app windows' top frames", () =>
       secondaryWindow: ["secret", "secret"],
       previewGuest: ["rejected", undefined],
     });
-  }).pipe(Effect.scoped),
+  }),
 );

@@ -205,6 +205,7 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
   } | null;
   isRunning: boolean;
   canInterrupt: boolean;
+  runId: string | null;
   followUpBehavior: "queue" | "steer";
   canSteer: boolean;
   alternateShortcutLabel: string | null;
@@ -223,6 +224,7 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
   compactBeforeSendTokens: number | null;
   compactUnavailable: boolean;
   onCompactAndSendMessage: MouseEventHandler<HTMLButtonElement>;
+  hideCompactToggle: boolean;
 }) {
   return (
     <>
@@ -241,6 +243,7 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
         pendingAction={props.pendingAction}
         isRunning={props.isRunning}
         canInterrupt={props.canInterrupt}
+        runId={props.runId}
         followUpBehavior={props.followUpBehavior}
         canSteer={props.canSteer}
         alternateShortcutLabel={props.alternateShortcutLabel}
@@ -260,6 +263,7 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
         compactBeforeSendTokens={props.compactBeforeSendTokens}
         compactUnavailable={props.compactUnavailable}
         onCompactAndSendMessage={props.onCompactAndSendMessage}
+        hideCompactToggle={props.hideCompactToggle}
       >
         {props.children}
       </ComposerPrimaryActions>
