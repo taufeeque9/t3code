@@ -204,7 +204,9 @@ and child threads on the parent's account.
 - `packages/client-runtime/src/newThreadAccount.ts` and its test: candidate
   filtering (same driver, enabled for the project, available, signed in, has the model)
 - `apps/web/src/lib/newThreadAccount.ts`, called after the defaults in
-  `hooks/useHandleNewThread.ts` and `components/chat/DraftHeroHeadline.tsx`
+  `hooks/useHandleNewThread.ts` and at the end of upstream's
+  `lib/seedDraftModelSelection.ts`, which reseeds a draft moved to another
+  project or machine (hero headline, draft environment routing, add-to-machine)
 - `apps/mobile/src/features/threads/new-task-flow-provider.tsx`: derives
   `selectedModel` through the same helper when the draft has no explicit pick
 - `autoPickProviderAccount` server setting (default on) in `packages/contracts/src/settings.ts`;
@@ -253,7 +255,8 @@ capability and viewer permission (triage access), an optional `assignees` list o
 `pullRequestReads.graphql`; regenerate `pullRequestReads.graphql.ts` with
 `vp run generate` in that package after a conflict there. `setAssignees` needs `source-control:write`, declared beside
 `setLabels` in `clientRpcPermissions.ts`, and a session without it sees the
-menu disabled like the label menu (`usePullRequestDetail.ts`). Only the GitHub provider implements it; assignees ride upstream's
+menu disabled like the label menu (`usePullRequestDetail.ts`). A successful edit patches every
+loaded detail (`loadedDetails`), since the page reads the strict one. Only the GitHub provider implements it; assignees ride upstream's
 core GraphQL detail query, so the detail costs no extra request. The UI lives in the
 fork-owned `PullRequestAssignees.tsx`; `PullRequestSummaryTab.tsx` only mounts it.
 There is no mobile assignee UI or agent MCP tool. GitHub can return success
