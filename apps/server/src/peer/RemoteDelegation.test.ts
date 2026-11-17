@@ -281,14 +281,16 @@ const boxToolkitLayer = (thread: BoxThread) => {
         report === null || followUp === null
           ? []
           : [
-              item("item:reply", report, 1),
+              { ...item("item:reply", report, 1), nativeResponseId: "native-report" },
+              { ...item("item:reply-end", "Tests pass.", 2), nativeResponseId: "native-report" },
               {
-                ...item("item:stop-hook", "", 2),
+                ...item("item:stop-hook", "", 3),
                 type: "system_notice" as const,
                 title: "Stop hook feedback",
                 message: "Stop hook feedback",
+                continuation: { kind: "stop_hook" as const },
               },
-              item("item:stop-hook-follow-up", followUp, 3),
+              item("item:stop-hook-follow-up", followUp, 4),
             ];
       return shell === null
         ? (null as never)
@@ -421,6 +423,12 @@ const boxToolkitLayer = (thread: BoxThread) => {
           ...(stopHookFollowUp === null
             ? []
             : [
+                {
+                  id: TurnItemId.make("item:reply-end"),
+                  runId,
+                  text: "Tests pass.",
+                  type: "assistant_message",
+                },
                 {
                   id: TurnItemId.make("item:stop-hook-follow-up"),
                   runId,
@@ -1488,7 +1496,9 @@ it.effect.each([false, true])("keeps a remote report whole (Stop hook: %s)", (wi
       const task = yield* taskResult(a, taskId);
       expect(task?.status).toBe("completed");
       const report = `Requested model gpt-5.4; the provider reported running gpt-5.4-mini.\n\n${long}`;
-      const summary = withStopHook ? `${report}\n\n## Stop hook follow-up\n\n${followUp}` : report;
+      const summary = withStopHook
+        ? `${report}\n\nTests pass.\n\n## Stop hook follow-up\n\n${followUp}`
+        : report;
       expect(task?.result).toBe(summary);
       const status = yield* a.call("task_status", { taskId });
       expect(status.structuredContent).toMatchObject({

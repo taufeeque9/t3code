@@ -24165,6 +24165,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     it.effect("marks Stop hook feedback between the answer and its follow-up", () =>
       Effect.gen(function* () {
         const harness = yield* makeWakeHarness;
+        const objective = "all tests pass";
         yield* harness.runtime.startTurn(
           makeClaudeTestTurnInput({
             threadId: harness.threadId,
@@ -24175,8 +24176,34 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             attachments: [],
           }),
         );
+        const stream = (event: unknown) =>
+          claudeSdkFrame({
+            type: "stream_event",
+            event,
+            parent_tool_use_id: null,
+            session_id: WAKE_NATIVE_SESSION,
+          });
+        const multipart = (id: string, texts: ReadonlyArray<string>) => [
+          stream({ type: "message_start", message: { id } }),
+          ...texts.flatMap((text, index) => [
+            stream({ type: "content_block_start", index, content_block: { type: "text", text } }),
+            stream({ type: "content_block_stop", index }),
+          ]),
+          claudeSdkFrame({
+            type: "assistant",
+            uuid: `snapshot-${id}`,
+            session_id: WAKE_NATIVE_SESSION,
+            parent_tool_use_id: null,
+            message: {
+              id,
+              model: "claude-sonnet-4-6",
+              content: texts.map((text) => ({ type: "text", text })),
+            },
+          }),
+        ];
         for (const frame of [
-          makeAssistantTextFrame({ uuid: "stop-hook-answer", text: "The test passes now." }),
+          syntheticFrame("stop-hook-goal", `Goal set: ${objective}`),
+          ...multipart("report-response", ["Desktop layout inspected.", "The test passes now."]),
           claudeSdkFrame({
             type: "user",
             message: {
@@ -24188,7 +24215,40 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             uuid: "stop-hook-feedback",
             session_id: WAKE_NATIVE_SESSION,
           }),
-          makeAssistantTextFrame({ uuid: "stop-hook-follow-up", text: "I re-ran it to check." }),
+          makeAssistantTextFrame({
+            uuid: "stop-hook-progress",
+            text: "Looking up the test result.",
+          }),
+          claudeSdkFrame({
+            type: "assistant",
+            uuid: "stop-hook-tool",
+            session_id: WAKE_NATIVE_SESSION,
+            parent_tool_use_id: null,
+            message: {
+              id: "stop-hook-tool-response",
+              model: "claude-sonnet-4-6",
+              stop_reason: "tool_use",
+              content: [
+                {
+                  type: "tool_use",
+                  id: "hook-read",
+                  name: "Read",
+                  input: { file_path: "/workspace/test.log" },
+                },
+              ],
+            },
+          }),
+          claudeSdkFrame({
+            type: "user",
+            uuid: "stop-hook-tool-result",
+            session_id: WAKE_NATIVE_SESSION,
+            parent_tool_use_id: null,
+            message: {
+              role: "user",
+              content: [{ type: "tool_result", tool_use_id: "hook-read", content: "pass" }],
+            },
+          }),
+          ...multipart("check-response", ["The test log is green.", "I re-ran it to check."]),
           claudeSdkFrame({
             type: "user",
             message: {
@@ -24204,7 +24264,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             uuid: "stop-hook-second-answer",
             text: "The mobile layout still shifts.",
           }),
-          makeResultFrame({ uuid: "stop-hook-result", result: "The mobile layout still shifts." }),
+          stopHookFeedback("stop-hook-evaluator", objective, "Keep checking."),
+          makeAssistantTextFrame({ uuid: "stop-hook-evaluation", text: "Goal check response." }),
+          makeResultFrame({ uuid: "stop-hook-result", result: "Goal check response." }),
         ]) {
           yield* Queue.offer(harness.sdkMessages, frame);
         }
@@ -24231,8 +24293,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           runId == null
             ? undefined
             : stopHookResultForRun(items, { id: runId, status: "completed" });
-        assert.equal(reply?.report.text, "The test passes now.");
-        assert.equal(reply?.followUp, "I re-ran it to check.\n\nThe mobile layout still shifts.");
+        assert.deepEqual(
+          reply?.reportItems.map((item) => item.text),
+          ["Desktop layout inspected.", "The test passes now."],
+        );
+        assert.isTrue(items.some((item) => item.nativeItemRef?.nativeId === "hook-read"));
+        assert.equal(
+          reply?.followUp,
+          "Hook asked: Check the screenshot.\nThe mobile layout still shifts.\n\nHook asked: SELF-CHECK before stopping\nThe test log is green.\n\nI re-ran it to check.",
+        );
       }).pipe(
         Effect.scoped,
         Effect.provide(

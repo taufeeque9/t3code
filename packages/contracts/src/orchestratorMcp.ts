@@ -600,6 +600,8 @@ export const OrchestratorMcpThreadWaitResult = Schema.Struct({
       Schema.Struct({
         runId: RunId,
         reportItemId: TurnItemId,
+        reportItemIds: Schema.optional(Schema.Array(TurnItemId)),
+        failureItemId: Schema.optional(TurnItemId),
         followUp: Schema.String,
       }),
     ),

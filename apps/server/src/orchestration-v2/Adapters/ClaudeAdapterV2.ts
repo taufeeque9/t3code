@@ -246,6 +246,7 @@ import {
   makeSubagentChildThread,
   makeSubagentConversationArtifacts,
   STOP_HOOK_FEEDBACK_NOTICE,
+  stopHookQuestion,
   subagentThreadTitle,
 } from "@t3tools/provider-core/server/subagentProjection";
 
@@ -2619,31 +2620,24 @@ function nextClaudeGoal(
 
 const CLAUDE_STOP_HOOK_FEEDBACK_PREFIX = "Stop hook feedback:\n";
 
-/**
- * Whether a root frame returns a blocking Stop hook's feedback, which Claude
- * answers in the same turn after its final response. An active goal's
- * evaluator checks arrive the same way and are tracked as goal progress instead.
- */
-function isClaudeStopHookFeedback(
-  message: SDKMessage,
-  goal: OrchestrationV2ProviderGoal | null,
-): boolean {
+function claudeContinuation(message: SDKMessage, goal: OrchestrationV2ProviderGoal | null) {
   if (
     message.type !== "user" ||
     message.parent_tool_use_id !== null ||
     message.isSynthetic !== true
-  ) {
-    return false;
-  }
+  )
+    return undefined;
   const content = message.message.content;
   const text =
     typeof content === "string"
       ? content
       : content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
-  return (
-    text.startsWith(CLAUDE_STOP_HOOK_FEEDBACK_PREFIX) &&
-    (goal === null || !text.startsWith(`${CLAUDE_STOP_HOOK_FEEDBACK_PREFIX}[${goal.objective}]: `))
-  );
+  if (!text.startsWith(CLAUDE_STOP_HOOK_FEEDBACK_PREFIX)) return undefined;
+  const feedback = text.slice(CLAUDE_STOP_HOOK_FEEDBACK_PREFIX.length);
+  if (goal !== null && feedback.startsWith(`[${goal.objective}]: `))
+    return { kind: "goal_evaluator" as const };
+  const question = stopHookQuestion(feedback);
+  return { kind: "stop_hook" as const, ...(question === undefined ? {} : { question }) };
 }
 
 /** The CLI confirms a goal change as a synthetic reply; the goal row shows that change instead. */
@@ -4872,6 +4866,7 @@ function buildAssistantArtifacts(input: {
   readonly turnInput: ProviderAdapter.ProviderAdapterV2TurnInput;
   readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
   readonly nativeItemId: string;
+  readonly nativeResponseId?: string;
   readonly text: string;
   readonly ordinal: number;
   readonly status?: "running" | "completed" | "interrupted";
@@ -4953,6 +4948,7 @@ function buildAssistantArtifacts(input: {
       completedAt,
       updatedAt: input.completedAt,
       type: "assistant_message",
+      ...(input.nativeResponseId === undefined ? {} : { nativeResponseId: input.nativeResponseId }),
       messageId,
       text: input.text,
       streaming,
@@ -5026,6 +5022,7 @@ interface ActiveClaudeTurnContext {
       string,
       {
         readonly startedAt: DateTime.Utc;
+        readonly nativeResponseId: string;
         status: "completed" | "interrupted";
         // Set when the block stops; the snapshot only corrects it.
         text: string | null;
@@ -9058,6 +9055,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const publishAssistantArtifacts = Effect.fnUntraced(function* (input: {
           readonly context: ActiveClaudeTurnContext;
           readonly nativeItemId: string;
+          readonly nativeResponseId?: string;
           readonly text: string;
           readonly status: "running" | "completed" | "interrupted";
           readonly startedAt: DateTime.Utc;
@@ -9070,6 +9068,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             turnInput: input.context.input,
             providerTurnId: input.context.providerTurnId,
             nativeItemId: input.nativeItemId,
+            ...(input.nativeResponseId === undefined
+              ? {}
+              : { nativeResponseId: input.nativeResponseId }),
             text: input.text,
             ordinal,
             status: input.status,
@@ -9112,6 +9113,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               yield* publishAssistantArtifacts({
                 context,
                 nativeItemId: update.itemId,
+                nativeResponseId: item.nativeResponseId,
                 text: update.text,
                 status: update.completed ? item.status : "running",
                 startedAt: item.startedAt,
@@ -9604,6 +9606,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const emitAssistantTextArtifacts = Effect.fnUntraced(function* (input: {
           readonly context: ActiveClaudeTurnContext;
           readonly nativeItemId: string;
+          readonly nativeResponseId?: string;
           readonly text: string;
         }) {
           if (input.context.assistant.emittedNativeItemIds.has(input.nativeItemId)) {
@@ -10637,15 +10640,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
           yield* trackClaudeGoal({ nativeThreadId: liveQuery.nativeThreadId, context, message });
 
-          // Marks where a Stop hook's follow-up starts, so the response before it
-          // is not folded away as work.
-          if (
-            message.type === "user" &&
-            isClaudeStopHookFeedback(
-              message,
-              goalsByNativeThread.get(liveQuery.nativeThreadId) ?? null,
-            )
-          ) {
+          const continuation = claudeContinuation(
+            message,
+            goalsByNativeThread.get(liveQuery.nativeThreadId) ?? null,
+          );
+          if (message.type === "user" && continuation !== undefined) {
+            const title =
+              continuation.kind === "stop_hook"
+                ? STOP_HOOK_FEEDBACK_NOTICE
+                : "Goal evaluator feedback";
             const now = yield* DateTime.now;
             const nativeItemId =
               message.uuid ?? `stop-hook:${context.providerTurnId}:${context.itemOrdinals.size}`;
@@ -10671,8 +10674,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ordinal: yield* resolveItemOrdinal(context, nativeItemId),
                 type: "system_notice",
                 status: "completed",
-                title: STOP_HOOK_FEEDBACK_NOTICE,
-                message: STOP_HOOK_FEEDBACK_NOTICE,
+                title,
+                message: title,
+                continuation,
                 startedAt: now,
                 completedAt: now,
                 updatedAt: now,
@@ -10737,6 +10741,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               assistant.streamBlocks.set(event.index, itemId);
               assistant.lastReply = null;
               assistant.streamItems.set(itemId, {
+                nativeResponseId: reasoning.messageId,
                 startedAt: yield* DateTime.now,
                 status: "completed",
                 text: null,
@@ -11736,6 +11741,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const startedAt = yield* emitAssistantTextArtifacts({
               context,
               nativeItemId: assistantText.nativeItemId,
+              ...(message.type === "assistant" ? { nativeResponseId: message.message.id } : {}),
               text,
             });
             if (startedAt !== undefined) {

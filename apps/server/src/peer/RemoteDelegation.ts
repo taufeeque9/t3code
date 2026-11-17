@@ -33,7 +33,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Tool from "effect/ai/Tool";
 import {
-  appendStopHookFollowUp,
+  formatStopHookResult,
   withExecutedModelNote,
 } from "@t3tools/provider-core/server/subagentProjection";
 
@@ -636,37 +636,54 @@ const make = Effect.gen(function* () {
     scope: ThreadScope,
     remote: OrchestrationV2RemoteTaskChild,
     runId: RunId | null,
-    failed = false,
+    status: "completed" | "failed" | "cancelled" | "interrupted" = "completed",
     stopHook?: NonNullable<OrchestratorMcpThreadWaitResult["stopHookReplies"]>[number],
   ): Effect.fn.Return<
     { text: string | undefined; executedModel: string | undefined; reportLength?: number },
     OrchestratorMcpFailure
   > {
     if (stopHook !== undefined) {
-      const read = yield* forwarding.readThread(scope, remote.environmentId, {
-        threadId: remote.threadId,
-        itemId: stopHook.reportItemId,
-        maxCharsPerItem: 20_000,
-        runLimit: 50,
+      let run: OrchestratorMcpThreadRun | undefined;
+      const readItem = Effect.fn("RemoteDelegation.readResultItem")(function* (
+        itemId: OrchestratorMcpThreadTimelineItem["itemId"],
+        type: "assistant_message" | "error",
+      ) {
+        const read = yield* forwarding.readThread(scope, remote.environmentId, {
+          threadId: remote.threadId,
+          itemId,
+          maxCharsPerItem: 20_000,
+          runLimit: 50,
+        });
+        run ??= read.recentRuns.find((candidate) => candidate.runId === runId);
+        const item = read.items.find(
+          (candidate) =>
+            candidate.itemId === itemId && candidate.runId === runId && candidate.type === type,
+        );
+        return item === undefined ? undefined : yield* readReplyText(scope, remote, item);
       });
-      const report = read.items.find(
-        (item) =>
-          item.itemId === stopHook.reportItemId &&
-          item.runId === runId &&
-          item.type === "assistant_message",
+      const parts = yield* Effect.forEach(stopHook.reportItemIds ?? [stopHook.reportItemId], (id) =>
+        readItem(id, "assistant_message"),
       );
-      if (report !== undefined) {
-        const run = read.recentRuns.find((candidate) => candidate.runId === runId);
-        const text = yield* readReplyText(scope, remote, report);
+      if (parts.length > 0 && parts.every((part) => part !== undefined)) {
+        const failure =
+          stopHook.failureItemId === undefined
+            ? undefined
+            : yield* readItem(stopHook.failureItemId, "error");
+        const report = parts.join("\n\n");
         return {
-          ...appendStopHookFollowUp(
-            run === undefined ? text : withExecutedModelNote(text, run.model, run.executedModel),
+          ...formatStopHookResult(
+            run === undefined
+              ? report
+              : withExecutedModelNote(report, run.model, run.executedModel),
             stopHook.followUp,
+            status,
+            failure,
           ),
           executedModel: run?.executedModel ?? undefined,
         };
       }
     }
+    const failed = status === "failed";
     let reply: OrchestratorMcpThreadTimelineItem | undefined;
     let error: OrchestratorMcpThreadTimelineItem | undefined;
     let afterPosition: number | undefined;
@@ -903,7 +920,7 @@ const make = Effect.gen(function* () {
       scope,
       remote,
       resultRun.runId,
-      resultRun.status === "failed",
+      terminalStatus(resultRun.status),
       waited.stopHookReplies?.find((reply) => reply.runId === resultRun.runId),
     );
     yield* complete(

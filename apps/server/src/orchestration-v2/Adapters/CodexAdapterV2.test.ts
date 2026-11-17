@@ -5255,6 +5255,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       const transcript = finalAnswerTranscript(scenario, [
         { id: "report", text: "The test passes now." },
         { id: "checked", text: "I re-ran it to check." },
+        { id: "repeated", text: "The test passes now." },
       ]);
       const hookCompleted = (eventName: string, status: "blocked" | "completed", id: string) => ({
         type: "emit_inbound" as const,
@@ -5308,7 +5309,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 entry,
                 hookCompleted("stop", "completed", "stop"),
               ]
-            : [entry],
+            : entry.type === "emit_inbound" && entry.label === "item/completed/repeated"
+              ? [hookCompleted("stop", "blocked", "again"), hookPrompt("again"), entry]
+              : [entry],
         ),
       });
       yield* harness.runtime.startTurn(
@@ -5329,7 +5332,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       );
       assert.deepEqual(
         relevant.map((item) => item.nativeItemRef?.nativeId),
-        ["report", "prompt-stop", "checked"],
+        ["report", "prompt-stop", "checked", "prompt-again", "repeated"],
       );
       assert.deepEqual(
         relevant.map((item) => item.ordinal),
@@ -5342,7 +5345,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           ? undefined
           : stopHookResultForRun(relevant, { id: runId, status: "completed" });
       assert.equal(reply?.report.text, "The test passes now.");
-      assert.equal(reply?.followUp, "I re-ran it to check.");
+      assert.equal(
+        reply?.followUp,
+        "Hook asked: Check the test.\nThe test passes now.\n\nHook asked: Check the test.\nI re-ran it to check.",
+      );
       assert.equal(harness.terminalEvents()[0]?.status, "completed");
     }).pipe(
       Effect.scoped,

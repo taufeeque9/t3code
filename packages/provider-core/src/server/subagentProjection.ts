@@ -202,92 +202,146 @@ const OMITTED_HOOK_TEXT = "[More Stop hook follow-up in the child thread.]";
 
 type AssistantTurnItem = Extract<OrchestrationV2TurnItem, { type: "assistant_message" }>;
 
-export function appendStopHookFollowUp(report: string, followUp: string) {
+export function utf8Prefix(text: string, bytes: number): string {
+  return new TextDecoder("utf-8", { ignoreBOM: true }).decode(
+    Buffer.from(text.slice(0, bytes + 1)).subarray(0, bytes),
+    { stream: true },
+  );
+}
+
+export function stopHookQuestion(text: string): string | undefined {
+  const question = text.trim().replace(/\s+/gu, " ");
+  if (question.length === 0) return undefined;
+  return Buffer.byteLength(question) <= 240 ? question : `${utf8Prefix(question, 237)}…`;
+}
+
+export function formatStopHookResult(
+  report: string,
+  followUp: string,
+  status: OrchestrationV2Run["status"],
+  failure?: string,
+) {
+  const text =
+    status === "completed"
+      ? report
+      : `${failure ?? `Child task ended with status ${status}.`}\n\nPartial report before the Stop hook:\n\n${report}`;
   return {
-    text: `${report}${STOP_HOOK_FOLLOW_UP_SEPARATOR}${followUp}`,
-    reportLength: report.length,
+    text: followUp ? `${text}${STOP_HOOK_FOLLOW_UP_SEPARATOR}${followUp}` : text,
+    reportLength: text.length,
   };
+}
+
+function continuationOf(item: OrchestrationV2TurnItem) {
+  return item.type === "system_notice" ? item.continuation : undefined;
 }
 
 export function stopHookResultForRun(
   items: ReadonlyArray<OrchestrationV2TurnItem>,
   run: Pick<OrchestrationV2Run, "id" | "status">,
 ) {
-  if (run.status !== "completed") return undefined;
-  const isBoundary = (item: OrchestrationV2TurnItem) =>
-    item.type === "system_notice" &&
-    item.title === STOP_HOOK_FEEDBACK_NOTICE &&
-    item.message === STOP_HOOK_FEEDBACK_NOTICE;
-  if (!items.some((item) => item.runId === run.id && isBoundary(item))) return undefined;
+  if (
+    run.status !== "completed" &&
+    run.status !== "failed" &&
+    run.status !== "interrupted" &&
+    run.status !== "cancelled"
+  )
+    return undefined;
+  if (!items.some((item) => item.runId === run.id && continuationOf(item)?.kind === "stop_hook"))
+    return undefined;
   const ordered = items
     .filter((item) => item.runId === run.id)
-    .sort((left, right) => left.ordinal - right.ordinal);
-  const final = ordered.findLast((item) => item.type === "assistant_message" && item.text.trim());
-  if (final === undefined) return undefined;
-  const steer = ordered.findLast(
-    (item) =>
-      item.type === "user_message" &&
-      (item.inputIntent === "steer" || item.inputIntent === "promoted_queued_to_steer") &&
-      item.providerTurnId === final.providerTurnId,
+    .sort((a, b) => a.ordinal - b.ordinal);
+  const lastAssistant = ordered.findLast(
+    (item) => item.type === "assistant_message" && item.text.trim(),
   );
-
-  let report: AssistantTurnItem | undefined;
-  let afterHook = false;
-  let answer: AssistantTurnItem | undefined;
-  const answers: AssistantTurnItem[] = [];
-  for (const item of ordered) {
-    if (item.providerTurnId !== final.providerTurnId) continue;
-    if (steer !== undefined && item.ordinal < steer.ordinal) continue;
-    // A steer and the provider's next item can claim the same ordinal independently.
+  if (lastAssistant === undefined) return undefined;
+  const turnItems = ordered.filter((item) => item.providerTurnId === lastAssistant.providerTurnId);
+  const occurredAt = (item: OrchestrationV2TurnItem) =>
+    DateTime.toEpochMillis(item.startedAt ?? item.updatedAt);
+  // Server steering ordinals and provider ordinals have independent counters.
+  let lastSteerAt = -Infinity;
+  for (const item of turnItems) {
     if (
-      steer !== undefined &&
-      item.ordinal === steer.ordinal &&
-      DateTime.isLessThan(item.startedAt ?? item.updatedAt, steer.startedAt ?? steer.updatedAt)
-    )
-      continue;
-    if (isBoundary(item)) {
-      if (answer !== undefined) answers.push(answer);
-      answer = undefined;
-      afterHook = report !== undefined;
+      item.type === "user_message" &&
+      (item.inputIntent === "steer" || item.inputIntent === "promoted_queued_to_steer")
+    ) {
+      lastSteerAt = Math.max(lastSteerAt, occurredAt(item));
+    }
+  }
+  let report: AssistantTurnItem[] = [];
+  let reply: AssistantTurnItem[] = [];
+  let round: { readonly question?: string | undefined } | undefined;
+  let sawHook = false;
+  const answers: Array<{
+    readonly question?: string | undefined;
+    readonly reply: AssistantTurnItem[];
+  }> = [];
+  for (const item of turnItems) {
+    if (occurredAt(item) < lastSteerAt) continue;
+    const boundary = continuationOf(item);
+    if (boundary !== undefined) {
+      if (round !== undefined && reply.length > 0) answers.push({ ...round, reply });
+      reply = [];
+      round = boundary.kind === "stop_hook" && report.length > 0 ? boundary : undefined;
+      sawHook ||= round !== undefined;
     } else if (
       item.type === "assistant_message" &&
       item.phase !== "commentary" &&
-      item.text.trim()
+      item.status === "completed" &&
+      item.text.trim() &&
+      (!sawHook || round !== undefined)
     ) {
-      if (afterHook) answer = item;
-      else report = item;
+      const current = sawHook ? reply : report;
+      if (
+        item.nativeResponseId !== undefined &&
+        current[0]?.nativeResponseId === item.nativeResponseId
+      ) {
+        const existing = current.findIndex((part) => part.id === item.id);
+        if (existing < 0) current.push(item);
+        else current[existing] = item;
+      } else if (sawHook) {
+        reply = [item];
+      } else {
+        report = [item];
+      }
     }
   }
-  if (answer !== undefined) answers.push(answer);
-  if (report === undefined || answers.length === 0) return undefined;
+  if (round !== undefined && reply.length > 0) answers.push({ ...round, reply });
+  if (!sawHook || report.length === 0 || (answers.length === 0 && run.status === "completed"))
+    return undefined;
 
-  const followUpBudget =
+  let remaining =
     STOP_HOOK_FOLLOW_UP_BYTES -
     Buffer.byteLength(STOP_HOOK_FOLLOW_UP_SEPARATOR + OMITTED_HOOK_TEXT + "\n\n");
-  let remaining = followUpBudget;
-  let omitted = false;
-  const kept: Array<{ id: TurnItemId; text: string }> = [];
-  for (const item of answers.toReversed()) {
-    const text = item.text.trim();
+  const sections: string[] = [];
+  const answerItemIds: TurnItemId[] = [];
+  for (const { question, reply } of answers.toReversed()) {
+    const text = `${question === undefined ? "" : `Hook asked: ${question}\n`}${reply
+      .map((item) => item.text)
+      .join("\n\n")
+      .trim()}`;
     const bytes = Buffer.byteLength(text);
     if (bytes > remaining) {
-      if (kept.length === 0) {
-        const prefix = Buffer.from(text.slice(0, remaining))
-          .subarray(0, remaining)
-          .toString("utf8")
-          .replace(/\uFFFD$/u, "");
-        kept.push({ id: item.id, text: prefix.trimEnd() });
+      if (sections.length === 0) {
+        sections.push(utf8Prefix(text, remaining).trimEnd());
+        answerItemIds.push(...reply.map((item) => item.id));
       }
-      omitted = true;
+      sections.push(OMITTED_HOOK_TEXT);
       break;
     }
-    kept.push({ id: item.id, text });
+    sections.push(text);
+    answerItemIds.push(...reply.map((item) => item.id));
     remaining -= bytes + 2;
   }
-  const retained = kept.reverse();
-  const parts = retained.map((item) => item.text);
-  if (omitted) parts.push(OMITTED_HOOK_TEXT);
-  return { report, followUp: parts.join("\n\n"), answerItemIds: retained.map((item) => item.id) };
+  const failure =
+    run.status === "failed" ? ordered.findLast((item) => item.type === "error") : undefined;
+  return {
+    report: report[0]!,
+    reportItems: report,
+    followUp: sections.join("\n\n"),
+    answerItemIds,
+    failure,
+  };
 }
 
 export function subagentResultForRun(
@@ -297,12 +351,36 @@ export function subagentResultForRun(
   readonly text: string;
   readonly messageId: OrchestrationV2ConversationMessage["id"] | null;
   readonly turnItemId: OrchestrationV2TurnItem["id"] | null;
-  readonly followUpItemIds?: ReadonlyArray<TurnItemId>;
+  readonly resultItemIds?: ReadonlyArray<TurnItemId>;
   readonly reportLength?: number;
 } {
   const stopHook = stopHookResultForRun(projection.turnItems, run);
+  const executedModel = latestProviderTurnForAttempt(
+    projection.providerTurns,
+    run.activeAttemptId,
+  )?.model;
+  const withModel = (text: string) =>
+    executedModel === undefined
+      ? text
+      : withExecutedModelNote(text, run.modelSelection.model, executedModel);
+  if (stopHook !== undefined) {
+    return {
+      ...formatStopHookResult(
+        withModel(stopHook.reportItems.map((item) => item.text).join("\n\n")),
+        stopHook.followUp,
+        run.status,
+        stopHook.failure?.failure.message,
+      ),
+      messageId: stopHook.report.messageId,
+      turnItemId: stopHook.report.id,
+      resultItemIds: [
+        ...stopHook.reportItems.map((item) => item.id),
+        ...stopHook.answerItemIds,
+        ...(stopHook.failure === undefined ? [] : [stopHook.failure.id]),
+      ],
+    };
+  }
   const turnItem =
-    stopHook?.report ??
     projection.turnItems
       .filter(
         (
@@ -312,8 +390,7 @@ export function subagentResultForRun(
           candidate.type === "assistant_message" &&
           candidate.text.trim().length > 0,
       )
-      .toSorted((left, right) => right.ordinal - left.ordinal)[0] ??
-    null;
+      .toSorted((left, right) => right.ordinal - left.ordinal)[0] ?? null;
   const messages = projection.messages.filter(
     (candidate) =>
       candidate.runId === run.id &&
@@ -323,13 +400,11 @@ export function subagentResultForRun(
   // Prefer turn item order; providers can finalize messages with identical timestamps.
   const message =
     messages.find((candidate) => candidate.id === turnItem?.messageId) ??
-    (stopHook === undefined
-      ? messages.toSorted(
-          (left, right) =>
-            DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt) ||
-            DateTime.toEpochMillis(right.createdAt) - DateTime.toEpochMillis(left.createdAt),
-        )[0]
-      : undefined) ??
+    messages.toSorted(
+      (left, right) =>
+        DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt) ||
+        DateTime.toEpochMillis(right.createdAt) - DateTime.toEpochMillis(left.createdAt),
+    )[0] ??
     null;
   const failure =
     run.status === "failed"
@@ -352,21 +427,10 @@ export function subagentResultForRun(
     (run.status === "completed"
       ? "Child task completed without an assistant result."
       : `Child task ended with status ${run.status}.`);
-  const executedModel = latestProviderTurnForAttempt(
-    projection.providerTurns,
-    run.activeAttemptId,
-  )?.model;
-  const report =
-    executedModel === undefined
-      ? text
-      : withExecutedModelNote(text, run.modelSelection.model, executedModel);
   return {
-    ...(stopHook === undefined
-      ? { text: report }
-      : appendStopHookFollowUp(report, stopHook.followUp)),
+    text: withModel(text),
     messageId: failure === undefined ? (message?.id ?? turnItem?.messageId ?? null) : null,
     turnItemId: failure?.id ?? turnItem?.id ?? null,
-    ...(stopHook === undefined ? {} : { followUpItemIds: stopHook.answerItemIds }),
   };
 }
 

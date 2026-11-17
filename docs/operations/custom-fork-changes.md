@@ -291,48 +291,47 @@ upstream's code without the fork's checks.
 
 ### Delegation: Stop hook results
 
-Codex emits a blocked `stop` hook completion with a `feedback` entry, then a
-`hookPrompt` item that names the hook run before it generates the follow-up in
-the same provider turn. `CodexAdapterV2` correlates those frames and records the
-same notice as Claude, which the existing web and mobile fold logic recognizes.
-The Claude adapter recognizes its synthetic root user
-frame and excludes goal evaluator feedback. The result builder uses neither the
-hook prompt itself nor the wording of the assistant's reply. Providers that emit
-no such notice keep the last-assistant-message rule.
+Codex correlates a blocked `stop` notification with the injected `hookPrompt`
+before opening a Stop hook round. Its redundant-final text check resets at that
+boundary. Completed native item IDs still suppress replays. Claude classifies
+synthetic root Stop feedback and goal evaluator feedback separately. Both adapters
+persist the boundary kind on an ordered notice. The selector consumes that kind,
+while the clients still use the Stop hook notice for folding.
 
-`subagentProjection` uses the last substantive assistant message before the
-first notice in the final provider turn as the report, starting after any new
-steering message. It appends the last substantive answer from each answered
-hook round under **Stop hook follow-up**.
-The appendix gets up to 4 KiB in UTF-8, with newer rounds taking priority and an
-omission note pointing to the child thread. The report stays whole in
-`task_status`. The existing 16,000-byte shared inline allowance still applies
-to the parent wake. If only the report fits, the wake carries it and points to
-`task_status` for the appendix. If the report itself exceeds the allowance, the
-wake points to `task_status` for the full result. Runs without both a report and
-a follow-up, and runs that end unsuccessfully, use their existing result rules.
+The result starts at the latest steering message, using item start times from
+the child host to compare server steering with provider output. Provider ordinals
+order the selected turn's responses and boundaries. The report is the final
+response before the first Stop hook. A new hook or goal evaluator boundary closes
+the current hook round. Claude text blocks with the same native response ID are
+joined so earlier reports and tool progress stay separate from the answer.
 
-One labelled string fits the parent notification and the existing `summary`
+**Stop hook follow-up** lists retained rounds newest first. A short **Hook asked**
+line precedes each answer when the provider supplied a question. Questions and
+answers share a 4 KiB UTF-8 limit, with an omission note when needed. A failed or
+interrupted run keeps its effective outcome and includes the report as partial
+work, plus any completed hook answer.
+
+One labelled string serves the parent notification and the existing `summary`
 and `latestTerminalSummary` fields. Separate result fields would require every
-consumer to render both. Sending the whole conversation would repeat progress
-and consume the inline allowance. A pointer alone would leave the parent to
-find a report it may never read. The stored split offset lets the wake keep the
-report when the appendix does not fit. `task_status` also acknowledges the
-combined result when its source messages span multiple transcript pages.
+consumer to render both. A transcript would repeat progress, and a pointer alone
+would leave the parent to find the report. The stored report offset lets the
+wake prioritize the report within its 16,000-byte allowance. It reserves space
+for the `task_status` pointer and marks any cut at a UTF-8 boundary.
+`task_status` provides the full report and acknowledges results whose source
+messages span multiple transcript pages.
 
-For linked delegation, the child environment selects the report and follow-up
-when it answers the existing settled wait. It returns the report item ID and
-bounded appendix only for runs with both parts. The parent fetches just that
-report through the existing paginated item read. Older peers omit the extra
-wait metadata and the parent reads the last reply as before. No extra timeline
-activity is sent across the link. Previously stored results and Codex runs
-recorded without the notice retain their original summaries.
+For linked delegation, the child host selects the result using the effective run
+outcome. The existing settled wait carries report item IDs and the bounded
+appendix. The parent reads the selected blocks through the existing paginated item
+read. Older peers fall back to their last-reply path. Stored summaries and
+previous notices remain readable, and the selector pairs responses when typed
+boundaries are present.
 
-**On conflict:** keep the adapters' notice semantics and the result projection's
-report-first formatting if upstream still selects only the last reply. The
-completion and status call sites load the marker and steering messages alongside
-the existing result items. Retain the linked wait metadata if upstream still reads
-results through the peer timeline.
+**On conflict:** keep provider classification at the prompt handlers, preserve
+the typed boundaries and native response IDs at projection, and keep selection
+and formatting shared between local and linked results. Check upstream changes
+to provider Stop events, Codex final-answer deduplication, and linked wait
+metadata against the regression fixtures.
 
 ### Chat: fork from a user message
 

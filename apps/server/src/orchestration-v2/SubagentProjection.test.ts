@@ -489,6 +489,7 @@ it("orders a task's assistant messages by turn item, not by timestamps", () => {
     type: "system_notice" as const,
     title: "Stop hook feedback",
     message: "Stop hook feedback",
+    continuation: { kind: "stop_hook" as const },
   });
   const firstCheck = message("first-check", "The browser was not checked.", 4);
   const secondCheck = message("second-check", "The layout still regresses on mobile.", 6);
@@ -509,7 +510,7 @@ it("orders a task's assistant messages by turn item, not by timestamps", () => {
   assert.equal(hookedResult.turnItemId, report.turnItem.id);
   assert.equal(
     hookedResult.text,
-    "All steps passed.\n\n## Stop hook follow-up\n\nThe browser was not checked.\n\nThe layout still regresses on mobile.",
+    "All steps passed.\n\n## Stop hook follow-up\n\nThe layout still regresses on mobile.\n\nThe browser was not checked.",
   );
   assert.equal(
     subagentResultForRun(
@@ -528,11 +529,41 @@ it("orders a task's assistant messages by turn item, not by timestamps", () => {
     attachments: [],
     createdBy: "agent" as const,
     creationSource: "mcp" as const,
+    startedAt: DateTime.makeUnsafe("2026-07-24T10:05:01.000Z"),
   };
   assert.equal(
-    subagentResultForRun({ ...withHooks, turnItems: [...withHooks.turnItems, steer] }, run).text,
+    subagentResultForRun(
+      {
+        ...withHooks,
+        turnItems: [
+          ...withHooks.turnItems.map((item) =>
+            item.ordinal >= 4 ? { ...item, startedAt: steer.startedAt } : item,
+          ),
+          steer,
+        ],
+      },
+      run,
+    ).text,
     `${firstCheck.message.text}\n\n## Stop hook follow-up\n\n${secondCheck.message.text}`,
   );
+  const beforeReport = DateTime.makeUnsafe("2026-07-24T10:04:59.000Z");
+  const rapidSteers = [2, 3].map((ordinal) => ({
+    ...steer,
+    id: TurnItemId.make(`steer-${ordinal}`),
+    ordinal,
+    startedAt: beforeReport,
+  }));
+  assert.include(
+    subagentResultForRun({ ...withHooks, turnItems: [...rapidSteers, ...withHooks.turnItems] }, run)
+      .text,
+    report.message.text,
+  );
+  for (const status of ["failed", "interrupted"] as const) {
+    const partial = subagentResultForRun(withHooks, { ...run, status }).text;
+    assert.include(partial, `Child task ended with status ${status}.`);
+    assert.include(partial, report.message.text);
+    assert.include(partial, secondCheck.message.text);
+  }
   const nextTurn = message("next-turn", "The later turn fixed the regression.", 8);
   assert.equal(
     subagentResultForRun(

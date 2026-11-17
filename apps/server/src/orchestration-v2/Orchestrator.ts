@@ -193,6 +193,7 @@ import {
   makeSubagentChildThread,
   subagentResultForRun,
   SUBAGENT_RESULT_ITEM_TYPES,
+  utf8Prefix,
   delegatedTaskProgress,
   subagentThreadTitle,
 } from "@t3tools/provider-core/server/subagentProjection";
@@ -926,30 +927,56 @@ function delegatedCompletionWakeDetail(
   taskIds: ReadonlyArray<string>,
   tasks: ReadonlyArray<OrchestrationV2Subagent>,
 ): string {
-  let remainingBytes = DELEGATED_RESULT_INLINE_BYTES;
-  return taskIds
-    .map((taskId) => {
-      const task = tasks.find((candidate) => candidate.id === taskId);
-      const label = `Delegated task ${taskId}${task?.title == null ? "" : ` (${task.title})`}${task === undefined ? " reached a terminal state" : ` [${task.status}]`}`;
-      if (task?.result != null) {
-        const detail = `${label}:\n${task.result}`;
-        const bytes = Buffer.byteLength(detail);
-        if (bytes <= remainingBytes) {
-          remainingBytes -= bytes;
-          return detail;
-        }
-        if (task.resultReportLength !== undefined) {
-          const report = `${label}:\n${task.result.slice(0, task.resultReportLength)}`;
-          const reportBytes = Buffer.byteLength(report);
-          if (reportBytes <= remainingBytes) {
-            remainingBytes -= reportBytes;
-            return `${report}\n\nUse task_status with taskId ${taskId} to read the Stop hook follow-up.`;
-          }
+  const entries = taskIds.map((taskId) => {
+    const task = tasks.find((candidate) => candidate.id === taskId);
+    const label = `Delegated task ${taskId}${task?.title == null ? "" : ` (${task.title})`}${task === undefined ? " reached a terminal state" : ` [${task.status}]`}`;
+    const pointer = `Use task_status with taskId ${taskId} to read the result.`;
+    const fallback = `${label}. ${pointer}`;
+    const heading = `${label}:\n`;
+    const full = task?.result == null ? undefined : heading + task.result;
+    const fullBytes = full === undefined ? Infinity : Buffer.byteLength(full);
+    const bytes = Math.min(fullBytes, Buffer.byteLength(fallback));
+    return { task, heading, pointer, fallback, full, fullBytes, bytes };
+  });
+  const separator = "\n\n";
+  const cut = "\n… Report truncated.";
+  let remaining = DELEGATED_RESULT_INLINE_BYTES;
+  let reserved =
+    entries.reduce((bytes, entry) => bytes + entry.bytes, 0) + 2 * Math.max(0, entries.length - 1);
+  if (reserved > remaining) {
+    const suffix = "\n… Use task_status to read remaining results.";
+    return (
+      utf8Prefix(
+        entries.map((entry) => entry.fallback).join(separator),
+        remaining - Buffer.byteLength(suffix),
+      ) + suffix
+    );
+  }
+  return entries
+    .map(({ task, heading, pointer, fallback, full, fullBytes, bytes }, index) => {
+      if (index > 0) {
+        remaining -= 2;
+        reserved -= 2;
+      }
+      reserved -= bytes;
+      const available = remaining - reserved;
+      let detail = fallback;
+      if (full !== undefined && fullBytes <= available) {
+        detail = full;
+      } else if (task?.result != null && task.resultReportLength !== undefined) {
+        const report = task.result.slice(0, task.resultReportLength);
+        const tail = `${separator}${pointer}`;
+        const room = available - Buffer.byteLength(heading + tail);
+        if (Buffer.byteLength(report) <= room) detail = heading + report + tail;
+        else if (room > Buffer.byteLength(cut)) {
+          const prefix = utf8Prefix(report, room - Buffer.byteLength(cut));
+          if (prefix) detail = heading + prefix + cut + tail;
         }
       }
-      return `${label}. Use task_status with taskId ${taskId} to read the result.`;
+      remaining -= Buffer.byteLength(detail);
+      return detail;
     })
-    .join("\n\n");
+    .join(separator);
 }
 
 function isTerminalDelegatedTaskStatus(status: OrchestrationV2Subagent["status"]): boolean {
@@ -9760,6 +9787,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       progress: undefined,
       cancelledRunId: undefined,
       result: null,
+      resultReportLength: undefined,
       startedAt: now,
       completedAt: null,
       updatedAt: now,
@@ -10084,9 +10112,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       remoteChild,
       status: command.status,
       result: command.result,
-      ...(command.resultReportLength === undefined
-        ? {}
-        : { resultReportLength: command.resultReportLength }),
+      resultReportLength: command.resultReportLength,
       ...(command.executedModel === undefined ? {} : { executedModel: command.executedModel }),
       completedAt: now,
       updatedAt: now,
@@ -14503,7 +14529,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         providerThreadId: childRun.providerThreadId,
         status: terminalStatus,
         result: result.text,
-        ...(result.reportLength === undefined ? {} : { resultReportLength: result.reportLength }),
+        resultReportLength: result.reportLength,
         completedAt: now,
         updatedAt: now,
         // The cancelling parent gets no wake, and the task records the run it settled from.

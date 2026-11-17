@@ -697,9 +697,10 @@ function pageIncludesTerminalTaskResult(input: {
     transfer.sourcePoint.runId === undefined
       ? delegatedTaskRun(input.target, input.task)
       : input.target.runs.find((run) => run.id === transfer.sourcePoint.runId);
-  if (run === undefined || !isTerminalTaskStatus(taskStatusForRun(run))) return false;
+  const status = taskStatusForRun(run);
+  if (run === undefined || !isTerminalTaskStatus(status)) return false;
 
-  const result = subagentResultForRun(input.target, run);
+  const result = subagentResultForRun(input.target, { ...run, status });
   if (result.messageId === null && result.turnItemId === null) return false;
   const completeItems = input.items.filter(
     (item) =>
@@ -707,8 +708,8 @@ function pageIncludesTerminalTaskResult(input: {
   );
   // A paginated read proves only what this page contains. task_status delivers the combined result.
   if (
-    result.followUpItemIds !== undefined &&
-    !result.followUpItemIds.every((id) => completeItems.some((item) => item.itemId === id))
+    result.resultItemIds !== undefined &&
+    !result.resultItemIds.every((id) => completeItems.some((item) => item.itemId === id))
   )
     return false;
 
@@ -1849,7 +1850,7 @@ const make = Effect.gen(function* () {
       task.result !== null
         ? task.result
         : taskResultRun !== undefined && isTerminalTaskStatus(status)
-          ? subagentResultForRun(childProjection, taskResultRun).text
+          ? subagentResultForRun(childProjection, { ...taskResultRun, status }).text
           : null;
     const resultTransfers = childControls.contextTransfers.filter(
       (transfer) =>
@@ -1870,7 +1871,8 @@ const make = Effect.gen(function* () {
     const latestTerminalSummary = canExposeTaskRunResult(terminalRun)
       ? terminalRun.id === childRun?.id
         ? derivedResult
-        : subagentResultForRun(childProjection, terminalRun).text
+        : subagentResultForRun(childProjection, { ...terminalRun, status: runOutcome(terminalRun) })
+            .text
       : null;
     const resultContextTransferId = resultTransfer?.id ?? null;
     const latestTerminalResultContextTransferId = resultTransferForRun(terminalRun)?.id ?? null;
@@ -3562,29 +3564,41 @@ const make = Effect.gen(function* () {
         : [];
       const wakesCaller =
         ownedTask && !childRequests.some((request) => request.status === "pending");
-      const completedRuns =
+      const terminalRuns = new Map<RunId, TerminalTaskStatus>();
+      if (
         scope.client?.linked === true &&
         input.untilDelegatedWorkSettled === true &&
         !result.timedOut
-          ? [result.run, result.resultRun].filter(
-              (run): run is OrchestrationV2Run => run != null && runOutcome(run) === "completed",
-            )
-          : [];
-      const completedRunIds = [...new Set(completedRuns.map((run) => run.id))];
-      const stopHookResults =
-        completedRunIds.length === 0
+      ) {
+        for (const run of [result.run, result.resultRun]) {
+          const outcome = taskStatusForRun(run ?? undefined);
+          if (run != null && isTerminalTaskStatus(outcome)) terminalRuns.set(run.id, outcome);
+        }
+      }
+      const stopHookItems =
+        terminalRuns.size === 0
           ? []
           : (yield* threadManagement
               .getThreadRecords(input.threadId, ["turnItems"], {
-                turnItemRunIds: completedRunIds,
+                turnItemRunIds: [...terminalRuns.keys()],
                 turnItemTypes: SUBAGENT_RESULT_ITEM_TYPES,
               })
               .pipe(Effect.mapError(threadManagementFailure))).turnItems;
-      const stopHookReplies = completedRunIds.flatMap((id) => {
-        const reply = stopHookResultForRun(stopHookResults, { id, status: "completed" });
+      const stopHookReplies = [...terminalRuns].flatMap(([id, status]) => {
+        const reply = stopHookResultForRun(stopHookItems, { id, status });
         return reply === undefined
           ? []
-          : [{ runId: id, reportItemId: reply.report.id, followUp: reply.followUp }];
+          : [
+              {
+                runId: id,
+                reportItemId: reply.report.id,
+                ...(reply.reportItems.length === 1
+                  ? {}
+                  : { reportItemIds: reply.reportItems.map((item) => item.id) }),
+                followUp: reply.followUp,
+                ...(reply.failure === undefined ? {} : { failureItemId: reply.failure.id }),
+              },
+            ];
       });
       return {
         threadId: input.threadId,
