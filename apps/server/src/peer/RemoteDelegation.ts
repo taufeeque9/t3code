@@ -11,6 +11,7 @@ import {
   type OrchestratorMcpThreadSendInput,
   type OrchestratorMcpThreadSendResult,
   type OrchestratorMcpThreadTimelineItem,
+  type OrchestratorMcpThreadWaitResult,
   type OrchestrationV2RemoteTaskChild,
   type OrchestrationV2Subagent,
   type ProjectId,
@@ -31,7 +32,10 @@ import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Tool from "effect/ai/Tool";
-import { withExecutedModelNote } from "@t3tools/provider-core/server/subagentProjection";
+import {
+  appendStopHookFollowUp,
+  withExecutedModelNote,
+} from "@t3tools/provider-core/server/subagentProjection";
 
 import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { ProjectToolkit } from "../mcp/toolkits/project/tools.ts";
@@ -540,6 +544,7 @@ const make = Effect.gen(function* () {
     stoppedThere: "ran-out" | "stopped" | undefined,
     stopCount?: number,
     executedModel?: string,
+    resultReportLength?: number,
   ) {
     const attempt = yield* random.uuidV4();
     yield* threads
@@ -553,6 +558,7 @@ const make = Effect.gen(function* () {
         ...(stoppedThere === undefined ? {} : { stoppedThere }),
         ...(stopCount === undefined ? {} : { stopCount }),
         ...(executedModel === undefined ? {} : { executedModel }),
+        ...(resultReportLength === undefined ? {} : { resultReportLength }),
       })
       .pipe(
         Effect.catch((error) =>
@@ -604,18 +610,63 @@ const make = Effect.gen(function* () {
       })
       .pipe(Effect.asVoid);
 
-  /**
-   * The last reply `runId` gave on the task's thread there, which is its
-   * result, read whole however long it is. A failed run prefers its error
-   * from the activity view over an earlier reply, without taking another run's.
-   * Led by a note when its provider reported running another model than it asked for.
-   */
+  const readReplyText = Effect.fn("RemoteDelegation.readReplyText")(function* (
+    scope: ThreadScope,
+    remote: OrchestrationV2RemoteTaskChild,
+    reply: OrchestratorMcpThreadTimelineItem,
+  ) {
+    let text = reply.text ?? "";
+    let textOffset = reply.textTruncated ? (reply.nextTextOffset ?? null) : null;
+    while (textOffset !== null) {
+      const rest = yield* forwarding.readThread(scope, remote.environmentId, {
+        threadId: remote.threadId,
+        itemId: reply.itemId,
+        textOffset,
+        maxCharsPerItem: 20_000,
+      });
+      const part = rest.items[0];
+      if (part === undefined) break;
+      text += part.text ?? "";
+      textOffset = part.textTruncated ? (part.nextTextOffset ?? null) : null;
+    }
+    return text;
+  });
+
   const lastReply = Effect.fn("RemoteDelegation.lastReply")(function* (
     scope: ThreadScope,
     remote: OrchestrationV2RemoteTaskChild,
     runId: RunId | null,
     failed = false,
-  ) {
+    stopHook?: NonNullable<OrchestratorMcpThreadWaitResult["stopHookReplies"]>[number],
+  ): Effect.fn.Return<
+    { text: string | undefined; executedModel: string | undefined; reportLength?: number },
+    OrchestratorMcpFailure
+  > {
+    if (stopHook !== undefined) {
+      const read = yield* forwarding.readThread(scope, remote.environmentId, {
+        threadId: remote.threadId,
+        itemId: stopHook.reportItemId,
+        maxCharsPerItem: 20_000,
+        runLimit: 50,
+      });
+      const report = read.items.find(
+        (item) =>
+          item.itemId === stopHook.reportItemId &&
+          item.runId === runId &&
+          item.type === "assistant_message",
+      );
+      if (report !== undefined) {
+        const run = read.recentRuns.find((candidate) => candidate.runId === runId);
+        const text = yield* readReplyText(scope, remote, report);
+        return {
+          ...appendStopHookFollowUp(
+            run === undefined ? text : withExecutedModelNote(text, run.model, run.executedModel),
+            stopHook.followUp,
+          ),
+          executedModel: run?.executedModel ?? undefined,
+        };
+      }
+    }
     let reply: OrchestratorMcpThreadTimelineItem | undefined;
     let error: OrchestratorMcpThreadTimelineItem | undefined;
     let afterPosition: number | undefined;
@@ -646,20 +697,7 @@ const make = Effect.gen(function* () {
     reply = error ?? reply;
     const executedModel = run?.executedModel ?? undefined;
     if (reply === undefined) return { text: undefined, executedModel };
-    let text = reply.text ?? "";
-    let textOffset = reply.textTruncated ? (reply.nextTextOffset ?? null) : null;
-    while (textOffset !== null) {
-      const rest = yield* forwarding.readThread(scope, remote.environmentId, {
-        threadId: remote.threadId,
-        itemId: reply.itemId,
-        textOffset,
-        maxCharsPerItem: 20_000,
-      });
-      const part = rest.items[0];
-      if (part === undefined) break;
-      text += part.text ?? "";
-      textOffset = part.textTruncated ? (part.nextTextOffset ?? null) : null;
-    }
+    const text = yield* readReplyText(scope, remote, reply);
     return {
       text: run === undefined ? text : withExecutedModelNote(text, run.model, run.executedModel),
       executedModel,
@@ -861,7 +899,13 @@ const make = Effect.gen(function* () {
       waited.resultRun !== undefined && !sharedThread
         ? waited.resultRun
         : { runId: waited.runId, status: waited.status };
-    const result = yield* lastReply(scope, remote, resultRun.runId, resultRun.status === "failed");
+    const result = yield* lastReply(
+      scope,
+      remote,
+      resultRun.runId,
+      resultRun.status === "failed",
+      waited.stopHookReplies?.find((reply) => reply.runId === resultRun.runId),
+    );
     yield* complete(
       parentThreadId,
       taskId,
@@ -870,6 +914,7 @@ const make = Effect.gen(function* () {
       "ran-out",
       undefined,
       result.executedModel,
+      result.reportLength,
     );
     return yield* settled(parentThreadId, taskId);
   });

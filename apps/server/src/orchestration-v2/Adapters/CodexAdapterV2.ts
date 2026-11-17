@@ -156,6 +156,7 @@ import {
 import {
   makeSubagentChildThread,
   makeSubagentConversationArtifacts,
+  STOP_HOOK_FEEDBACK_NOTICE,
   subagentThreadTitle,
 } from "@t3tools/provider-core/server/subagentProjection";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -1278,6 +1279,7 @@ function failureResetAt(
 
 interface ActiveCodexTurnContext {
   hookStopReason?: string;
+  blockedStopHookIds?: Set<string>;
   capacityRetryAttempt?: number;
   capacityRetryPending?: Deferred.Deferred<ActiveCodexTurnContext | undefined>;
   closedCommandItemIds?: ReadonlySet<string>;
@@ -5057,9 +5059,24 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
         yield* client.handleServerNotification("hook/completed", (payload) =>
           Effect.gen(function* () {
-            if (payload.turnId == null || payload.run.status !== "stopped") return;
+            if (
+              payload.turnId == null ||
+              (payload.run.status !== "stopped" && payload.run.eventName !== "stop")
+            )
+              return;
             const context = (yield* Ref.get(activeTurns)).get(payload.turnId);
             if (context?.providerThread.nativeThreadRef?.nativeId !== payload.threadId) return;
+            if (payload.run.eventName === "stop") {
+              if (
+                payload.run.status === "blocked" &&
+                payload.run.entries.some((entry) => entry.kind === "feedback" && entry.text.trim())
+              ) {
+                (context.blockedStopHookIds ??= new Set()).add(payload.run.id);
+              } else {
+                context.blockedStopHookIds?.delete(payload.run.id);
+              }
+            }
+            if (payload.run.status !== "stopped") return;
             const reason = payload.run.entries
               .filter((entry) => entry.kind === "stop")
               .map((entry) => entry.text.trim())
@@ -5529,6 +5546,45 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               return;
             }
             const { context, settled } = resolved;
+
+            if (payload.item.type === "hookPrompt") {
+              const blockedStops = context.blockedStopHookIds;
+              if (
+                settled ||
+                context.providerThread.nativeThreadRef?.nativeId !== payload.threadId ||
+                !payload.item.fragments.some((fragment) => blockedStops?.has(fragment.hookRunId))
+              )
+                return;
+              blockedStops?.clear();
+              const nativeItemId = payload.item.id;
+              const now = DateTime.makeUnsafe(payload.completedAtMs);
+              yield* emitProviderEvent({
+                type: "turn_item.updated",
+                driver: CODEX_PROVIDER,
+                turnItem: {
+                  id: idAllocator.derive.turnItemFromProviderItem({
+                    driver: CODEX_PROVIDER,
+                    nativeItemId,
+                  }),
+                  threadId: context.projectionThreadId,
+                  runId: context.projectionRunId,
+                  nodeId: context.providerNodeId,
+                  providerThreadId: context.providerThread.id,
+                  providerTurnId: context.providerTurnId,
+                  nativeItemRef: codexNativeItemRef(nativeItemId),
+                  parentItemId: null,
+                  ordinal: yield* resolveItemOrdinal(context, nativeItemId),
+                  type: "system_notice",
+                  status: "completed",
+                  title: STOP_HOOK_FEEDBACK_NOTICE,
+                  message: STOP_HOOK_FEEDBACK_NOTICE,
+                  startedAt: now,
+                  completedAt: now,
+                  updatedAt: now,
+                },
+              });
+              return;
+            }
 
             if (payload.item.type === "reasoning") {
               yield* completeReasoning(payload.turnId, payload.item);

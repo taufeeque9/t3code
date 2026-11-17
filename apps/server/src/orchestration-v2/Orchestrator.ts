@@ -192,6 +192,7 @@ import {
   endRunlessRootTurns,
   makeSubagentChildThread,
   subagentResultForRun,
+  SUBAGENT_RESULT_ITEM_TYPES,
   delegatedTaskProgress,
   subagentThreadTitle,
 } from "@t3tools/provider-core/server/subagentProjection";
@@ -936,6 +937,14 @@ function delegatedCompletionWakeDetail(
         if (bytes <= remainingBytes) {
           remainingBytes -= bytes;
           return detail;
+        }
+        if (task.resultReportLength !== undefined) {
+          const report = `${label}:\n${task.result.slice(0, task.resultReportLength)}`;
+          const reportBytes = Buffer.byteLength(report);
+          if (reportBytes <= remainingBytes) {
+            remainingBytes -= reportBytes;
+            return `${report}\n\nUse task_status with taskId ${taskId} to read the Stop hook follow-up.`;
+          }
         }
       }
       return `${label}. Use task_status with taskId ${taskId} to read the result.`;
@@ -10075,6 +10084,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       remoteChild,
       status: command.status,
       result: command.result,
+      ...(command.resultReportLength === undefined
+        ? {}
+        : { resultReportLength: command.resultReportLength }),
       ...(command.executedModel === undefined ? {} : { executedModel: command.executedModel }),
       completedAt: now,
       updatedAt: now,
@@ -14428,7 +14440,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           messageRoles: ["assistant"],
           messageRunIds: [childRun.id],
           turnItemRunId: childRun.id,
-          turnItemTypes: ["assistant_message", "error"],
+          turnItemTypes: SUBAGENT_RESULT_ITEM_TYPES,
         },
       );
       const childProjection = {
@@ -14491,6 +14503,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         providerThreadId: childRun.providerThreadId,
         status: terminalStatus,
         result: result.text,
+        ...(result.reportLength === undefined ? {} : { resultReportLength: result.reportLength }),
         completedAt: now,
         updatedAt: now,
         // The cancelling parent gets no wake, and the task records the run it settled from.

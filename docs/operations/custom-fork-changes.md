@@ -289,6 +289,51 @@ with a stop-hook self-check fully expanded", "keeps a response with a Claude
 stop-hook follow-up unfolded"). Retire them only once those fold tests pass on
 upstream's code without the fork's checks.
 
+### Delegation: Stop hook results
+
+Codex emits a blocked `stop` hook completion with a `feedback` entry, then a
+`hookPrompt` item that names the hook run before it generates the follow-up in
+the same provider turn. `CodexAdapterV2` correlates those frames and records the
+same notice as Claude, which the existing web and mobile fold logic recognizes.
+The Claude adapter recognizes its synthetic root user
+frame and excludes goal evaluator feedback. The result builder uses neither the
+hook prompt itself nor the wording of the assistant's reply. Providers that emit
+no such notice keep the last-assistant-message rule.
+
+`subagentProjection` uses the last substantive assistant message before the
+first notice in the final provider turn as the report, starting after any new
+steering message. It appends the last substantive answer from each answered
+hook round under **Stop hook follow-up**.
+The appendix gets up to 4 KiB in UTF-8, with newer rounds taking priority and an
+omission note pointing to the child thread. The report stays whole in
+`task_status`. The existing 16,000-byte shared inline allowance still applies
+to the parent wake. If only the report fits, the wake carries it and points to
+`task_status` for the appendix. If the report itself exceeds the allowance, the
+wake points to `task_status` for the full result. Runs without both a report and
+a follow-up, and runs that end unsuccessfully, use their existing result rules.
+
+One labelled string fits the parent notification and the existing `summary`
+and `latestTerminalSummary` fields. Separate result fields would require every
+consumer to render both. Sending the whole conversation would repeat progress
+and consume the inline allowance. A pointer alone would leave the parent to
+find a report it may never read. The stored split offset lets the wake keep the
+report when the appendix does not fit. `task_status` also acknowledges the
+combined result when its source messages span multiple transcript pages.
+
+For linked delegation, the child environment selects the report and follow-up
+when it answers the existing settled wait. It returns the report item ID and
+bounded appendix only for runs with both parts. The parent fetches just that
+report through the existing paginated item read. Older peers omit the extra
+wait metadata and the parent reads the last reply as before. No extra timeline
+activity is sent across the link. Previously stored results and Codex runs
+recorded without the notice retain their original summaries.
+
+**On conflict:** keep the adapters' notice semantics and the result projection's
+report-first formatting if upstream still selects only the last reply. The
+completion and status call sites load the marker and steering messages alongside
+the existing result items. Retain the linked wait metadata if upstream still reads
+results through the peer timeline.
+
 ### Chat: fork from a user message
 
 Upstream forks only after an assistant response. A **Fork from here** button on

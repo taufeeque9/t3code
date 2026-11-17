@@ -245,6 +245,7 @@ import * as ProviderContinuationRequests from "@t3tools/provider-core/server/Pro
 import {
   makeSubagentChildThread,
   makeSubagentConversationArtifacts,
+  STOP_HOOK_FEEDBACK_NOTICE,
   subagentThreadTitle,
 } from "@t3tools/provider-core/server/subagentProjection";
 
@@ -10646,7 +10647,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             )
           ) {
             const now = yield* DateTime.now;
-            const nativeItemId = message.uuid ?? `stop-hook:${context.providerTurnId}`;
+            const nativeItemId =
+              message.uuid ?? `stop-hook:${context.providerTurnId}:${context.itemOrdinals.size}`;
             yield* emitProviderEvent({
               type: "turn_item.updated",
               driver: CLAUDE_PROVIDER,
@@ -10669,8 +10671,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ordinal: yield* resolveItemOrdinal(context, nativeItemId),
                 type: "system_notice",
                 status: "completed",
-                title: "Stop hook feedback",
-                message: "Stop hook feedback",
+                title: STOP_HOOK_FEEDBACK_NOTICE,
+                message: STOP_HOOK_FEEDBACK_NOTICE,
                 startedAt: now,
                 completedAt: now,
                 updatedAt: now,

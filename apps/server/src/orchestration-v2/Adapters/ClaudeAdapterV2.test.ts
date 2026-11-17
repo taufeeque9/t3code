@@ -113,6 +113,7 @@ import {
 import { resolveProviderCatalog } from "../../provider/ModelManifest.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { stopHookResultForRun } from "@t3tools/provider-core/server/subagentProjection";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
@@ -24188,7 +24189,22 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             session_id: WAKE_NATIVE_SESSION,
           }),
           makeAssistantTextFrame({ uuid: "stop-hook-follow-up", text: "I re-ran it to check." }),
-          makeResultFrame({ uuid: "stop-hook-result", result: "I re-ran it to check." }),
+          claudeSdkFrame({
+            type: "user",
+            message: {
+              role: "user",
+              content: [{ type: "text", text: "Stop hook feedback:\nCheck the screenshot." }],
+            },
+            parent_tool_use_id: null,
+            isSynthetic: true,
+            uuid: "stop-hook-second-feedback",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          makeAssistantTextFrame({
+            uuid: "stop-hook-second-answer",
+            text: "The mobile layout still shifts.",
+          }),
+          makeResultFrame({ uuid: "stop-hook-result", result: "The mobile layout still shifts." }),
         ]) {
           yield* Queue.offer(harness.sdkMessages, frame);
         }
@@ -24202,9 +24218,21 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               : [],
           )[0] ?? Number.NaN;
         const notices = stopHookNotices(harness.events);
-        assert.lengthOf(notices, 1);
+        assert.lengthOf(notices, 2);
         assert.isAbove(notices[0]!.ordinal, ordinalOf("The test passes now."));
         assert.isBelow(notices[0]!.ordinal, ordinalOf("I re-ran it to check."));
+        assert.isAbove(notices[1]!.ordinal, ordinalOf("I re-ran it to check."));
+        assert.isBelow(notices[1]!.ordinal, ordinalOf("The mobile layout still shifts."));
+        const runId = notices[0]?.runId;
+        const items = harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" ? [event.turnItem] : [],
+        );
+        const reply =
+          runId == null
+            ? undefined
+            : stopHookResultForRun(items, { id: runId, status: "completed" });
+        assert.equal(reply?.report.text, "The test passes now.");
+        assert.equal(reply?.followUp, "I re-ran it to check.\n\nThe mobile layout still shifts.");
       }).pipe(
         Effect.scoped,
         Effect.provide(

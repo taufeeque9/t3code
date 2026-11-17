@@ -94,7 +94,9 @@ import * as Stream from "effect/Stream";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import {
   subagentResultForRun,
+  SUBAGENT_RESULT_ITEM_TYPES,
   delegatedTaskProgress,
+  stopHookResultForRun,
 } from "@t3tools/provider-core/server/subagentProjection";
 import {
   DispatchModeLimit,
@@ -699,16 +701,24 @@ function pageIncludesTerminalTaskResult(input: {
 
   const result = subagentResultForRun(input.target, run);
   if (result.messageId === null && result.turnItemId === null) return false;
+  const completeItems = input.items.filter(
+    (item) =>
+      item.sourceThreadId === input.target.thread.id && item.text !== null && !item.textTruncated,
+  );
+  // A paginated read proves only what this page contains. task_status delivers the combined result.
+  if (
+    result.followUpItemIds !== undefined &&
+    !result.followUpItemIds.every((id) => completeItems.some((item) => item.itemId === id))
+  )
+    return false;
 
-  return input.items.some((item) => {
-    if (item.sourceThreadId !== input.target.thread.id) return false;
-    const matchesResult =
+  return completeItems.some(
+    (item) =>
       (result.turnItemId !== null && item.itemId === result.turnItemId) ||
       (result.messageId !== null &&
         item.type === "assistant_message" &&
-        item.messageId === result.messageId);
-    return matchesResult && item.text !== null && !item.textTruncated;
-  });
+        item.messageId === result.messageId),
+  );
 }
 
 function latestTerminalResultRun(
@@ -1806,7 +1816,7 @@ const make = Effect.gen(function* () {
         messageRoles: ["assistant"],
         messageRunIds: resultRunIds,
         turnItemRunIds: resultRunIds,
-        turnItemTypes: ["assistant_message", "error"],
+        turnItemTypes: SUBAGENT_RESULT_ITEM_TYPES,
       })
       .pipe(Effect.mapError(threadManagementFailure));
     const childProjection = {
@@ -3431,7 +3441,7 @@ const make = Effect.gen(function* () {
               messageRoles: ["assistant"],
               messageRunIds: resultRunIds,
               turnItemRunIds: resultRunIds,
-              turnItemTypes: ["assistant_message", "error"],
+              turnItemTypes: SUBAGENT_RESULT_ITEM_TYPES,
             })
             .pipe(Effect.mapError(threadManagementFailure));
           if (
@@ -3552,12 +3562,37 @@ const make = Effect.gen(function* () {
         : [];
       const wakesCaller =
         ownedTask && !childRequests.some((request) => request.status === "pending");
+      const completedRuns =
+        scope.client?.linked === true &&
+        input.untilDelegatedWorkSettled === true &&
+        !result.timedOut
+          ? [result.run, result.resultRun].filter(
+              (run): run is OrchestrationV2Run => run != null && runOutcome(run) === "completed",
+            )
+          : [];
+      const completedRunIds = [...new Set(completedRuns.map((run) => run.id))];
+      const stopHookResults =
+        completedRunIds.length === 0
+          ? []
+          : (yield* threadManagement
+              .getThreadRecords(input.threadId, ["turnItems"], {
+                turnItemRunIds: completedRunIds,
+                turnItemTypes: SUBAGENT_RESULT_ITEM_TYPES,
+              })
+              .pipe(Effect.mapError(threadManagementFailure))).turnItems;
+      const stopHookReplies = completedRunIds.flatMap((id) => {
+        const reply = stopHookResultForRun(stopHookResults, { id, status: "completed" });
+        return reply === undefined
+          ? []
+          : [{ runId: id, reportItemId: reply.report.id, followUp: reply.followUp }];
+      });
       return {
         threadId: input.threadId,
         runId: result.run?.id ?? null,
         status,
         timedOut: result.timedOut,
         ...(wakesCaller ? { next: ORCHESTRATOR_MCP_RUNNING_TASK_NEXT } : {}),
+        ...(stopHookReplies.length === 0 ? {} : { stopHookReplies }),
         ...(result.resultRun === undefined
           ? {}
           : {

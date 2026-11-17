@@ -55,6 +55,7 @@ import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
 import * as ProviderTurnStartServiceTestkit from "./ProviderTurnStartService.testkit.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { makeSubagentConversationArtifacts } from "@t3tools/provider-core/server/subagentProjection";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationService from "./ProviderContinuationService.ts";
@@ -837,6 +838,14 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
       inlineFirst: true,
       inlineSecond: false,
     },
+    {
+      name: "Stop hook appendix",
+      first: `${"a".repeat(14_000)}\n\n## Stop hook follow-up\n\n${"b".repeat(3_000)}`,
+      reportLength: 14_000,
+      second: "small result",
+      inlineFirst: false,
+      inlineSecond: true,
+    },
   ])("uses task_status for $name beyond the inline budget", (testCase) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -862,16 +871,28 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
       const task = parent.subagents[0]!;
       yield* sink.write({
         events: [
-          { id: firstTaskId, result: testCase.first, status: "failed" as const },
+          {
+            id: firstTaskId,
+            result: testCase.first,
+            status: "failed" as const,
+            resultReportLength: testCase.reportLength,
+          },
           { id: secondTaskId, result: testCase.second, status: "cancelled" as const },
-        ].map(({ id, result, status }) => ({
+        ].map(({ id, result, status, resultReportLength }) => ({
           id: EventId.make(`event:inline-budget:${id}`),
           type: "subagent.updated" as const,
           threadId,
           runId,
           nodeId: id,
           occurredAt: now,
-          payload: { ...task, id, result, status, title: "Inspect regression" },
+          payload: {
+            ...task,
+            id,
+            result,
+            status,
+            title: "Inspect regression",
+            ...(resultReportLength === undefined ? {} : { resultReportLength }),
+          },
         })),
       });
       yield* orchestrator.dispatch({
@@ -900,6 +921,10 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
         `Delegated task ${deferredTaskId} (Inspect regression) [${testCase.inlineFirst ? "cancelled" : "failed"}]`,
       );
       assert.include(message.text, `Use task_status with taskId ${deferredTaskId}`);
+      if (testCase.reportLength !== undefined) {
+        assert.include(message.text, testCase.first.slice(0, testCase.reportLength));
+        assert.notInclude(message.text, "## Stop hook follow-up");
+      }
       assert.deepEqual(message.delegatedCompletion?.taskIds, [firstTaskId, secondTaskId]);
       assert.equal(
         projection.subagents.find((candidate) => candidate.id === deferredTaskId)?.result,
@@ -4245,6 +4270,25 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
         const providerThreadId = ProviderThreadId.make(
           `provider-thread:result-message${key}-child`,
         );
+        const childItem = (id: string, text: string, ordinal: number) => {
+          const { turnItem } = makeSubagentConversationArtifacts({
+            messageId: MessageId.make(`message:${id}`),
+            turnItemId: TurnItemId.make(`item:${id}`),
+            threadId: child.childThreadId,
+            rootNodeId,
+            providerThreadId,
+            providerTurnId: null,
+            nativeItemRef: null,
+            role: "assistant",
+            text,
+            ordinal,
+            now,
+          });
+          if (turnItem.type !== "assistant_message") throw new Error("Expected assistant item");
+          return { ...turnItem, runId: child.childRunId };
+        };
+        const report = "The layout passes on desktop.";
+        const correction = "Mobile still has a spacing regression.";
         yield* eventSink.write({
           commandId: CommandId.make(`command:result-message${key}-child-provider`),
           events: [
@@ -4292,6 +4336,23 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
               occurredAt: now,
               payload: { ...childProjection.runs[0]!, providerThreadId },
             },
+            ...[
+              childItem("report", report, 200),
+              {
+                ...childItem("hook", "", 201),
+                type: "system_notice" as const,
+                title: "Stop hook feedback",
+                message: "Stop hook feedback",
+              },
+              childItem("correction", correction, 202),
+            ].map((payload) => ({
+              id: EventId.make(`event:result-message${key}:${payload.id}`),
+              type: "turn-item.updated" as const,
+              threadId: child.childThreadId,
+              runId: child.childRunId,
+              occurredAt: now,
+              payload,
+            })),
           ],
         });
 
@@ -4299,7 +4360,7 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
         const recovered = yield* orchestrator.getThreadProjection(threadId);
         const task = recovered.subagents.find((candidate) => candidate.id === child.taskId)!;
         assert.equal(task.status, "completed");
-        assert.isNotNull(task.result);
+        assert.equal(task.result, `${report}\n\n## Stop hook follow-up\n\n${correction}`);
         assert.isEmpty(recovered.contextHandoffs);
         assert.equal(recovered.contextTransfers.length, 1);
         // A one-process-per-thread child releases its process once its result is recorded,

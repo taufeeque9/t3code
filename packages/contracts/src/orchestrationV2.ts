@@ -953,6 +953,8 @@ export const OrchestrationV2Subagent = Schema.Struct({
   progress: Schema.optional(Schema.String),
   workflow: Schema.optional(OrchestrationV2SubagentWorkflow),
   result: Schema.NullOr(Schema.String),
+  /** Offset before a Stop hook appendix, in UTF-16 units. */
+  resultReportLength: Schema.optional(NonNegativeInt),
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
   updatedAt: Schema.DateTimeUtc,
@@ -3694,6 +3696,7 @@ const OrchestrationV2InternalCommand = Schema.Union([
     status: Schema.Literals(["completed", "failed", "cancelled", "interrupted"]),
     result: Schema.String,
     executedModel: Schema.optional(Schema.String),
+    resultReportLength: Schema.optional(NonNegativeInt),
     /**
      * `ran-out`: the run there ended by itself; `stopped`: a stop from here reached it. Either
      * sets `remoteChild.stoppedThere` on a task this report completes. On a task already

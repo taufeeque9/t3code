@@ -49,6 +49,7 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import { makeSubagentConversationArtifacts } from "@t3tools/provider-core/server/subagentProjection";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
@@ -100,6 +101,7 @@ interface BoxThread {
   readonly message: Ref.Ref<string | null>;
   readonly status: Ref.Ref<OrchestrationV2Run["status"]>;
   readonly reply: Ref.Ref<string | null>;
+  readonly stopHookFollowUp: Ref.Ref<string | null>;
   readonly error: Ref.Ref<string | null>;
   readonly laterError: Ref.Ref<string | null>;
   /** A later run's reply, after the task's own, as a follow-up message would leave. */
@@ -154,6 +156,7 @@ const makeBoxThread = Effect.gen(function* () {
     message: yield* Ref.make<string | null>(null),
     status: yield* Ref.make<OrchestrationV2Run["status"]>("running"),
     reply: yield* Ref.make<string | null>("Working…"),
+    stopHookFollowUp: yield* Ref.make<string | null>(null),
     error: yield* Ref.make<string | null>(null),
     laterError: yield* Ref.make<string | null>(null),
     laterReply: yield* Ref.make<string | null>(null),
@@ -255,11 +258,44 @@ const boxToolkitLayer = (thread: BoxThread) => {
       const status = yield* Ref.get(thread.status);
       const runless = yield* Ref.get(thread.runless);
       const model = yield* Ref.get(thread.executedModel);
+      const followUp = yield* Ref.get(thread.stopHookFollowUp);
+      const report = yield* Ref.get(thread.reply);
+      const item = (id: string, text: string, ordinal: number) => {
+        const { turnItem } = makeSubagentConversationArtifacts({
+          messageId: MessageId.make(`message:${id}`),
+          turnItemId: TurnItemId.make(id),
+          threadId,
+          rootNodeId: NodeId.make("node:box"),
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          role: "assistant",
+          text,
+          ordinal,
+          now: DateTime.makeUnsafe(0),
+        });
+        if (turnItem.type !== "assistant_message") throw new Error("Expected assistant item");
+        return { ...turnItem, runId };
+      };
+      const turnItems =
+        report === null || followUp === null
+          ? []
+          : [
+              item("item:reply", report, 1),
+              {
+                ...item("item:stop-hook", "", 2),
+                type: "system_notice" as const,
+                title: "Stop hook feedback",
+                message: "Stop hook feedback",
+              },
+              item("item:stop-hook-follow-up", followUp, 3),
+            ];
       return shell === null
         ? (null as never)
         : {
             ...idleThreadProjection(shell),
             runs: runless ? [] : [runOf(status)],
+            turnItems,
             providerTurns: (model === null
               ? []
               : [{ runAttemptId: "attempt:box", ordinal: 1, model }]) as never,
@@ -364,6 +400,7 @@ const boxToolkitLayer = (thread: BoxThread) => {
           yield* Deferred.await(thread.releaseRead);
         }
         const reply = yield* Ref.get(thread.reply);
+        const stopHookFollowUp = yield* Ref.get(thread.stopHookFollowUp);
         const later = yield* Ref.get(thread.laterReply);
         const queued = yield* Ref.get(thread.queuedReply);
         const error = yield* Ref.get(thread.error);
@@ -378,6 +415,16 @@ const boxToolkitLayer = (thread: BoxThread) => {
                   id: TurnItemId.make("item:reply"),
                   runId,
                   text: reply,
+                  type: "assistant_message",
+                },
+              ]),
+          ...(stopHookFollowUp === null
+            ? []
+            : [
+                {
+                  id: TurnItemId.make("item:stop-hook-follow-up"),
+                  runId,
+                  text: stopHookFollowUp,
                   type: "assistant_message",
                 },
               ]),
@@ -1403,7 +1450,7 @@ it.effect("fails the task when the box revokes the link, and cancel interrupts i
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
-it.effect("a task's result is its own run's whole last reply, not a later run's", () =>
+it.effect.each([false, true])("keeps a remote report whole (Stop hook: %s)", (withStopHook) =>
   Effect.scoped(
     Effect.gen(function* () {
       const thread = yield* makeBoxThread;
@@ -1432,19 +1479,22 @@ it.effect("a task's result is its own run's whole last reply, not a later run's"
       // A reply longer than one read, then a later run's reply on the same thread.
       const long = "x".repeat(45_000);
       yield* Ref.set(thread.reply, long);
+      const followUp = "The mobile layout still shifts.";
+      if (withStopHook) yield* Ref.set(thread.stopHookFollowUp, followUp);
       yield* Ref.set(thread.laterReply, "Someone else asked a follow-up.");
       yield* Ref.set(thread.executedModel, "gpt-5.4-mini");
       yield* Ref.set(thread.status, "completed");
       yield* Deferred.succeed(thread.finished, undefined);
       const task = yield* taskResult(a, taskId);
       expect(task?.status).toBe("completed");
-      expect(task?.result).toBe(
-        `Requested model gpt-5.4; the provider reported running gpt-5.4-mini.\n\n${long}`,
-      );
+      const report = `Requested model gpt-5.4; the provider reported running gpt-5.4-mini.\n\n${long}`;
+      const summary = withStopHook ? `${report}\n\n## Stop hook follow-up\n\n${followUp}` : report;
+      expect(task?.result).toBe(summary);
       const status = yield* a.call("task_status", { taskId });
       expect(status.structuredContent).toMatchObject({
         status: "completed",
         executedModel: "gpt-5.4-mini",
+        summary,
       });
       // Every wait was for the run the launch started.
       const waits = yield* Ref.get(thread.waitedFor);
