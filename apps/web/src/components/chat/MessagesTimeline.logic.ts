@@ -792,7 +792,7 @@ function isSelfCheckMessage(entry: TimelineEntry): boolean {
 function isStopHookBoundary(entry: TimelineEntry): boolean {
   return (
     entry.kind === "work" &&
-    entry.entry.sourceActivityKind === "runtime.warning" &&
+    entry.entry.itemType === "system_notice" &&
     /^Stop hook\b/iu.test(entry.entry.label.trim())
   );
 }

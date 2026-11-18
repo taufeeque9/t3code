@@ -1399,7 +1399,6 @@ describe("deriveMessagesTimelineRows", () => {
           label: "Stop hook feedback",
           tone: "info" as const,
           itemType: "system_notice" as const,
-          sourceActivityKind: "runtime.warning" as const,
         },
       },
       {
