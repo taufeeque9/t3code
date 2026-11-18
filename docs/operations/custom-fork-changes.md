@@ -300,17 +300,22 @@ while the clients still use the Stop hook notice for folding.
 
 The selector chooses the last provider turn with a reply before comparing item
 ordinals, which can overlap across turns. In that turn, it uses item start times
-from the child host to compare accepted steers with provider output. The report
+from the child host to compare accepted steers with provider output and breaks
+ties using projection insertion order. The report
 is the final response before the first Stop hook. A new hook or goal evaluator
 boundary closes the current round. Claude joins text blocks by native response
-ID and records the last tool ordinal on each round so tool progress cannot
-stand in for an answer.
+ID and records tool-use response IDs alongside the last tool ordinal. A snapshot
+with a tool-use stop reason can include progress text after the tool item.
 
 **Stop hook follow-up** lists retained rounds newest first. A short **Hook asked**
 line precedes each answer when the provider supplied a question. Questions and
 answers share a 4 KiB UTF-8 limit, with an omission note when needed. A failed or
 interrupted run keeps its effective outcome and includes the report as partial
 work, plus any completed hook answer.
+
+**Open item:** When the actual question follows more than 240 UTF-8 bytes of
+setup, **Hook asked** can show only the setup. Preserve an identifiable question
+or provide a way to read the full prompt when the excerpt is cut.
 
 One labelled string serves the parent notification and the existing `summary`
 and `latestTerminalSummary` fields. Separate result fields would require every

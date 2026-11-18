@@ -1595,6 +1595,7 @@ const ProviderContinuation = Schema.Union([
     kind: Schema.Literal("stop_hook"),
     question: Schema.optional(Schema.String),
     lastToolOrdinal: Schema.optional(NonNegativeInt),
+    toolResponseIds: Schema.optional(Schema.Array(Schema.String)),
   }),
   Schema.Struct({ kind: Schema.Literal("goal_evaluator") }),
 ]);

@@ -536,10 +536,10 @@ it("orders a task's assistant messages by turn item, not by timestamps", () => {
       {
         ...withHooks,
         turnItems: [
+          steer,
           ...withHooks.turnItems.map((item) =>
             item.ordinal >= 4 ? { ...item, startedAt: steer.startedAt } : item,
           ),
-          steer,
         ],
       },
       run,
@@ -547,6 +547,28 @@ it("orders a task's assistant messages by turn item, not by timestamps", () => {
     `${firstCheck.message.text}\n\n## Stop hook follow-up\n\n${secondCheck.message.text}`,
   );
   const beforeReport = DateTime.makeUnsafe("2026-07-24T10:04:59.000Z");
+  const tiedSteer = { ...steer, ordinal: 3, startedAt: at };
+  const revised = message("revised", "The revised report fixes the layout.", 3);
+  const revisedCheck = message("revised-check", "The narrow-screen replay passed.", 5);
+  const afterSteer = (item: typeof revised.turnItem) => ({ ...item, startedAt: steer.startedAt });
+  const tiedResult = subagentResultForRun(
+    {
+      ...projection,
+      turnItems: [
+        report.turnItem,
+        hook(2),
+        tiedSteer,
+        afterSteer(revised.turnItem),
+        { ...hook(4), startedAt: steer.startedAt },
+        afterSteer(revisedCheck.turnItem),
+      ],
+    },
+    run,
+  );
+  assert.equal(
+    tiedResult.text,
+    `${revised.message.text}\n\n## Stop hook follow-up\n\n${revisedCheck.message.text}`,
+  );
   const interrupted = { ...run, status: "interrupted" as const };
   const unread = subagentResultForRun(
     { ...withHooks, turnItems: [...withHooks.turnItems, { ...steer, status: "cancelled" }] },

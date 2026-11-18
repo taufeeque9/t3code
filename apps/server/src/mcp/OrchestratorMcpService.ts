@@ -94,9 +94,9 @@ import * as Stream from "effect/Stream";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import {
   subagentResultForRun,
-  SUBAGENT_RESULT_ITEM_TYPES,
+  SUBAGENT_RESULT_ITEMS,
   delegatedTaskProgress,
-  stopHookResultForRun,
+  delegatedWaitResultFields,
 } from "@t3tools/provider-core/server/subagentProjection";
 import {
   DispatchModeLimit,
@@ -1820,7 +1820,7 @@ const make = Effect.gen(function* () {
         messageRoles: ["assistant"],
         messageRunIds: resultRunIds,
         turnItemRunIds: resultRunIds,
-        turnItemTypes: SUBAGENT_RESULT_ITEM_TYPES,
+        ...SUBAGENT_RESULT_ITEMS,
       })
       .pipe(Effect.mapError(threadManagementFailure));
     const childProjection = {
@@ -3446,7 +3446,7 @@ const make = Effect.gen(function* () {
               messageRoles: ["assistant"],
               messageRunIds: resultRunIds,
               turnItemRunIds: resultRunIds,
-              turnItemTypes: SUBAGENT_RESULT_ITEM_TYPES,
+              ...SUBAGENT_RESULT_ITEMS,
             })
             .pipe(Effect.mapError(threadManagementFailure));
           if (
@@ -3586,49 +3586,21 @@ const make = Effect.gen(function* () {
           : yield* threadManagement
               .getThreadRecords(input.threadId, ["turnItems", "providerTurns"], {
                 turnItemRunIds: [...terminalRuns.keys()],
-                turnItemTypes: SUBAGENT_RESULT_ITEM_TYPES,
+                ...SUBAGENT_RESULT_ITEMS,
                 providerTurnAttemptIds: [...terminalRuns.values()].flatMap((run) =>
                   run.activeAttemptId == null ? [] : [run.activeAttemptId],
                 ),
               })
               .pipe(Effect.mapError(threadManagementFailure));
-      const stopHookReplies: NonNullable<
-        OrchestratorMcpThreadWaitResult["stopHookReplies"]
-      >[number][] = [];
-      const delegatedResultParts: NonNullable<
-        OrchestratorMcpThreadWaitResult["delegatedResultParts"]
-      >[number][] = [];
-      if (resultParts !== undefined) {
-        for (const run of terminalRuns.values()) {
-          const reply = stopHookResultForRun(resultParts.turnItems, run, resultParts.providerTurns);
-          if (reply === undefined) continue;
-          const result = {
-            runId: run.id,
-            reportItemId: reply.report.id,
-            followUp: reply.followUp,
-          };
-          // Older peers treat this field as one successful report followed by an appendix.
-          if (run.status === "completed" && reply.reportItems.length === 1 && reply.followUp) {
-            stopHookReplies.push(result);
-          } else {
-            delegatedResultParts.push({
-              ...result,
-              ...(reply.reportItems.length === 1
-                ? {}
-                : { reportItemIds: reply.reportItems.map((item) => item.id) }),
-              ...(reply.failure === undefined ? {} : { failureItemId: reply.failure.id }),
-            });
-          }
-        }
-      }
       return {
         threadId: input.threadId,
         runId: result.run?.id ?? null,
         status,
         timedOut: result.timedOut,
         ...(wakesCaller ? { next: ORCHESTRATOR_MCP_RUNNING_TASK_NEXT } : {}),
-        ...(stopHookReplies.length === 0 ? {} : { stopHookReplies }),
-        ...(delegatedResultParts.length === 0 ? {} : { delegatedResultParts }),
+        ...(resultParts === undefined
+          ? {}
+          : delegatedWaitResultFields(terminalRuns.values(), resultParts)),
         ...(result.resultRun === undefined
           ? {}
           : {

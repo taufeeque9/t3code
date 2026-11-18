@@ -192,8 +192,8 @@ import {
   endRunlessRootTurns,
   makeSubagentChildThread,
   subagentResultForRun,
-  SUBAGENT_RESULT_ITEM_TYPES,
-  utf8Prefix,
+  SUBAGENT_RESULT_ITEMS,
+  delegatedCompletionWakeDetail,
   delegatedTaskProgress,
   subagentThreadTitle,
 } from "@t3tools/provider-core/server/subagentProjection";
@@ -919,64 +919,6 @@ function legacyPullRequestLink(
     },
     existing?.watch,
   );
-}
-
-const DELEGATED_RESULT_INLINE_BYTES = 16_000;
-
-function delegatedCompletionWakeDetail(
-  taskIds: ReadonlyArray<string>,
-  tasks: ReadonlyArray<OrchestrationV2Subagent>,
-): string {
-  const entries = taskIds.map((taskId) => {
-    const task = tasks.find((candidate) => candidate.id === taskId);
-    const label = `Delegated task ${taskId}${task?.title == null ? "" : ` (${task.title})`}${task === undefined ? " reached a terminal state" : ` [${task.status}]`}`;
-    const pointer = `Use task_status with taskId ${taskId} to read the result.`;
-    const fallback = `${label}. ${pointer}`;
-    const heading = `${label}:\n`;
-    const full = task?.result == null ? undefined : heading + task.result;
-    const fullBytes = full === undefined ? Infinity : Buffer.byteLength(full);
-    const bytes = Math.min(fullBytes, Buffer.byteLength(fallback));
-    return { task, heading, pointer, fallback, full, fullBytes, bytes };
-  });
-  const separator = "\n\n";
-  const cut = "\n… Report truncated.";
-  let remaining = DELEGATED_RESULT_INLINE_BYTES;
-  let reserved =
-    entries.reduce((bytes, entry) => bytes + entry.bytes, 0) + 2 * Math.max(0, entries.length - 1);
-  if (reserved > remaining) {
-    const suffix = "\n… Use task_status to read remaining results.";
-    return (
-      utf8Prefix(
-        entries.map((entry) => entry.fallback).join(separator),
-        remaining - Buffer.byteLength(suffix),
-      ) + suffix
-    );
-  }
-  return entries
-    .map(({ task, heading, pointer, fallback, full, fullBytes, bytes }, index) => {
-      if (index > 0) {
-        remaining -= 2;
-        reserved -= 2;
-      }
-      reserved -= bytes;
-      const available = remaining - reserved;
-      let detail = fallback;
-      if (full !== undefined && fullBytes <= available) {
-        detail = full;
-      } else if (task?.result != null && task.resultReportLength !== undefined) {
-        const report = task.result.slice(0, task.resultReportLength);
-        const tail = `${separator}${pointer}`;
-        const room = available - Buffer.byteLength(heading + tail);
-        if (Buffer.byteLength(report) <= room) detail = heading + report + tail;
-        else if (room > Buffer.byteLength(cut)) {
-          const prefix = utf8Prefix(report, room - Buffer.byteLength(cut));
-          if (prefix) detail = heading + prefix + cut + tail;
-        }
-      }
-      remaining -= Buffer.byteLength(detail);
-      return detail;
-    })
-    .join(separator);
 }
 
 function isTerminalDelegatedTaskStatus(status: OrchestrationV2Subagent["status"]): boolean {
@@ -14466,7 +14408,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           messageRoles: ["assistant"],
           messageRunIds: [childRun.id],
           turnItemRunId: childRun.id,
-          turnItemTypes: SUBAGENT_RESULT_ITEM_TYPES,
+          ...SUBAGENT_RESULT_ITEMS,
         },
       );
       const childProjection = {

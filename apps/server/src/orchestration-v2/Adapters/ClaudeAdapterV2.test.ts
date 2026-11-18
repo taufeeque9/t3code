@@ -24335,6 +24335,93 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
     );
 
+    it.effect("keeps snapshot tool progress out of a failed Stop hook reply", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const report = "The desktop layout passes.";
+        const failure = "Tool result unavailable";
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("stop-hook-tool-failure"),
+            text: "Check the layout",
+            attachments: [],
+          }),
+        );
+        for (const frame of [
+          makeAssistantTextFrame({ uuid: "report-before-tool", text: report }),
+          claudeSdkFrame({
+            type: "user",
+            isSynthetic: true,
+            uuid: "check-before-tool",
+            session_id: WAKE_NATIVE_SESSION,
+            parent_tool_use_id: null,
+            message: {
+              role: "user",
+              content: [{ type: "text", text: "Stop hook feedback:\nCheck mobile too." }],
+            },
+          }),
+          claudeSdkFrame({
+            type: "assistant",
+            uuid: "progress-with-tool",
+            session_id: WAKE_NATIVE_SESSION,
+            parent_tool_use_id: null,
+            message: {
+              id: "progress-response",
+              model: "claude-sonnet-4-6",
+              stop_reason: "tool_use",
+              content: [
+                { type: "text", text: "Looking up the test result." },
+                {
+                  type: "tool_use",
+                  id: "failed-hook-read",
+                  name: "Read",
+                  input: { file_path: "/workspace/test.log" },
+                },
+              ],
+            },
+          }),
+          makeResultFrame({
+            uuid: "failed-hook-result",
+            result: "",
+            subtype: "error_during_execution",
+            isError: true,
+            errors: [failure],
+          }),
+        ])
+          yield* Queue.offer(harness.sdkMessages, frame);
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(terminal.status, "failed");
+        assert.include(terminal.failure?.message, failure);
+        const items = [
+          ...new Map(
+            harness.events.flatMap((event) =>
+              event.type === "turn_item.updated"
+                ? [[event.turnItem.id, event.turnItem] as const]
+                : [],
+            ),
+          ).values(),
+        ];
+        const runId = items.find((item) => item.type === "system_notice")?.runId;
+        const reply =
+          runId == null ? undefined : stopHookResultForRun(items, { id: runId, status: "failed" });
+        assert.equal(reply?.report.text, report);
+        assert.equal(reply?.followUp, "");
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeCrypto.layer,
+            NodeServices.layer,
+          ),
+        ),
+      ),
+    );
+
     it.effect("does not mark a goal's evaluator check as Stop hook feedback", () =>
       Effect.gen(function* () {
         const harness = yield* makeWakeHarness;

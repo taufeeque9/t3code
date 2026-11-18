@@ -5013,6 +5013,7 @@ interface ActiveClaudeTurnContext {
   stopHook?: {
     readonly notice: Extract<OrchestrationV2TurnItem, { type: "system_notice" }>;
     lastToolOrdinal?: number;
+    toolResponseIds?: Set<string>;
   };
   readonly assistant: {
     fallbackText: string;
@@ -9225,14 +9226,23 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         ) {
           const hook = context.stopHook;
           delete context.stopHook;
-          if (hook?.lastToolOrdinal === undefined || hook.notice.continuation?.kind !== "stop_hook")
+          if (
+            hook?.notice.continuation?.kind !== "stop_hook" ||
+            (hook.lastToolOrdinal === undefined && hook.toolResponseIds === undefined)
+          )
             return;
           yield* emitProviderEvent({
             type: "turn_item.updated",
             driver: CLAUDE_PROVIDER,
             turnItem: {
               ...hook.notice,
-              continuation: { ...hook.notice.continuation, lastToolOrdinal: hook.lastToolOrdinal },
+              continuation: {
+                ...hook.notice.continuation,
+                lastToolOrdinal: hook.lastToolOrdinal,
+                ...(hook.toolResponseIds === undefined
+                  ? {}
+                  : { toolResponseIds: [...hook.toolResponseIds] }),
+              },
               updatedAt: yield* DateTime.now,
             },
           });
@@ -11545,6 +11555,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
           }
 
+          if (
+            context.stopHook !== undefined &&
+            message.type === "assistant" &&
+            message.parent_tool_use_id === null &&
+            message.message.stop_reason === "tool_use"
+          ) {
+            (context.stopHook.toolResponseIds ??= new Set()).add(message.message.id);
+          }
           const toolPresentations = claudeToolPresentationsFromAssistantMessage(message);
           for (const toolUse of claudeToolUseBlocksFromAssistantMessage(message)) {
             const nativeToolInput = claudeNativeToolInputFromUnknown(toolUse.input);

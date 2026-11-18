@@ -11,6 +11,8 @@ import type {
   OrchestrationV2ProviderRef,
   OrchestrationV2ProviderTurn,
   OrchestrationV2Run,
+  OrchestrationV2Subagent,
+  OrchestratorMcpThreadWaitResult,
   OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
   ProviderInstanceId,
@@ -191,19 +193,17 @@ export function withExecutedModelNote(
 }
 
 export const STOP_HOOK_FEEDBACK_NOTICE = "Stop hook feedback";
-export const SUBAGENT_RESULT_ITEM_TYPES = [
-  "assistant_message",
-  "error",
-  "system_notice",
-  "user_message",
-] as const;
+export const SUBAGENT_RESULT_ITEMS = {
+  turnItemTypes: ["assistant_message", "error", "system_notice", "user_message"],
+  turnItemOrder: "insertion",
+} as const;
 const STOP_HOOK_FOLLOW_UP_SEPARATOR = "\n\n## Stop hook follow-up\n\n";
 const STOP_HOOK_FOLLOW_UP_BYTES = 4_096;
 const OMITTED_HOOK_TEXT = "[More Stop hook follow-up in the child thread.]";
 
 type AssistantTurnItem = Extract<OrchestrationV2TurnItem, { type: "assistant_message" }>;
 
-export function utf8Prefix(text: string, bytes: number): string {
+function utf8Prefix(text: string, bytes: number): string {
   return new TextDecoder("utf-8", { ignoreBOM: true }).decode(
     Buffer.from(text.slice(0, bytes + 1)).subarray(0, bytes),
     { stream: true },
@@ -281,22 +281,33 @@ export function stopHookResultForRun(
     return undefined;
   const lastAssistant = lastAssistantItem(items, run, providerTurns);
   if (lastAssistant === undefined) return undefined;
-  const turnItems = items
-    .filter((item) => item.runId === run.id && item.providerTurnId === lastAssistant.providerTurnId)
-    .sort((a, b) => a.ordinal - b.ordinal);
+  const turnItems = items.filter(
+    (item) => item.runId === run.id && item.providerTurnId === lastAssistant.providerTurnId,
+  );
   const occurredAt = (item: OrchestrationV2TurnItem) =>
     DateTime.toEpochMillis(item.startedAt ?? item.updatedAt);
-  // Server steering ordinals and provider ordinals have independent counters.
   let lastSteerAt = -Infinity;
-  for (const item of turnItems) {
+  let lastSteerIndex = -1;
+  for (const [index, item] of turnItems.entries()) {
     if (
       item.type === "user_message" &&
       item.status === "completed" &&
       (item.inputIntent === "steer" || item.inputIntent === "promoted_queued_to_steer")
     ) {
-      lastSteerAt = Math.max(lastSteerAt, occurredAt(item));
+      const at = occurredAt(item);
+      if (at >= lastSteerAt) {
+        lastSteerAt = at;
+        lastSteerIndex = index;
+      }
     }
   }
+  // Provider and server ordinals are independent. On a tie the projection's insert order wins.
+  const ordered = turnItems
+    .filter((item, index) => {
+      const at = occurredAt(item);
+      return at > lastSteerAt || (at === lastSteerAt && index > lastSteerIndex);
+    })
+    .sort((a, b) => a.ordinal - b.ordinal);
   let report: AssistantTurnItem[] = [];
   let reply: AssistantTurnItem[] = [];
   let round:
@@ -304,6 +315,7 @@ export function stopHookResultForRun(
         readonly itemId: TurnItemId;
         readonly question?: string | undefined;
         readonly lastToolOrdinal?: number | undefined;
+        readonly toolResponseIds?: ReadonlyArray<string> | undefined;
       }
     | undefined;
   let sawHook = false;
@@ -312,8 +324,7 @@ export function stopHookResultForRun(
     readonly question?: string | undefined;
     readonly reply: AssistantTurnItem[];
   }> = [];
-  for (const item of turnItems) {
-    if (occurredAt(item) < lastSteerAt) continue;
+  for (const item of ordered) {
     const boundary = continuationOf(item);
     if (boundary !== undefined) {
       if (round !== undefined && reply.length > 0) answers.push({ ...round, reply });
@@ -328,7 +339,11 @@ export function stopHookResultForRun(
       item.phase !== "commentary" &&
       item.status === "completed" &&
       item.text.trim() &&
-      (!sawHook || (round !== undefined && item.ordinal > (round.lastToolOrdinal ?? -1)))
+      (!sawHook ||
+        (round !== undefined &&
+          item.ordinal > (round.lastToolOrdinal ?? -1) &&
+          (item.nativeResponseId === undefined ||
+            !round.toolResponseIds?.includes(item.nativeResponseId))))
     ) {
       const current = sawHook ? reply : report;
       if (
@@ -391,6 +406,100 @@ export function stopHookResultForRun(
     followUp: sections.join("\n\n"),
     answerItemIds,
     failure,
+  };
+}
+
+const DELEGATED_RESULT_INLINE_BYTES = 16_000;
+
+export function delegatedCompletionWakeDetail(
+  taskIds: ReadonlyArray<string>,
+  tasks: ReadonlyArray<OrchestrationV2Subagent>,
+): string {
+  const entries = taskIds.map((taskId) => {
+    const task = tasks.find((candidate) => candidate.id === taskId);
+    const label = `Delegated task ${taskId}${task?.title == null ? "" : ` (${task.title})`}${task === undefined ? " reached a terminal state" : ` [${task.status}]`}`;
+    const pointer = `Use task_status with taskId ${taskId} to read the result.`;
+    const fallback = `${label}. ${pointer}`;
+    const heading = `${label}:\n`;
+    const full = task?.result == null ? undefined : heading + task.result;
+    const fullBytes = full === undefined ? Infinity : Buffer.byteLength(full);
+    const bytes = Math.min(fullBytes, Buffer.byteLength(fallback));
+    return { task, heading, pointer, fallback, full, fullBytes, bytes };
+  });
+  const separator = "\n\n";
+  const cut = "\n… Report truncated.";
+  let remaining = DELEGATED_RESULT_INLINE_BYTES;
+  let reserved =
+    entries.reduce((bytes, entry) => bytes + entry.bytes, 0) + 2 * Math.max(0, entries.length - 1);
+  if (reserved > remaining) {
+    const suffix = "\n… Use task_status to read remaining results.";
+    return (
+      utf8Prefix(
+        entries.map((entry) => entry.fallback).join(separator),
+        remaining - Buffer.byteLength(suffix),
+      ) + suffix
+    );
+  }
+  return entries
+    .map(({ task, heading, pointer, fallback, full, fullBytes, bytes }, index) => {
+      if (index > 0) {
+        remaining -= 2;
+        reserved -= 2;
+      }
+      reserved -= bytes;
+      const available = remaining - reserved;
+      let detail = fallback;
+      if (full !== undefined && fullBytes <= available) {
+        detail = full;
+      } else if (task?.result != null && task.resultReportLength !== undefined) {
+        const report = task.result.slice(0, task.resultReportLength);
+        const tail = `${separator}${pointer}`;
+        const room = available - Buffer.byteLength(heading + tail);
+        if (Buffer.byteLength(report) <= room) detail = heading + report + tail;
+        else if (room > Buffer.byteLength(cut)) {
+          const prefix = utf8Prefix(report, room - Buffer.byteLength(cut));
+          if (prefix) detail = heading + prefix + cut + tail;
+        }
+      }
+      remaining -= Buffer.byteLength(detail);
+      return detail;
+    })
+    .join(separator);
+}
+
+export function delegatedWaitResultFields(
+  runs: Iterable<ResultRun>,
+  resultParts: Pick<OrchestrationV2ThreadProjection, "turnItems" | "providerTurns">,
+): Pick<OrchestratorMcpThreadWaitResult, "stopHookReplies" | "delegatedResultParts"> {
+  const stopHookReplies: NonNullable<OrchestratorMcpThreadWaitResult["stopHookReplies"]>[number][] =
+    [];
+  const delegatedResultParts: NonNullable<
+    OrchestratorMcpThreadWaitResult["delegatedResultParts"]
+  >[number][] = [];
+  for (const run of runs) {
+    const reply = stopHookResultForRun(resultParts.turnItems, run, resultParts.providerTurns);
+    if (reply === undefined) continue;
+    const result = {
+      runId: run.id,
+      reportItemId: reply.report.id,
+      followUp: reply.followUp,
+    };
+    // Older peers treat this field as one successful report followed by an appendix.
+    if (run.status === "completed" && reply.reportItems.length === 1 && reply.followUp) {
+      stopHookReplies.push(result);
+    } else {
+      delegatedResultParts.push({
+        ...result,
+        ...(reply.reportItems.length === 1
+          ? {}
+          : { reportItemIds: reply.reportItems.map((item) => item.id) }),
+        ...(reply.failure === undefined ? {} : { failureItemId: reply.failure.id }),
+      });
+    }
+  }
+  return {
+    ...(stopHookReplies.length === 0 ? {} : { stopHookReplies }),
+    ...(delegatedResultParts.length === 0 ? {} : { delegatedResultParts }),
   };
 }
 
