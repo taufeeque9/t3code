@@ -547,6 +547,13 @@ it("orders a task's assistant messages by turn item, not by timestamps", () => {
     `${firstCheck.message.text}\n\n## Stop hook follow-up\n\n${secondCheck.message.text}`,
   );
   const beforeReport = DateTime.makeUnsafe("2026-07-24T10:04:59.000Z");
+  const interrupted = { ...run, status: "interrupted" as const };
+  const unread = subagentResultForRun(
+    { ...withHooks, turnItems: [...withHooks.turnItems, { ...steer, status: "cancelled" }] },
+    interrupted,
+  );
+  assert.include(unread.text, report.message.text);
+  assert.include(unread.text, secondCheck.message.text);
   const rapidSteers = [2, 3].map((ordinal) => ({
     ...steer,
     id: TurnItemId.make(`steer-${ordinal}`),
@@ -578,6 +585,72 @@ it("orders a task's assistant messages by turn item, not by timestamps", () => {
       run,
     ).text,
     nextTurn.message.text,
+  );
+  const firstTurnId = ProviderTurnId.make("long-turn");
+  const laterTurnId = ProviderTurnId.make("later-turn");
+  const laterCheck = message("later-check", "Verified the fix.", 10);
+  const providerTurn = (id: ProviderTurnId, ordinal: number) => ({
+    id,
+    ordinal,
+    runAttemptId: run.activeAttemptId,
+    nodeId: NodeId.make("root"),
+    providerThreadId: ProviderThreadId.make("provider-thread:overlap"),
+    nativeTurnRef: null,
+    status: "completed" as const,
+    startedAt: at,
+    completedAt: at,
+  });
+  const overlap = [
+    ...withHooks.turnItems.map((item) => ({
+      ...item,
+      providerTurnId: firstTurnId,
+      ordinal: item.ordinal + 100,
+    })),
+    ...[nextTurn.turnItem, hook(9), laterCheck.turnItem].map((item) => ({
+      ...item,
+      providerTurnId: laterTurnId,
+    })),
+  ];
+  assert.include(
+    subagentResultForRun(
+      {
+        ...withHooks,
+        turnItems: overlap,
+        providerTurns: [providerTurn(firstTurnId, 1), providerTurn(laterTurnId, 2)],
+      },
+      run,
+    ).text,
+    nextTurn.message.text,
+  );
+  const { continuation: _typedBoundary, ...legacy } = hook(3);
+  assert.include(
+    subagentResultForRun(
+      { ...withHooks, turnItems: [report.turnItem, legacy, firstCheck.turnItem] },
+      run,
+    ).text,
+    report.message.text,
+  );
+  const unanswered = {
+    ...hook(3),
+    continuation: { kind: "stop_hook" as const, lastToolOrdinal: 5 },
+  };
+  assert.notInclude(
+    subagentResultForRun(
+      { ...withHooks, turnItems: [report.turnItem, unanswered, firstCheck.turnItem] },
+      interrupted,
+    ).text,
+    firstCheck.message.text,
+  );
+  const question = {
+    ...hook(3),
+    continuation: { kind: "stop_hook" as const, question: "Was mobile checked?" },
+  };
+  assert.include(
+    subagentResultForRun(
+      { ...withHooks, turnItems: [report.turnItem, question, firstCheck.turnItem] },
+      run,
+    ).resultItemIds ?? [],
+    question.id,
   );
   const longReport = message("long-report", "大".repeat(6_000), 2);
   const longCheck = message("long-check", "🔎".repeat(6_000), 6);

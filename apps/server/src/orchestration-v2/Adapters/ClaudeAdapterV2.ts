@@ -5010,6 +5010,10 @@ interface ActiveClaudeTurnContext {
   readonly providerTurnOrdinal: number;
   readonly startedAt: DateTime.Utc;
   readonly itemOrdinals: Map<string, number>;
+  stopHook?: {
+    readonly notice: Extract<OrchestrationV2TurnItem, { type: "system_notice" }>;
+    lastToolOrdinal?: number;
+  };
   readonly assistant: {
     fallbackText: string;
     fallbackNativeItemId: string;
@@ -8499,7 +8503,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           if (subagent !== undefined) {
             return yield* startSubagentToolCall(subagentProjectionTarget(subagent), call);
           }
-          return yield* startToolCall({
+          const started = yield* startToolCall({
             ...call,
             context: input.context,
             threadId: input.context.input.threadId,
@@ -8508,6 +8512,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ordinal: yield* resolveItemOrdinal(input.context, input.nativeItemId),
             registry: input.context.toolCalls,
           });
+          if (input.parentToolUseId === null && input.context.stopHook !== undefined)
+            input.context.stopHook.lastToolOrdinal = started.ordinal;
+          return started;
         });
 
         const startToolCall = Effect.fnUntraced(function* (input: {
@@ -9213,6 +9220,24 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
         });
 
+        const closeStopHook = Effect.fn("ClaudeAdapterV2.closeStopHook")(function* (
+          context: ActiveClaudeTurnContext,
+        ) {
+          const hook = context.stopHook;
+          delete context.stopHook;
+          if (hook?.lastToolOrdinal === undefined || hook.notice.continuation?.kind !== "stop_hook")
+            return;
+          yield* emitProviderEvent({
+            type: "turn_item.updated",
+            driver: CLAUDE_PROVIDER,
+            turnItem: {
+              ...hook.notice,
+              continuation: { ...hook.notice.continuation, lastToolOrdinal: hook.lastToolOrdinal },
+              updatedAt: yield* DateTime.now,
+            },
+          });
+        });
+
         const finalizeActiveTurn = Effect.fnUntraced(function* (requested: {
           readonly context: ActiveClaudeTurnContext;
           readonly status: Extract<
@@ -9237,6 +9262,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           } else {
             yield* cutOffStreamedText(input.context);
           }
+          yield* closeStopHook(input.context);
           // A turn that completes has taken in every steer; one that stops drops them unread.
           const droppedSteers = [...input.context.pendingSteers];
           input.context.pendingSteers.clear();
@@ -10644,7 +10670,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             message,
             goalsByNativeThread.get(liveQuery.nativeThreadId) ?? null,
           );
-          if (message.type === "user" && continuation !== undefined) {
+          if (
+            message.type === "user" &&
+            continuation !== undefined &&
+            (continuation.kind === "stop_hook" || context.stopHook !== undefined)
+          ) {
+            yield* closeStopHook(context);
             const title =
               continuation.kind === "stop_hook"
                 ? STOP_HOOK_FEEDBACK_NOTICE
@@ -10652,35 +10683,38 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const now = yield* DateTime.now;
             const nativeItemId =
               message.uuid ?? `stop-hook:${context.providerTurnId}:${context.itemOrdinals.size}`;
+            const notice = {
+              id: idAllocator.derive.turnItemFromProviderItem({
+                driver: CLAUDE_PROVIDER,
+                nativeItemId,
+              }),
+              threadId: context.input.threadId,
+              runId: context.input.runId,
+              nodeId: context.input.rootNodeId,
+              providerThreadId: context.input.providerThread.id,
+              providerTurnId: context.providerTurnId,
+              nativeItemRef: {
+                driver: CLAUDE_PROVIDER,
+                nativeId: nativeItemId,
+                strength: message.uuid === undefined ? "weak" : "strong",
+              },
+              parentItemId: null,
+              ordinal: yield* resolveItemOrdinal(context, nativeItemId),
+              type: "system_notice",
+              status: "completed",
+              title,
+              message: title,
+              level: "info",
+              continuation,
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+            } satisfies OrchestrationV2TurnItem;
+            if (continuation.kind === "stop_hook") context.stopHook = { notice };
             yield* emitProviderEvent({
               type: "turn_item.updated",
               driver: CLAUDE_PROVIDER,
-              turnItem: {
-                id: idAllocator.derive.turnItemFromProviderItem({
-                  driver: CLAUDE_PROVIDER,
-                  nativeItemId,
-                }),
-                threadId: context.input.threadId,
-                runId: context.input.runId,
-                nodeId: context.input.rootNodeId,
-                providerThreadId: context.input.providerThread.id,
-                providerTurnId: context.providerTurnId,
-                nativeItemRef: {
-                  driver: CLAUDE_PROVIDER,
-                  nativeId: nativeItemId,
-                  strength: message.uuid === undefined ? "weak" : "strong",
-                },
-                parentItemId: null,
-                ordinal: yield* resolveItemOrdinal(context, nativeItemId),
-                type: "system_notice",
-                status: "completed",
-                title,
-                message: title,
-                continuation,
-                startedAt: now,
-                completedAt: now,
-                updatedAt: now,
-              },
+              turnItem: notice,
             });
           }
 

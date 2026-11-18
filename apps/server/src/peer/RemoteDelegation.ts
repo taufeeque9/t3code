@@ -921,7 +921,8 @@ const make = Effect.gen(function* () {
       remote,
       resultRun.runId,
       terminalStatus(resultRun.status),
-      waited.stopHookReplies?.find((reply) => reply.runId === resultRun.runId),
+      waited.delegatedResultParts?.find((reply) => reply.runId === resultRun.runId) ??
+        waited.stopHookReplies?.find((reply) => reply.runId === resultRun.runId),
     );
     yield* complete(
       parentThreadId,

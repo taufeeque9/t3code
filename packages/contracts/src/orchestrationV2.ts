@@ -1591,7 +1591,11 @@ export type OrchestrationV2UserMessageInputIntent =
 
 /** Notices without a level predate it and are warnings. */
 const ProviderContinuation = Schema.Union([
-  Schema.Struct({ kind: Schema.Literal("stop_hook"), question: Schema.optional(Schema.String) }),
+  Schema.Struct({
+    kind: Schema.Literal("stop_hook"),
+    question: Schema.optional(Schema.String),
+    lastToolOrdinal: Schema.optional(NonNegativeInt),
+  }),
   Schema.Struct({ kind: Schema.Literal("goal_evaluator") }),
 ]);
 

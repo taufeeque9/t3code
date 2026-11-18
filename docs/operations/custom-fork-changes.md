@@ -298,12 +298,13 @@ synthetic root Stop feedback and goal evaluator feedback separately. Both adapte
 persist the boundary kind on an ordered notice. The selector consumes that kind,
 while the clients still use the Stop hook notice for folding.
 
-The result starts at the latest steering message, using item start times from
-the child host to compare server steering with provider output. Provider ordinals
-order the selected turn's responses and boundaries. The report is the final
-response before the first Stop hook. A new hook or goal evaluator boundary closes
-the current hook round. Claude text blocks with the same native response ID are
-joined so earlier reports and tool progress stay separate from the answer.
+The selector chooses the last provider turn with a reply before comparing item
+ordinals, which can overlap across turns. In that turn, it uses item start times
+from the child host to compare accepted steers with provider output. The report
+is the final response before the first Stop hook. A new hook or goal evaluator
+boundary closes the current round. Claude joins text blocks by native response
+ID and records the last tool ordinal on each round so tool progress cannot
+stand in for an answer.
 
 **Stop hook follow-up** lists retained rounds newest first. A short **Hook asked**
 line precedes each answer when the provider supplied a question. Questions and
@@ -318,14 +319,15 @@ would leave the parent to find the report. The stored report offset lets the
 wake prioritize the report within its 16,000-byte allowance. It reserves space
 for the `task_status` pointer and marks any cut at a UTF-8 boundary.
 `task_status` provides the full report and acknowledges results whose source
-messages span multiple transcript pages.
+items span multiple transcript pages. An activity page can acknowledge a result
+only when it includes its source messages and any retained hook questions.
 
 For linked delegation, the child host selects the result using the effective run
 outcome. The existing settled wait carries report item IDs and the bounded
 appendix. The parent reads the selected blocks through the existing paginated item
-read. Older peers fall back to their last-reply path. Stored summaries and
-previous notices remain readable, and the selector pairs responses when typed
-boundaries are present.
+read. Failed and multipart results use a separate response field so older peers
+can still read failures from activity. The exact legacy Stop hook notice
+remains a boundary for results pending at upgrade.
 
 **On conflict:** keep provider classification at the prompt handlers, preserve
 the typed boundaries and native response IDs at projection, and keep selection

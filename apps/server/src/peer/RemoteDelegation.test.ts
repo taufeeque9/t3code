@@ -222,6 +222,7 @@ const serveBox = (thread: BoxThread) => {
   return servePeer(box, boxToolkitLayer(thread));
 };
 
+const boxHookQuestion = "Was mobile checked?";
 const boxRunId = RunId.make("run:box");
 const boxLaterRunId = RunId.make("run:box-later");
 const boxQueuedRunId = RunId.make("run:box-queued");
@@ -260,6 +261,7 @@ const boxToolkitLayer = (thread: BoxThread) => {
       const model = yield* Ref.get(thread.executedModel);
       const followUp = yield* Ref.get(thread.stopHookFollowUp);
       const report = yield* Ref.get(thread.reply);
+      const error = yield* Ref.get(thread.error);
       const item = (id: string, text: string, ordinal: number) => {
         const { turnItem } = makeSubagentConversationArtifacts({
           messageId: MessageId.make(`message:${id}`),
@@ -288,9 +290,23 @@ const boxToolkitLayer = (thread: BoxThread) => {
                 type: "system_notice" as const,
                 title: "Stop hook feedback",
                 message: "Stop hook feedback",
-                continuation: { kind: "stop_hook" as const },
+                continuation: { kind: "stop_hook" as const, question: boxHookQuestion },
               },
               item("item:stop-hook-follow-up", followUp, 4),
+              ...(error === null
+                ? []
+                : [
+                    {
+                      ...item("item:error", "", 5),
+                      type: "error" as const,
+                      failure: {
+                        class: "unknown" as const,
+                        message: error,
+                        code: null,
+                        retryable: false,
+                      },
+                    },
+                  ]),
             ];
       return shell === null
         ? (null as never)
@@ -430,6 +446,12 @@ const boxToolkitLayer = (thread: BoxThread) => {
                   type: "assistant_message",
                 },
                 {
+                  id: TurnItemId.make("item:stop-hook"),
+                  runId,
+                  text: "Stop hook feedback",
+                  type: "system_notice",
+                },
+                {
                   id: TurnItemId.make("item:stop-hook-follow-up"),
                   runId,
                   text: stopHookFollowUp,
@@ -512,12 +534,18 @@ const boxToolkitLayer = (thread: BoxThread) => {
               updatedAt: DateTime.makeUnsafe(0),
               ...(type === "error"
                 ? { type, failure: { message: text } }
-                : {
-                    type: "assistant_message" as const,
-                    messageId: MessageId.make(`message:${id}`),
-                    text,
-                    streaming: false,
-                  }),
+                : type === "system_notice"
+                  ? {
+                      type,
+                      message: text,
+                      continuation: { kind: "stop_hook", question: boxHookQuestion },
+                    }
+                  : {
+                      type: "assistant_message" as const,
+                      messageId: MessageId.make(`message:${id}`),
+                      text,
+                      streaming: false,
+                    }),
             } as never,
           })),
           totalItems: replies.length,
@@ -1458,60 +1486,94 @@ it.effect("fails the task when the box revokes the link, and cancel interrupts i
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
-it.effect.each([false, true])("keeps a remote report whole (Stop hook: %s)", (withStopHook) =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const thread = yield* makeBoxThread;
-      const b = yield* serveBox(thread);
-      const offers = yield* SubscriptionRef.make<
-        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
-      >([]);
-      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
-      const a = yield* makeLaptop(database, offers);
-      yield* linkTo(a.links, b, "full-access");
-      yield* seedParent(a);
+it.effect.each([
+  { withStopHook: false, status: "completed" },
+  { withStopHook: true, status: "completed" },
+  { withStopHook: true, status: "failed" },
+] as const)(
+  "keeps a remote report whole (Stop hook: $withStopHook, $status)",
+  ({ withStopHook, status: outcome }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const thread = yield* makeBoxThread;
+        const b = yield* serveBox(thread);
+        const offers = yield* SubscriptionRef.make<
+          ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+        >([]);
+        const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+        const a = yield* makeLaptop(database, offers);
+        yield* linkTo(a.links, b, "full-access");
+        yield* seedParent(a);
 
-      const result = yield* a.call("delegate_task", {
-        task: "Review the diff.",
-        role: "review",
-        target: { environmentId: box.environmentId },
-        clientRequestId: "review-on-box",
-      });
-      expect(result.isError, JSON.stringify(result.content)).toBe(false);
-      const { taskId } = result.structuredContent as { taskId: NodeId };
-      // The role reaches the thread there, as it does a child here.
-      expect(yield* Ref.get(thread.message)).toBe(
-        "Act as the review sub-agent for this task.\n\nReview the diff.",
-      );
+        const result = yield* a.call("delegate_task", {
+          task: "Review the diff.",
+          role: "review",
+          target: { environmentId: box.environmentId },
+          clientRequestId: "review-on-box",
+        });
+        expect(result.isError, JSON.stringify(result.content)).toBe(false);
+        const { taskId } = result.structuredContent as { taskId: NodeId };
+        // The role reaches the thread there, as it does a child here.
+        expect(yield* Ref.get(thread.message)).toBe(
+          "Act as the review sub-agent for this task.\n\nReview the diff.",
+        );
 
-      // A reply longer than one read, then a later run's reply on the same thread.
-      const long = "x".repeat(45_000);
-      yield* Ref.set(thread.reply, long);
-      const followUp = "The mobile layout still shifts.";
-      if (withStopHook) yield* Ref.set(thread.stopHookFollowUp, followUp);
-      yield* Ref.set(thread.laterReply, "Someone else asked a follow-up.");
-      yield* Ref.set(thread.executedModel, "gpt-5.4-mini");
-      yield* Ref.set(thread.status, "completed");
-      yield* Deferred.succeed(thread.finished, undefined);
-      const task = yield* taskResult(a, taskId);
-      expect(task?.status).toBe("completed");
-      const report = `Requested model gpt-5.4; the provider reported running gpt-5.4-mini.\n\n${long}`;
-      const summary = withStopHook
-        ? `${report}\n\nTests pass.\n\n## Stop hook follow-up\n\n${followUp}`
-        : report;
-      expect(task?.result).toBe(summary);
-      const status = yield* a.call("task_status", { taskId });
-      expect(status.structuredContent).toMatchObject({
-        status: "completed",
-        executedModel: "gpt-5.4-mini",
-        summary,
-      });
-      // Every wait was for the run the launch started.
-      const waits = yield* Ref.get(thread.waitedFor);
-      expect(waits.length).toBeGreaterThan(0);
-      expect(waits.every((runId) => runId === boxRunId)).toBe(true);
-    }),
-  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+        // A reply longer than one read, then a later run's reply on the same thread.
+        const long = "x".repeat(45_000);
+        yield* Ref.set(thread.reply, long);
+        const followUp = "The mobile layout still shifts.";
+        if (withStopHook) yield* Ref.set(thread.stopHookFollowUp, followUp);
+        yield* Ref.set(thread.laterReply, "Someone else asked a follow-up.");
+        yield* Ref.set(thread.executedModel, "gpt-5.4-mini");
+        const failure = "Provider disconnected after the check.";
+        if (outcome === "failed") yield* Ref.set(thread.error, failure);
+        yield* Ref.set(thread.status, outcome);
+        yield* Deferred.succeed(thread.finished, undefined);
+        const task = yield* taskResult(a, taskId);
+        expect(task?.status).toBe(outcome);
+        const report = `Requested model gpt-5.4; the provider reported running gpt-5.4-mini.\n\n${long}`;
+        const completedSummary = withStopHook
+          ? `${report}\n\nTests pass.\n\n## Stop hook follow-up\n\nHook asked: ${boxHookQuestion}\n${followUp}`
+          : report;
+        const summary =
+          outcome === "failed"
+            ? `${failure}\n\nPartial report before the Stop hook:\n\n${completedSummary}`
+            : completedSummary;
+        expect(task?.result).toBe(summary);
+        if (withStopHook) {
+          const activity = yield* a.call("t3_thread_read", {
+            environmentId: box.environmentId,
+            threadId: (yield* Ref.get(thread.launched))!,
+            view: "activity",
+            itemId: TurnItemId.make("item:stop-hook"),
+          });
+          expect(activity.structuredContent).toMatchObject({
+            items: [{ text: `Stop hook feedback\n\nHook asked: ${boxHookQuestion}` }],
+          });
+        }
+        if (outcome === "failed") {
+          const legacy = yield* a.call("t3_thread_wait", {
+            environmentId: box.environmentId,
+            threadId: (yield* Ref.get(thread.launched))!,
+            runId: boxRunId,
+            untilDelegatedWorkSettled: true,
+          });
+          expect(legacy.isError).not.toBe(true);
+          expect(legacy.structuredContent).toMatchObject({ status: "failed" });
+          expect(legacy.structuredContent).not.toHaveProperty("stopHookReplies");
+        }
+        const status = yield* a.call("task_status", { taskId });
+        expect(status.structuredContent).toMatchObject({
+          status: outcome,
+          executedModel: "gpt-5.4-mini",
+          summary,
+        });
+        // Every wait was for the run the launch started.
+        const waits = yield* Ref.get(thread.waitedFor);
+        expect(waits.length).toBeGreaterThan(0);
+        expect(waits.every((runId) => runId === boxRunId)).toBe(true);
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("a task whose thread there waits on its own task ends with the answer after it", () =>

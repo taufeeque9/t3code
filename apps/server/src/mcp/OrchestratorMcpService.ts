@@ -1122,8 +1122,11 @@ function turnItemText(item: OrchestrationV2TurnItem): string | null {
       return jsonText(item.files);
     case "run_interrupt_request":
     case "run_interrupt_result":
-    case "system_notice":
       return item.message;
+    case "system_notice":
+      return item.continuation?.kind === "stop_hook" && item.continuation.question !== undefined
+        ? `${item.message}\n\nHook asked: ${item.continuation.question}`
+        : item.message;
     case "error":
       return item.failure.message;
     case "compaction":
@@ -3564,7 +3567,7 @@ const make = Effect.gen(function* () {
         : [];
       const wakesCaller =
         ownedTask && !childRequests.some((request) => request.status === "pending");
-      const terminalRuns = new Map<RunId, TerminalTaskStatus>();
+      const terminalRuns = new Map<RunId, OrchestrationV2Run>();
       if (
         scope.client?.linked === true &&
         input.untilDelegatedWorkSettled === true &&
@@ -3572,34 +3575,52 @@ const make = Effect.gen(function* () {
       ) {
         for (const run of [result.run, result.resultRun]) {
           const outcome = taskStatusForRun(run ?? undefined);
-          if (run != null && isTerminalTaskStatus(outcome)) terminalRuns.set(run.id, outcome);
+          if (run != null && isTerminalTaskStatus(outcome)) {
+            terminalRuns.set(run.id, { ...run, status: outcome });
+          }
         }
       }
-      const stopHookItems =
+      const resultParts =
         terminalRuns.size === 0
-          ? []
-          : (yield* threadManagement
-              .getThreadRecords(input.threadId, ["turnItems"], {
+          ? undefined
+          : yield* threadManagement
+              .getThreadRecords(input.threadId, ["turnItems", "providerTurns"], {
                 turnItemRunIds: [...terminalRuns.keys()],
                 turnItemTypes: SUBAGENT_RESULT_ITEM_TYPES,
+                providerTurnAttemptIds: [...terminalRuns.values()].flatMap((run) =>
+                  run.activeAttemptId == null ? [] : [run.activeAttemptId],
+                ),
               })
-              .pipe(Effect.mapError(threadManagementFailure))).turnItems;
-      const stopHookReplies = [...terminalRuns].flatMap(([id, status]) => {
-        const reply = stopHookResultForRun(stopHookItems, { id, status });
-        return reply === undefined
-          ? []
-          : [
-              {
-                runId: id,
-                reportItemId: reply.report.id,
-                ...(reply.reportItems.length === 1
-                  ? {}
-                  : { reportItemIds: reply.reportItems.map((item) => item.id) }),
-                followUp: reply.followUp,
-                ...(reply.failure === undefined ? {} : { failureItemId: reply.failure.id }),
-              },
-            ];
-      });
+              .pipe(Effect.mapError(threadManagementFailure));
+      const stopHookReplies: NonNullable<
+        OrchestratorMcpThreadWaitResult["stopHookReplies"]
+      >[number][] = [];
+      const delegatedResultParts: NonNullable<
+        OrchestratorMcpThreadWaitResult["delegatedResultParts"]
+      >[number][] = [];
+      if (resultParts !== undefined) {
+        for (const run of terminalRuns.values()) {
+          const reply = stopHookResultForRun(resultParts.turnItems, run, resultParts.providerTurns);
+          if (reply === undefined) continue;
+          const result = {
+            runId: run.id,
+            reportItemId: reply.report.id,
+            followUp: reply.followUp,
+          };
+          // Older peers treat this field as one successful report followed by an appendix.
+          if (run.status === "completed" && reply.reportItems.length === 1 && reply.followUp) {
+            stopHookReplies.push(result);
+          } else {
+            delegatedResultParts.push({
+              ...result,
+              ...(reply.reportItems.length === 1
+                ? {}
+                : { reportItemIds: reply.reportItems.map((item) => item.id) }),
+              ...(reply.failure === undefined ? {} : { failureItemId: reply.failure.id }),
+            });
+          }
+        }
+      }
       return {
         threadId: input.threadId,
         runId: result.run?.id ?? null,
@@ -3607,6 +3628,7 @@ const make = Effect.gen(function* () {
         timedOut: result.timedOut,
         ...(wakesCaller ? { next: ORCHESTRATOR_MCP_RUNNING_TASK_NEXT } : {}),
         ...(stopHookReplies.length === 0 ? {} : { stopHookReplies }),
+        ...(delegatedResultParts.length === 0 ? {} : { delegatedResultParts }),
         ...(result.resultRun === undefined
           ? {}
           : {

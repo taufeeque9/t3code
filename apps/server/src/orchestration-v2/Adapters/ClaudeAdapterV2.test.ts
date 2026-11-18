@@ -24279,16 +24279,37 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               ? [event.turnItem.ordinal]
               : [],
           )[0] ?? Number.NaN;
-        const notices = stopHookNotices(harness.events);
+        const items = [
+          ...new Map(
+            harness.events.flatMap((event) =>
+              event.type === "turn_item.updated"
+                ? [[event.turnItem.id, event.turnItem] as const]
+                : [],
+            ),
+          ).values(),
+        ];
+        const notices = items.filter(
+          (item) => item.type === "system_notice" && item.continuation?.kind === "stop_hook",
+        );
         assert.lengthOf(notices, 2);
         assert.isAbove(notices[0]!.ordinal, ordinalOf("The test passes now."));
         assert.isBelow(notices[0]!.ordinal, ordinalOf("I re-ran it to check."));
         assert.isAbove(notices[1]!.ordinal, ordinalOf("I re-ran it to check."));
         assert.isBelow(notices[1]!.ordinal, ordinalOf("The mobile layout still shifts."));
-        const runId = notices[0]?.runId;
-        const items = harness.events.flatMap((event) =>
-          event.type === "turn_item.updated" ? [event.turnItem] : [],
+        const tool = items.find((item) => item.nativeItemRef?.nativeId === "hook-read");
+        assert.isDefined(tool);
+        if (notices[0]?.type === "system_notice" && notices[0].continuation?.kind === "stop_hook") {
+          assert.equal(notices[0].continuation.lastToolOrdinal, tool?.ordinal);
+        }
+        assert.isTrue(
+          items.some(
+            (item) =>
+              item.type === "system_notice" &&
+              item.continuation?.kind === "goal_evaluator" &&
+              item.level === "info",
+          ),
         );
+        const runId = notices[0]?.runId;
         const reply =
           runId == null
             ? undefined
@@ -24297,7 +24318,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           reply?.reportItems.map((item) => item.text),
           ["Desktop layout inspected.", "The test passes now."],
         );
-        assert.isTrue(items.some((item) => item.nativeItemRef?.nativeId === "hook-read"));
         assert.equal(
           reply?.followUp,
           "Hook asked: Check the screenshot.\nThe mobile layout still shifts.\n\nHook asked: SELF-CHECK before stopping\nThe test log is green.\n\nI re-ran it to check.",
