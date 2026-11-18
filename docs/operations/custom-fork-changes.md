@@ -258,7 +258,9 @@ capability and viewer permission (triage access), an optional `assignees` list o
 menu disabled like the label menu (`usePullRequestDetail.ts`). A successful edit patches every
 loaded detail (`loadedDetails`), since the page reads the strict one. Only the GitHub provider implements it; assignees ride upstream's
 core GraphQL detail query, so the detail costs no extra request. The UI lives in the
-fork-owned `PullRequestAssignees.tsx`; `PullRequestSummaryTab.tsx` only mounts it.
+fork-owned `PullRequestAssignees.tsx`, which sends picks once when the menu closes through
+upstream's `pull-request-selection` draft, as the reviewer and label pickers do;
+`PullRequestSummaryTab.tsx` only mounts it.
 There is no mobile assignee UI or agent MCP tool. GitHub can return success
 without applying an assignment; preserve the API's check of the returned assignees.
 
@@ -570,7 +572,8 @@ variable (a fresh shell, the devbox server) never sends events.
   at startup and in the desktop shell-consent read inside `telemetryEnabled`. That
   read decides on its own, because the startup value predates the shell profile.
 - `otelEnvironment.ts`: `isRelayTracingEnabled` requires the variable to be
-  `true`. Fork builds carry no relay trace credentials, so this only matters if
+  `true`. The desktop renderer's relay answer (`installRelayTelemetryEnabled`) is
+  therefore `false` before shell discovery when the variable is unset, not upstream's `null`. Fork builds carry no relay trace credentials, so this only matters if
   some are configured.
 - `docs/user/telemetry.md` describes the opt-in, and the onboarding
   `WelcomePage.tsx` telemetry notice says usage data is sent only after opting in.

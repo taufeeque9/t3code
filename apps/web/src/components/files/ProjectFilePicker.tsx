@@ -1,5 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { useState, type ReactNode } from "react";
+
+import type { MessageResolver } from "~/i18n/messages";
 
 import { useActiveProjectTarget, type ActiveProjectTarget } from "~/hooks/useActiveProjectTarget";
 import { useTheme } from "~/hooks/useTheme";
@@ -45,26 +48,35 @@ function HighlightedFuzzyText(props: {
   return <span className="text-muted-foreground">{parts}</span>;
 }
 
-function getEmptyStateMessage(query: string, error: string | null, isPending: boolean): string {
+function getEmptyStateMessage(
+  query: string,
+  error: string | null,
+  isPending: boolean,
+  resolve: MessageResolver,
+): string {
   if (error) return error;
   const isSearching = query.trim().length > 0;
-  if (isPending) return isSearching ? "Searching workspace files…" : "Indexing workspace files…";
-  return isSearching ? "No matching files." : "No files found.";
+  if (isPending)
+    return isSearching
+      ? resolve(msg("Searching workspace files…"))
+      : resolve(msg("Indexing workspace files…"));
+  return isSearching ? resolve(msg("No matching files.")) : resolve(msg("No files found."));
 }
 
 function EmptyProjectFilePicker() {
+  const gt = useGT();
   return (
     <CommandPaletteContent
-      aria-label="File picker"
-      escapeLabel="Back"
-      footerActionLabel="Open file"
-      inputProps={{ disabled: true, placeholder: "Search files…" }}
+      aria-label={gt("File picker")}
+      escapeLabel={gt("Back", { $context: "button, leaves the file picker" })}
+      footerActionLabel={gt("Open file")}
+      inputProps={{ disabled: true, placeholder: gt("Search files…") }}
       mode="none"
       testId="project-file-picker"
       value=""
     >
       <div className="py-10 text-center text-sm text-muted-foreground">
-        Open a project to search its files.
+        <T>Open a project to search its files.</T>
       </div>
     </CommandPaletteContent>
   );
@@ -72,6 +84,8 @@ function EmptyProjectFilePicker() {
 
 function OpenProjectFilePicker(props: ProjectFilePickerProps & { target: ActiveProjectTarget }) {
   const { target } = props;
+  const gt = useGT();
+  const messages = useMessages();
   const [query, setQuery] = useState("");
   const [highlightedItemValue, setHighlightedItemValue] = useState<string | null>(null);
   const hostFilePath = hostFilePathFromQuery(query);
@@ -80,6 +94,8 @@ function OpenProjectFilePicker(props: ProjectFilePickerProps & { target: ActiveP
     target.cwd,
     hostFilePath === null ? query : "",
     PROJECT_FILE_PICKER_RESULT_LIMIT,
+    undefined,
+    messages,
   );
   const { resolvedTheme } = useTheme();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -123,15 +139,15 @@ function OpenProjectFilePicker(props: ProjectFilePickerProps & { target: ActiveP
           },
         };
 
-  const emptyStateMessage = getEmptyStateMessage(query, result.error, result.isPending);
+  const emptyStateMessage = getEmptyStateMessage(query, result.error, result.isPending, messages);
 
   return (
     <CommandPaletteContent
-      aria-label="File picker"
+      aria-label={gt("File picker")}
       autoHighlight="always"
-      escapeLabel="Back"
-      footerActionLabel="Open file"
-      inputProps={{ placeholder: "Search files…" }}
+      escapeLabel={gt("Back", { $context: "button, leaves the file picker" })}
+      footerActionLabel={gt("Open file")}
+      inputProps={{ placeholder: gt("Search files…") }}
       mode="none"
       onItemHighlighted={(value) => {
         setHighlightedItemValue(typeof value === "string" ? value : null);
@@ -147,7 +163,15 @@ function OpenProjectFilePicker(props: ProjectFilePickerProps & { target: ActiveP
       <CommandPaletteResults
         groups={
           hostFileItem
-            ? [{ value: "host-file", label: "Path", items: [hostFileItem] }]
+            ? [
+                {
+                  value: "host-file",
+                  label: gt("Path", {
+                    $context: "an absolute file path typed into the file picker",
+                  }),
+                  items: [hostFileItem],
+                },
+              ]
             : items.length > 0
               ? [{ value: "project-files", label: target.projectName, items }]
               : []

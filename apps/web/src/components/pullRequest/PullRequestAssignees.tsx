@@ -10,8 +10,17 @@ import type {
   PullRequestAssigneeCandidate,
   PullRequestRef,
 } from "@t3tools/contracts";
+import {
+  emptySelection,
+  isSelected,
+  selectionChanges,
+  toggleSelection,
+} from "@t3tools/client-runtime/pull-request-selection";
 import { CheckIcon, UserPlusIcon } from "lucide-react";
+import { msg, T, useGT } from "gt-react";
 import { useState } from "react";
+
+import { m } from "~/i18n/messages";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
@@ -51,7 +60,9 @@ export function PullRequestAssignees({
   return (
     <span className="flex min-w-0 flex-wrap items-center gap-1.5">
       {assignees.length === 0 ? (
-        <span className="text-muted-foreground">None</span>
+        <span className="text-muted-foreground">
+          <T>None</T>
+        </span>
       ) : (
         <span className="flex items-center -space-x-1">
           {assignees.map((actor) => (
@@ -94,9 +105,10 @@ function PullRequestAssigneePicker({
    * than hidden, like the reviewer control above it. */
   allowed: boolean;
 }) {
+  const gt = useGT();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [pending, setPending] = useState<string | null>(null);
+  const [draft, setDraft] = useState(emptySelection<PullRequestAssigneeCandidate>);
 
   // Mounted with the menu closed, so nothing is asked of the host until it opens.
   const candidatesQuery = useEnvironmentQuery(
@@ -114,54 +126,66 @@ function PullRequestAssigneePicker({
   const isAssigned = (candidate: PullRequestAssigneeCandidate) =>
     assignedLogins.has(candidate.login.toLowerCase());
 
-  const toggle = async (candidate: PullRequestAssigneeCandidate) => {
-    if (pending !== null) return;
-    const wasAssigned = isAssigned(candidate);
-    setPending(candidate.login);
+  const send = async (people: ReadonlyArray<PullRequestAssigneeCandidate>, assigned: boolean) => {
+    if (people.length === 0) return;
+    const logins = people.map((person) => person.login);
     const result = await setAssignees({
       environmentId,
-      input: { ...reference, assignees: [candidate.login], assigned: !wasAssigned },
+      input: { ...reference, assignees: logins, assigned },
     });
-    setPending(null);
-    if (result._tag === "Failure") {
-      toastManager.add({
-        type: "error",
-        title: wasAssigned
-          ? `Could not unassign ${candidate.login}`
-          : `Could not assign ${candidate.login}`,
-        description: readableFailure(squashAtomCommandFailure(result), "The host refused it."),
-      });
-    }
+    if (result._tag === "Success") return;
+    toastManager.add({
+      type: "error",
+      title: assigned
+        ? m(msg("Could not assign {logins}", { logins: logins.join(", ") }))
+        : m(msg("Could not unassign {logins}", { logins: logins.join(", ") })),
+      description: readableFailure(
+        squashAtomCommandFailure(result),
+        m(msg("The host refused it.")),
+      ),
+    });
+  };
+
+  const onOpenChange = (nextOpen: boolean) => {
+    setOpen(nextOpen);
+    if (nextOpen) return;
+    const { add, remove } = selectionChanges(draft, (_key, person) => isAssigned(person));
+    setDraft(emptySelection());
+    // GitHub caps assignees per pull request, so freeing a slot goes first.
+    void send(remove, false).then(() => send(add, true));
   };
 
   return (
     <PullRequestCandidatePicker
       icon={<UserPlusIcon className="size-3.5" />}
-      label="Change assignees"
+      label={gt("Change assignees")}
       allowed={allowed}
-      disabledReason="Changing assignees needs triage access on this repository"
+      disabledReason={gt("Changing assignees needs triage access on this repository")}
       open={open}
-      onOpenChange={setOpen}
+      onOpenChange={onOpenChange}
       query={query}
       onQueryChange={setQuery}
-      searchLabel="Search assignable people"
+      searchLabel={gt("Search assignable people")}
       isPending={candidatesQuery.isPending && candidatesQuery.data === null}
       error={candidatesQuery.data === null ? candidatesQuery.error : null}
       candidates={candidates}
-      emptyLabel="Nobody can be assigned on this repository."
-      noMatchLabel="Nobody assignable matches that."
-      errorLabel="The assignable people could not be read."
+      emptyLabel={gt("Nobody can be assigned on this repository.")}
+      noMatchLabel={gt("Nobody assignable matches that.")}
+      errorLabel={gt("The assignable people could not be read.")}
       truncated={candidatesQuery.data?.truncated === true}
-      truncatedLabel="This repository has more assignable people than are listed here."
+      truncatedLabel={gt("This repository has more assignable people than are listed here.")}
       candidateKey={(candidate) => candidate.login}
-      disabled={pending !== null}
-      onSelect={(candidate) => void toggle(candidate)}
+      onSelect={(candidate) =>
+        setDraft((current) =>
+          toggleSelection(current, candidate.login, candidate, isAssigned(candidate)),
+        )
+      }
     >
       {(candidate) => (
         <>
           <PullRequestActorLabel actor={candidate} className="min-w-0 flex-1 truncate" />
-          {isAssigned(candidate) ? (
-            <CheckIcon aria-label="Assigned" className="size-3.5 shrink-0" />
+          {isSelected(draft, candidate.login, isAssigned(candidate)) ? (
+            <CheckIcon aria-label={gt("Assigned")} className="size-3.5 shrink-0" />
           ) : null}
         </>
       )}

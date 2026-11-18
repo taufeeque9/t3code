@@ -1,4 +1,5 @@
 import type { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
+import { msg, T, useGT } from "gt-react";
 import { ExternalLinkIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -7,6 +8,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 
+import { m } from "~/i18n/messages";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
@@ -49,6 +51,7 @@ export function ProviderLoginDialog(props: {
     reportFailure: false,
   });
 
+  const gt = useGT();
   const [loginId, setLoginId] = useState<string | null>(null);
   const [authorizeUrl, setAuthorizeUrl] = useState<string | null>(null);
   const [code, setCode] = useState("");
@@ -81,7 +84,7 @@ export function ProviderLoginDialog(props: {
       setBusy(false);
       if (result._tag === "Failure") {
         if (!isAtomCommandInterrupted(result)) {
-          setError(failureMessage(result, "The sign-in could not be started."));
+          setError(failureMessage(result, m(msg("The sign-in could not be started."))));
         }
         return;
       }
@@ -109,7 +112,7 @@ export function ProviderLoginDialog(props: {
     setBusy(false);
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
-        setError(failureMessage(result, "The sign-in code was not accepted."));
+        setError(failureMessage(result, m(msg("The sign-in code was not accepted."))));
       }
       return;
     }
@@ -121,16 +124,22 @@ export function ProviderLoginDialog(props: {
     <Dialog open={target !== null} onOpenChange={onOpenChange}>
       <DialogPopup className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>Sign in to {target?.displayName ?? "provider"}</DialogTitle>
+          <DialogTitle>
+            {target === null
+              ? gt("Sign in")
+              : gt("Sign in to {provider}", { provider: target.displayName })}
+          </DialogTitle>
           <DialogDescription>
-            Approve the sign-in in your browser. If it hands you back a code, paste it here;
-            otherwise just select Continue.
+            <T>
+              Approve the sign-in in your browser. If it hands you back a code, paste it here;
+              otherwise just select Continue.
+            </T>
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4 px-6 py-5">
           {authorizeUrl === null ? (
             <p className="text-sm text-muted-foreground">
-              {error === null ? "Starting sign-in…" : "Sign-in could not be started."}
+              {error === null ? gt("Starting sign-in…") : gt("Sign-in could not be started.")}
             </p>
           ) : (
             <>
@@ -141,11 +150,13 @@ export function ProviderLoginDialog(props: {
                 target="_blank"
               >
                 <ExternalLinkIcon className="size-3.5" />
-                Open the sign-in page again
+                <T>Open the sign-in page again</T>
               </a>
               <div className="grid gap-1.5">
                 <label className="text-sm font-medium" htmlFor="provider-login-code">
-                  Code from the browser <span className="text-muted-foreground">(if shown)</span>
+                  <T>
+                    Code from the browser <span className="text-muted-foreground">(if shown)</span>
+                  </T>
                 </label>
                 <Input
                   autoFocus
@@ -157,7 +168,7 @@ export function ProviderLoginDialog(props: {
                       void submit();
                     }
                   }}
-                  placeholder="Paste the code here"
+                  placeholder={gt("Paste the code here")}
                   value={code}
                 />
               </div>
@@ -167,10 +178,10 @@ export function ProviderLoginDialog(props: {
         </div>
         <DialogFooter variant="bare">
           <Button onClick={() => onOpenChange(false)} size="sm" variant="outline">
-            Cancel
+            <T>Cancel</T>
           </Button>
           <Button disabled={busy || loginId === null} onClick={() => void submit()} size="sm">
-            {busy ? "Finishing…" : "Continue"}
+            {busy ? gt("Finishing…") : gt("Continue")}
           </Button>
         </DialogFooter>
       </DialogPopup>

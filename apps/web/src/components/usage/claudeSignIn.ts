@@ -4,7 +4,7 @@
  */
 import type { EnvironmentId, ProviderInstanceId, ServerProvider } from "@t3tools/contracts";
 import { isProviderAvailable } from "@t3tools/contracts";
-import { limitsNotice } from "@t3tools/shared/usageLimits";
+import { limitsNotice } from "@t3tools/shared/usageLimitsCopy";
 
 export interface ClaudeSignInCandidate {
   readonly key: string;
@@ -36,6 +36,7 @@ type Presentations = ReadonlyMap<
  */
 export function collectClaudeSignIns(
   presentations: Presentations,
+  resolve?: Parameters<typeof limitsNotice>[1],
 ): readonly ClaudeSignInCandidate[] {
   const candidates: ClaudeSignInCandidate[] = [];
   for (const [environmentId, presentation] of presentations) {
@@ -49,7 +50,7 @@ export function collectClaudeSignIns(
       if (signedOut) {
         notice = "Sign-in expired.";
       } else if (provider.usageLimits) {
-        notice = limitsNotice(provider.usageLimits);
+        notice = limitsNotice(provider.usageLimits, resolve);
       } else {
         notice = "Could not read this account's limits.";
       }

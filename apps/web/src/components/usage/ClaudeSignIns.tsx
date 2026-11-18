@@ -3,6 +3,7 @@ import { serverEnvironment } from "../../state/server";
 import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
+import { T, useMessages } from "gt-react";
 import { useState } from "react";
 
 import { collectClaudeSignIns, type ClaudeSignInCandidate } from "./claudeSignIn";
@@ -37,7 +38,7 @@ function ClaudeSignInRow({
           })
         }
       >
-        Sign in
+        <T>Sign in</T>
       </Button>
     </div>
   );
@@ -56,7 +57,8 @@ export function ClaudeSignIns({
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
-  const candidates = collectClaudeSignIns(presentations);
+  const m = useMessages();
+  const candidates = collectClaudeSignIns(presentations, m);
   if (candidates.length === 0) return null;
   return (
     <div className="flex flex-col gap-2">

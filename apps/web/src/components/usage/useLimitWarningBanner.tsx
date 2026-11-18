@@ -7,6 +7,7 @@ import type {
 } from "@t3tools/contracts";
 import type { UnifiedSettings } from "@t3tools/contracts/settings";
 import { collectProviderUsageLimits } from "@t3tools/shared/usageLimits";
+import { useGT } from "gt-react";
 import { TriangleAlertIcon } from "lucide-react";
 import { useState } from "react";
 
@@ -37,6 +38,7 @@ export function useLimitWarningBanner(input: {
   readonly usageLimitSources: UsageLimitSourceSnapshots;
   readonly nowMinute: string;
 }): ComposerBannerStackItem | null {
+  const gt = useGT();
   const draftModelState = useComposerDraftModelState(input.composerDraftTarget);
   const [dismissedKey, setDismissedKey] = useState<string | null>(null);
   const { selectedModel } = deriveEffectiveComposerModelState({
@@ -75,9 +77,13 @@ export function useLimitWarningBanner(input: {
     id: `limit-warning:${warning.key}`,
     variant: "warning",
     icon: <TriangleAlertIcon />,
-    title: `${warning.accountLabel}: ${warning.usedPercent}% of ${warning.windowLabel} used`,
+    title: gt("{account}: {percent}% of {window} used", {
+      account: warning.accountLabel,
+      percent: warning.usedPercent,
+      window: warning.windowLabel,
+    }),
     children: <p className="text-xs text-muted-foreground">{warning.availability}</p>,
-    dismissLabel: "Dismiss limit warning",
+    dismissLabel: gt("Dismiss limit warning"),
     onDismiss: () => {
       dismissLimitWarning(warning.key);
       setDismissedKey(warning.key);
