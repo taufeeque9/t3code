@@ -374,6 +374,8 @@ export interface ProjectionRecordFilter {
   readonly nodeIds?: ReadonlyArray<NodeId>;
   readonly turnItemRequestIds?: ReadonlyArray<RuntimeRequestId>;
   readonly turnItemTypes?: ReadonlyArray<OrchestrationV2TurnItem["type"]>;
+  /** First projected event order, across server and provider items. */
+  readonly turnItemOrder?: "insertion";
   readonly turnItemStatuses?: ReadonlyArray<OrchestrationV2TurnItem["status"]>;
   readonly omitSettledLeafNodes?: boolean;
   /**
@@ -3691,7 +3693,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     WHERE ${turnItemMatch(threadId, filter)}
                   )`
                 }
-                ORDER BY ordinal ASC, turn_item_id ASC
+                ORDER BY ${filter?.turnItemOrder === "insertion" ? sql`rowid ASC` : sql`ordinal ASC, turn_item_id ASC`}
               `
               : yield* sql<PayloadRow>`
                 ${yield* retainedWindowRows(threadId, window)}

@@ -113,6 +113,7 @@ import {
 import { resolveProviderCatalog } from "../../provider/ModelManifest.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { stopHookResultForRun } from "@t3tools/provider-core/server/subagentProjection";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
@@ -24164,6 +24165,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     it.effect("marks Stop hook feedback between the answer and its follow-up", () =>
       Effect.gen(function* () {
         const harness = yield* makeWakeHarness;
+        const objective = "all tests pass";
         yield* harness.runtime.startTurn(
           makeClaudeTestTurnInput({
             threadId: harness.threadId,
@@ -24174,8 +24176,34 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             attachments: [],
           }),
         );
+        const stream = (event: unknown) =>
+          claudeSdkFrame({
+            type: "stream_event",
+            event,
+            parent_tool_use_id: null,
+            session_id: WAKE_NATIVE_SESSION,
+          });
+        const multipart = (id: string, texts: ReadonlyArray<string>) => [
+          stream({ type: "message_start", message: { id } }),
+          ...texts.flatMap((text, index) => [
+            stream({ type: "content_block_start", index, content_block: { type: "text", text } }),
+            stream({ type: "content_block_stop", index }),
+          ]),
+          claudeSdkFrame({
+            type: "assistant",
+            uuid: `snapshot-${id}`,
+            session_id: WAKE_NATIVE_SESSION,
+            parent_tool_use_id: null,
+            message: {
+              id,
+              model: "claude-sonnet-4-6",
+              content: texts.map((text) => ({ type: "text", text })),
+            },
+          }),
+        ];
         for (const frame of [
-          makeAssistantTextFrame({ uuid: "stop-hook-answer", text: "The test passes now." }),
+          syntheticFrame("stop-hook-goal", `Goal set: ${objective}`),
+          ...multipart("report-response", ["Desktop layout inspected.", "The test passes now."]),
           claudeSdkFrame({
             type: "user",
             message: {
@@ -24187,8 +24215,58 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             uuid: "stop-hook-feedback",
             session_id: WAKE_NATIVE_SESSION,
           }),
-          makeAssistantTextFrame({ uuid: "stop-hook-follow-up", text: "I re-ran it to check." }),
-          makeResultFrame({ uuid: "stop-hook-result", result: "I re-ran it to check." }),
+          makeAssistantTextFrame({
+            uuid: "stop-hook-progress",
+            text: "Looking up the test result.",
+          }),
+          claudeSdkFrame({
+            type: "assistant",
+            uuid: "stop-hook-tool",
+            session_id: WAKE_NATIVE_SESSION,
+            parent_tool_use_id: null,
+            message: {
+              id: "stop-hook-tool-response",
+              model: "claude-sonnet-4-6",
+              stop_reason: "tool_use",
+              content: [
+                {
+                  type: "tool_use",
+                  id: "hook-read",
+                  name: "Read",
+                  input: { file_path: "/workspace/test.log" },
+                },
+              ],
+            },
+          }),
+          claudeSdkFrame({
+            type: "user",
+            uuid: "stop-hook-tool-result",
+            session_id: WAKE_NATIVE_SESSION,
+            parent_tool_use_id: null,
+            message: {
+              role: "user",
+              content: [{ type: "tool_result", tool_use_id: "hook-read", content: "pass" }],
+            },
+          }),
+          ...multipart("check-response", ["The test log is green.", "I re-ran it to check."]),
+          claudeSdkFrame({
+            type: "user",
+            message: {
+              role: "user",
+              content: [{ type: "text", text: "Stop hook feedback:\nCheck the screenshot." }],
+            },
+            parent_tool_use_id: null,
+            isSynthetic: true,
+            uuid: "stop-hook-second-feedback",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          makeAssistantTextFrame({
+            uuid: "stop-hook-second-answer",
+            text: "The mobile layout still shifts.",
+          }),
+          stopHookFeedback("stop-hook-evaluator", objective, "Keep checking."),
+          makeAssistantTextFrame({ uuid: "stop-hook-evaluation", text: "Goal check response." }),
+          makeResultFrame({ uuid: "stop-hook-result", result: "Goal check response." }),
         ]) {
           yield* Queue.offer(harness.sdkMessages, frame);
         }
@@ -24201,10 +24279,136 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               ? [event.turnItem.ordinal]
               : [],
           )[0] ?? Number.NaN;
-        const notices = stopHookNotices(harness.events);
-        assert.lengthOf(notices, 1);
+        const items = [
+          ...new Map(
+            harness.events.flatMap((event) =>
+              event.type === "turn_item.updated"
+                ? [[event.turnItem.id, event.turnItem] as const]
+                : [],
+            ),
+          ).values(),
+        ];
+        const notices = items.filter(
+          (item) => item.type === "system_notice" && item.continuation?.kind === "stop_hook",
+        );
+        assert.lengthOf(notices, 2);
         assert.isAbove(notices[0]!.ordinal, ordinalOf("The test passes now."));
         assert.isBelow(notices[0]!.ordinal, ordinalOf("I re-ran it to check."));
+        assert.isAbove(notices[1]!.ordinal, ordinalOf("I re-ran it to check."));
+        assert.isBelow(notices[1]!.ordinal, ordinalOf("The mobile layout still shifts."));
+        const tool = items.find((item) => item.nativeItemRef?.nativeId === "hook-read");
+        assert.isDefined(tool);
+        if (notices[0]?.type === "system_notice" && notices[0].continuation?.kind === "stop_hook") {
+          assert.equal(notices[0].continuation.lastToolOrdinal, tool?.ordinal);
+        }
+        assert.isTrue(
+          items.some(
+            (item) =>
+              item.type === "system_notice" &&
+              item.continuation?.kind === "goal_evaluator" &&
+              item.level === "info",
+          ),
+        );
+        const runId = notices[0]?.runId;
+        const reply =
+          runId == null
+            ? undefined
+            : stopHookResultForRun(items, { id: runId, status: "completed" });
+        assert.deepEqual(
+          reply?.reportItems.map((item) => item.text),
+          ["Desktop layout inspected.", "The test passes now."],
+        );
+        assert.equal(
+          reply?.followUp,
+          "Hook asked: Check the screenshot.\nThe mobile layout still shifts.\n\nHook asked: SELF-CHECK before stopping\nThe test log is green.\n\nI re-ran it to check.",
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeCrypto.layer,
+            NodeServices.layer,
+          ),
+        ),
+      ),
+    );
+
+    it.effect("keeps snapshot tool progress out of a failed Stop hook reply", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const report = "The desktop layout passes.";
+        const failure = "Tool result unavailable";
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("stop-hook-tool-failure"),
+            text: "Check the layout",
+            attachments: [],
+          }),
+        );
+        for (const frame of [
+          makeAssistantTextFrame({ uuid: "report-before-tool", text: report }),
+          claudeSdkFrame({
+            type: "user",
+            isSynthetic: true,
+            uuid: "check-before-tool",
+            session_id: WAKE_NATIVE_SESSION,
+            parent_tool_use_id: null,
+            message: {
+              role: "user",
+              content: [{ type: "text", text: "Stop hook feedback:\nCheck mobile too." }],
+            },
+          }),
+          claudeSdkFrame({
+            type: "assistant",
+            uuid: "progress-with-tool",
+            session_id: WAKE_NATIVE_SESSION,
+            parent_tool_use_id: null,
+            message: {
+              id: "progress-response",
+              model: "claude-sonnet-4-6",
+              stop_reason: "tool_use",
+              content: [
+                { type: "text", text: "Looking up the test result." },
+                {
+                  type: "tool_use",
+                  id: "failed-hook-read",
+                  name: "Read",
+                  input: { file_path: "/workspace/test.log" },
+                },
+              ],
+            },
+          }),
+          makeResultFrame({
+            uuid: "failed-hook-result",
+            result: "",
+            subtype: "error_during_execution",
+            isError: true,
+            errors: [failure],
+          }),
+        ])
+          yield* Queue.offer(harness.sdkMessages, frame);
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(terminal.status, "failed");
+        assert.include(terminal.failure?.message, failure);
+        const items = [
+          ...new Map(
+            harness.events.flatMap((event) =>
+              event.type === "turn_item.updated"
+                ? [[event.turnItem.id, event.turnItem] as const]
+                : [],
+            ),
+          ).values(),
+        ];
+        const runId = items.find((item) => item.type === "system_notice")?.runId;
+        const reply =
+          runId == null ? undefined : stopHookResultForRun(items, { id: runId, status: "failed" });
+        assert.equal(reply?.report.text, report);
+        assert.equal(reply?.followUp, "");
       }).pipe(
         Effect.scoped,
         Effect.provide(

@@ -11,6 +11,7 @@ import {
   TurnItemId,
   type OrchestrationV2Run,
   type OrchestrationV2AppThread,
+  ProviderTurnId,
   ProjectId,
   ProviderInstanceId,
   ProviderThreadId,
@@ -462,6 +463,7 @@ it("orders a task's assistant messages by turn item, not by timestamps", () => {
       ordinal,
       now: at,
     });
+    if (artifacts.turnItem.type !== "assistant_message") throw new Error("Expected assistant item");
     return {
       message: { ...artifacts.message, runId: run.id },
       turnItem: { ...artifacts.turnItem, runId: run.id },
@@ -480,6 +482,214 @@ it("orders a task's assistant messages by turn item, not by timestamps", () => {
   assert.equal(result.text, "All steps passed.");
   assert.equal(result.messageId, report.message.id);
   assert.equal(result.turnItemId, report.turnItem.id);
+  const hook = (ordinal: number) => ({
+    ...report.turnItem,
+    id: TurnItemId.make(`hook-${ordinal}`),
+    ordinal,
+    type: "system_notice" as const,
+    title: "Stop hook feedback",
+    message: "Stop hook feedback",
+    continuation: { kind: "stop_hook" as const },
+  });
+  const firstCheck = message("first-check", "The browser was not checked.", 4);
+  const secondCheck = message("second-check", "The layout still regresses on mobile.", 6);
+  const withHooks = {
+    ...projection,
+    messages: [progress.message, report.message, firstCheck.message, secondCheck.message],
+    turnItems: [
+      secondCheck.turnItem,
+      hook(7),
+      firstCheck.turnItem,
+      hook(5),
+      report.turnItem,
+      hook(3),
+    ],
+  };
+  const hookedResult = subagentResultForRun(withHooks, run);
+  assert.equal(hookedResult.messageId, report.message.id);
+  assert.equal(hookedResult.turnItemId, report.turnItem.id);
+  assert.equal(
+    hookedResult.text,
+    "All steps passed.\n\n## Stop hook follow-up\n\nThe layout still regresses on mobile.\n\nThe browser was not checked.",
+  );
+  assert.equal(
+    subagentResultForRun(
+      {
+        ...withHooks,
+        turnItems: withHooks.turnItems.filter((item) => item.ordinal !== 3 && item.ordinal !== 5),
+      },
+      run,
+    ).text,
+    "The layout still regresses on mobile.",
+  );
+  const steer = {
+    ...message("steer", "Check mobile too.", 4).turnItem,
+    type: "user_message" as const,
+    inputIntent: "steer" as const,
+    attachments: [],
+    createdBy: "agent" as const,
+    creationSource: "mcp" as const,
+    startedAt: DateTime.makeUnsafe("2026-07-24T10:05:01.000Z"),
+  };
+  assert.equal(
+    subagentResultForRun(
+      {
+        ...withHooks,
+        turnItems: [
+          steer,
+          ...withHooks.turnItems.map((item) =>
+            item.ordinal >= 4 ? { ...item, startedAt: steer.startedAt } : item,
+          ),
+        ],
+      },
+      run,
+    ).text,
+    `${firstCheck.message.text}\n\n## Stop hook follow-up\n\n${secondCheck.message.text}`,
+  );
+  const beforeReport = DateTime.makeUnsafe("2026-07-24T10:04:59.000Z");
+  const tiedSteer = { ...steer, ordinal: 3, startedAt: at };
+  const revised = message("revised", "The revised report fixes the layout.", 3);
+  const revisedCheck = message("revised-check", "The narrow-screen replay passed.", 5);
+  const afterSteer = (item: typeof revised.turnItem) => ({ ...item, startedAt: steer.startedAt });
+  const tiedResult = subagentResultForRun(
+    {
+      ...projection,
+      turnItems: [
+        report.turnItem,
+        hook(2),
+        tiedSteer,
+        afterSteer(revised.turnItem),
+        { ...hook(4), startedAt: steer.startedAt },
+        afterSteer(revisedCheck.turnItem),
+      ],
+    },
+    run,
+  );
+  assert.equal(
+    tiedResult.text,
+    `${revised.message.text}\n\n## Stop hook follow-up\n\n${revisedCheck.message.text}`,
+  );
+  const interrupted = { ...run, status: "interrupted" as const };
+  const unread = subagentResultForRun(
+    { ...withHooks, turnItems: [...withHooks.turnItems, { ...steer, status: "cancelled" }] },
+    interrupted,
+  );
+  assert.include(unread.text, report.message.text);
+  assert.include(unread.text, secondCheck.message.text);
+  const rapidSteers = [2, 3].map((ordinal) => ({
+    ...steer,
+    id: TurnItemId.make(`steer-${ordinal}`),
+    ordinal,
+    startedAt: beforeReport,
+  }));
+  assert.include(
+    subagentResultForRun({ ...withHooks, turnItems: [...rapidSteers, ...withHooks.turnItems] }, run)
+      .text,
+    report.message.text,
+  );
+  for (const status of ["failed", "interrupted"] as const) {
+    const partial = subagentResultForRun(withHooks, { ...run, status }).text;
+    assert.include(partial, `Child task ended with status ${status}.`);
+    assert.include(partial, report.message.text);
+    assert.include(partial, secondCheck.message.text);
+  }
+  const nextTurn = message("next-turn", "The later turn fixed the regression.", 8);
+  assert.equal(
+    subagentResultForRun(
+      {
+        ...withHooks,
+        messages: [...withHooks.messages, nextTurn.message],
+        turnItems: [
+          ...withHooks.turnItems,
+          { ...nextTurn.turnItem, providerTurnId: ProviderTurnId.make("next-turn") },
+        ],
+      },
+      run,
+    ).text,
+    nextTurn.message.text,
+  );
+  const firstTurnId = ProviderTurnId.make("long-turn");
+  const laterTurnId = ProviderTurnId.make("later-turn");
+  const laterCheck = message("later-check", "Verified the fix.", 10);
+  const providerTurn = (id: ProviderTurnId, ordinal: number) => ({
+    id,
+    ordinal,
+    runAttemptId: run.activeAttemptId,
+    nodeId: NodeId.make("root"),
+    providerThreadId: ProviderThreadId.make("provider-thread:overlap"),
+    nativeTurnRef: null,
+    status: "completed" as const,
+    startedAt: at,
+    completedAt: at,
+  });
+  const overlap = [
+    ...withHooks.turnItems.map((item) => ({
+      ...item,
+      providerTurnId: firstTurnId,
+      ordinal: item.ordinal + 100,
+    })),
+    ...[nextTurn.turnItem, hook(9), laterCheck.turnItem].map((item) => ({
+      ...item,
+      providerTurnId: laterTurnId,
+    })),
+  ];
+  assert.include(
+    subagentResultForRun(
+      {
+        ...withHooks,
+        turnItems: overlap,
+        providerTurns: [providerTurn(firstTurnId, 1), providerTurn(laterTurnId, 2)],
+      },
+      run,
+    ).text,
+    nextTurn.message.text,
+  );
+  const { continuation: _typedBoundary, ...legacy } = hook(3);
+  assert.include(
+    subagentResultForRun(
+      { ...withHooks, turnItems: [report.turnItem, legacy, firstCheck.turnItem] },
+      run,
+    ).text,
+    report.message.text,
+  );
+  const unanswered = {
+    ...hook(3),
+    continuation: { kind: "stop_hook" as const, lastToolOrdinal: 5 },
+  };
+  assert.notInclude(
+    subagentResultForRun(
+      { ...withHooks, turnItems: [report.turnItem, unanswered, firstCheck.turnItem] },
+      interrupted,
+    ).text,
+    firstCheck.message.text,
+  );
+  const question = {
+    ...hook(3),
+    continuation: { kind: "stop_hook" as const, question: "Was mobile checked?" },
+  };
+  assert.include(
+    subagentResultForRun(
+      { ...withHooks, turnItems: [report.turnItem, question, firstCheck.turnItem] },
+      run,
+    ).resultItemIds ?? [],
+    question.id,
+  );
+  const longReport = message("long-report", "大".repeat(6_000), 2);
+  const longCheck = message("long-check", "🔎".repeat(6_000), 6);
+  const bounded = subagentResultForRun(
+    {
+      ...projection,
+      messages: [longCheck.message],
+      turnItems: [longReport.turnItem, hook(3), firstCheck.turnItem, hook(5), longCheck.turnItem],
+    },
+    run,
+  );
+  assert.equal(bounded.text.slice(0, bounded.reportLength), longReport.message.text);
+  const appendix = bounded.text.slice(bounded.reportLength);
+  assert.isAtMost(Buffer.byteLength(appendix), 4_096);
+  assert.notInclude(appendix, "\uFFFD");
+  assert.notInclude(appendix, firstCheck.message.text);
+  assert.include(appendix, "[More Stop hook follow-up in the child thread.]");
   const reported = { runAttemptId: run.activeAttemptId, ordinal: 1, model: "gpt-5.4-mini" };
   assert.equal(
     subagentResultForRun(

@@ -2771,7 +2771,15 @@ const messageOrdinalsReadThroughTheirIndex = Effect.gen(function* () {
   };
   const first = conversation("first", 1);
   const second = conversation("second", 10);
-  for (const event of [...first.events, ...second.events]) yield* store.apply(event as never);
+  for (const event of [...second.events, ...first.events]) yield* store.apply(event as never);
+  const inserted = yield* store.getThreadRecords(threadId, ["turnItems"], {
+    turnItemTypes: ["user_message"],
+    turnItemOrder: "insertion",
+  });
+  assert.deepEqual(
+    inserted.turnItems.map((item) => item.id),
+    ["item:second:0", "item:first:0"],
+  );
 
   const { statements, tracer } = traceSqlStatements();
   const indexed = yield* store

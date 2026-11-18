@@ -55,6 +55,7 @@ import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
 import * as ProviderTurnStartServiceTestkit from "./ProviderTurnStartService.testkit.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { makeSubagentConversationArtifacts } from "@t3tools/provider-core/server/subagentProjection";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationService from "./ProviderContinuationService.ts";
@@ -837,6 +838,22 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
       inlineFirst: true,
       inlineSecond: false,
     },
+    {
+      name: "Stop hook appendix",
+      first: `${"a".repeat(14_000)}\n\n## Stop hook follow-up\n\n${"b".repeat(3_000)}`,
+      reportLength: 14_000,
+      second: "small result",
+      inlineFirst: false,
+      inlineSecond: true,
+    },
+    ...["ascii", "multibyte"].map((cut) => ({
+      name: `Stop hook ${cut} report cut`,
+      first: "",
+      second: "small result",
+      cut,
+      inlineFirst: false,
+      inlineSecond: true,
+    })),
   ])("uses task_status for $name beyond the inline budget", (testCase) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -847,6 +864,20 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
       const firstTaskId = NodeId.make(`node:inline-first:${testCase.name}`);
       const secondTaskId = NodeId.make(`node:inline-second:${testCase.name}`);
       const messageId = MessageId.make(`message:delegated-delivery:${threadId}`);
+      const heading = `Delegated task ${firstTaskId} (Inspect regression) [failed]:\n`;
+      const cut = "cut" in testCase ? testCase.cut : undefined;
+      const rawReport =
+        cut === "ascii"
+          ? "a".repeat(16_000 - Buffer.byteLength(heading))
+          : cut === "multibyte"
+            ? "界".repeat(6_000)
+            : undefined;
+      const first =
+        rawReport === undefined
+          ? testCase.first
+          : `${rawReport}\n\n## Stop hook follow-up\n\nChecked.`;
+      const reportLength =
+        rawReport?.length ?? ("reportLength" in testCase ? testCase.reportLength : undefined);
       yield* seedParentWithTerminalTask({
         threadId,
         projectId: ProjectId.make(`project:inline-budget:${testCase.name}`),
@@ -862,16 +893,28 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
       const task = parent.subagents[0]!;
       yield* sink.write({
         events: [
-          { id: firstTaskId, result: testCase.first, status: "failed" as const },
+          {
+            id: firstTaskId,
+            result: first,
+            status: "failed" as const,
+            resultReportLength: reportLength,
+          },
           { id: secondTaskId, result: testCase.second, status: "cancelled" as const },
-        ].map(({ id, result, status }) => ({
+        ].map(({ id, result, status, resultReportLength }) => ({
           id: EventId.make(`event:inline-budget:${id}`),
           type: "subagent.updated" as const,
           threadId,
           runId,
           nodeId: id,
           occurredAt: now,
-          payload: { ...task, id, result, status, title: "Inspect regression" },
+          payload: {
+            ...task,
+            id,
+            result,
+            status,
+            title: "Inspect regression",
+            ...(resultReportLength === undefined ? {} : { resultReportLength }),
+          },
         })),
       });
       yield* orchestrator.dispatch({
@@ -892,7 +935,7 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
       });
       const projection = yield* orchestrator.getThreadProjection(threadId);
       const message = projection.messages.find((candidate) => candidate.id === messageId)!;
-      assert.equal(message.text.includes(testCase.first), testCase.inlineFirst);
+      assert.equal(message.text.includes(first), testCase.inlineFirst);
       assert.equal(message.text.includes(testCase.second), testCase.inlineSecond);
       const deferredTaskId = testCase.inlineFirst ? secondTaskId : firstTaskId;
       assert.include(
@@ -900,10 +943,26 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
         `Delegated task ${deferredTaskId} (Inspect regression) [${testCase.inlineFirst ? "cancelled" : "failed"}]`,
       );
       assert.include(message.text, `Use task_status with taskId ${deferredTaskId}`);
+      const bytes = Buffer.byteLength(message.text);
+      assert.isAtMost(bytes, 16_000);
+      if (rawReport !== undefined) {
+        const prefix = message.text.slice(
+          heading.length,
+          message.text.indexOf("\n… Report truncated."),
+        );
+        assert.isTrue(rawReport.startsWith(prefix));
+        assert.isAbove(prefix.length, 0);
+        assert.include(message.text, "… Report truncated.");
+        assert.notInclude(message.text, "\uFFFD");
+        assert.isAbove(bytes + (cut === "ascii" ? 1 : 3), 16_000);
+      } else if (reportLength !== undefined) {
+        assert.include(message.text, first.slice(0, reportLength));
+        assert.notInclude(message.text, "## Stop hook follow-up");
+      }
       assert.deepEqual(message.delegatedCompletion?.taskIds, [firstTaskId, secondTaskId]);
       assert.equal(
         projection.subagents.find((candidate) => candidate.id === deferredTaskId)?.result,
-        testCase.inlineFirst ? testCase.second : testCase.first,
+        testCase.inlineFirst ? testCase.second : first,
       );
     }),
   );
@@ -3619,9 +3678,28 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
               ],
             });
           }
-          const original = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
+          let original = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
             (task) => task.id === child.taskId,
           )!;
+          if (outcome === "completed") {
+            original = {
+              ...original,
+              result: "Previous report\n\n## Stop hook follow-up\n\nChecked.",
+              resultReportLength: 15,
+            };
+            yield* eventSink.write({
+              events: [
+                {
+                  id: EventId.make("event:followup-original-hook-result"),
+                  type: "subagent.updated",
+                  threadId: parentThreadId,
+                  nodeId: original.id,
+                  occurredAt: now,
+                  payload: original,
+                },
+              ],
+            });
+          }
           const parentRun = (yield* orchestrator.getThreadProjection(parentThreadId)).runs.find(
             (run) => run.id === parentRunId,
           )!;
@@ -3813,6 +3891,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             original,
           );
           const followup = finished.subagents.find((task) => task.id === run.delegatedTaskId)!;
+          assert.isUndefined(followup.resultReportLength);
           if (outcome === "overlapping") {
             const later = finished.subagents.find(
               (task) =>
@@ -4245,6 +4324,25 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
         const providerThreadId = ProviderThreadId.make(
           `provider-thread:result-message${key}-child`,
         );
+        const childItem = (id: string, text: string, ordinal: number) => {
+          const { turnItem } = makeSubagentConversationArtifacts({
+            messageId: MessageId.make(`message:${id}`),
+            turnItemId: TurnItemId.make(`item:${id}`),
+            threadId: child.childThreadId,
+            rootNodeId,
+            providerThreadId,
+            providerTurnId: null,
+            nativeItemRef: null,
+            role: "assistant",
+            text,
+            ordinal,
+            now,
+          });
+          if (turnItem.type !== "assistant_message") throw new Error("Expected assistant item");
+          return { ...turnItem, runId: child.childRunId };
+        };
+        const report = "The layout passes on desktop.";
+        const correction = "Mobile still has a spacing regression.";
         yield* eventSink.write({
           commandId: CommandId.make(`command:result-message${key}-child-provider`),
           events: [
@@ -4292,6 +4390,24 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
               occurredAt: now,
               payload: { ...childProjection.runs[0]!, providerThreadId },
             },
+            ...[
+              childItem("report", report, 200),
+              {
+                ...childItem("hook", "", 201),
+                type: "system_notice" as const,
+                title: "Stop hook feedback",
+                message: "Stop hook feedback",
+                continuation: { kind: "stop_hook" as const },
+              },
+              childItem("correction", correction, 202),
+            ].map((payload) => ({
+              id: EventId.make(`event:result-message${key}:${payload.id}`),
+              type: "turn-item.updated" as const,
+              threadId: child.childThreadId,
+              runId: child.childRunId,
+              occurredAt: now,
+              payload,
+            })),
           ],
         });
 
@@ -4299,7 +4415,7 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
         const recovered = yield* orchestrator.getThreadProjection(threadId);
         const task = recovered.subagents.find((candidate) => candidate.id === child.taskId)!;
         assert.equal(task.status, "completed");
-        assert.isNotNull(task.result);
+        assert.equal(task.result, `${report}\n\n## Stop hook follow-up\n\n${correction}`);
         assert.isEmpty(recovered.contextHandoffs);
         assert.equal(recovered.contextTransfers.length, 1);
         // A one-process-per-thread child releases its process once its result is recorded,

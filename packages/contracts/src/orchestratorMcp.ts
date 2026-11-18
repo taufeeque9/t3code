@@ -587,6 +587,15 @@ export const OrchestratorMcpThreadWaitInput = Schema.Struct({
 });
 export type OrchestratorMcpThreadWaitInput = typeof OrchestratorMcpThreadWaitInput.Type;
 
+const DelegatedStopHookReplies = Schema.Array(
+  Schema.Struct({
+    runId: RunId,
+    reportItemId: TurnItemId,
+    reportItemIds: Schema.optional(Schema.Array(TurnItemId)),
+    failureItemId: Schema.optional(TurnItemId),
+    followUp: Schema.String,
+  }),
+);
 export const OrchestratorMcpThreadWaitResult = Schema.Struct({
   threadId: ThreadId,
   runId: Schema.NullOr(RunId),
@@ -595,6 +604,8 @@ export const OrchestratorMcpThreadWaitResult = Schema.Struct({
   next: Schema.optional(OrchestratorMcpRunningTaskNext),
   /** With untilDelegatedWorkSettled, once settled: the run whose reply is the thread's result. */
   resultRun: Schema.optional(Schema.Struct({ runId: RunId, status: OrchestrationV2RunStatus })),
+  stopHookReplies: Schema.optional(DelegatedStopHookReplies),
+  delegatedResultParts: Schema.optional(DelegatedStopHookReplies),
 });
 export type OrchestratorMcpThreadWaitResult = typeof OrchestratorMcpThreadWaitResult.Type;
 

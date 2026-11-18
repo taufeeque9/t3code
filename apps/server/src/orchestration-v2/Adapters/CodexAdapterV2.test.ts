@@ -73,6 +73,7 @@ import * as EffectWorker from "../EffectWorker.ts";
 import * as Orchestrator from "../Orchestrator.ts";
 import * as ProviderReplayHarness from "../testkit/ProviderReplayHarness.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { stopHookResultForRun } from "@t3tools/provider-core/server/subagentProjection";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ModelManifest from "../../provider/ModelManifest.ts";
 import * as PortScanner from "../../preview/PortScanner.ts";
@@ -5245,6 +5246,122 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ],
     });
   };
+
+  it.effect("marks the injected prompt from a blocked Codex Stop hook", () =>
+    Effect.gen(function* () {
+      const scenario = "codex-stop-hook-follow-up";
+      const nativeThreadId = `native-${scenario}-thread`;
+      const nativeTurnId = `native-${scenario}-turn`;
+      const transcript = finalAnswerTranscript(scenario, [
+        { id: "report", text: "The test passes now." },
+        { id: "checked", text: "I re-ran it to check." },
+        { id: "repeated", text: "The test passes now." },
+      ]);
+      const hookCompleted = (eventName: string, status: "blocked" | "completed", id: string) => ({
+        type: "emit_inbound" as const,
+        label: `hook/completed/${id}`,
+        frame: {
+          method: "hook/completed",
+          params: {
+            threadId: nativeThreadId,
+            turnId: nativeTurnId,
+            run: {
+              id,
+              eventName,
+              sourcePath: "/workspace/.codex/hooks.json",
+              scope: "turn",
+              executionMode: "sync",
+              handlerType: "command",
+              displayOrder: 1,
+              startedAt: 1782622440,
+              status,
+              entries: status === "blocked" ? [{ kind: "feedback", text: "Check the test." }] : [],
+            },
+          },
+        },
+      });
+      const hookPrompt = (id: string) => ({
+        type: "emit_inbound" as const,
+        label: `item/completed/${id}`,
+        frame: {
+          method: "item/completed",
+          params: {
+            threadId: nativeThreadId,
+            turnId: nativeTurnId,
+            completedAtMs: 1782622441000,
+            item: {
+              type: "hookPrompt",
+              id: `prompt-${id}`,
+              fragments: [{ hookRunId: id, text: "Check the test." }],
+            },
+          },
+        },
+      });
+      const harness = yield* makeCodexReplayHarness({
+        ...transcript,
+        entries: transcript.entries.flatMap((entry) =>
+          entry.type === "emit_inbound" && entry.label === "item/completed/checked"
+            ? [
+                hookCompleted("postToolUse", "blocked", "other"),
+                hookPrompt("other"),
+                hookCompleted("stop", "blocked", "stop"),
+                hookPrompt("stop"),
+                entry,
+                hookCompleted("stop", "completed", "stop"),
+              ]
+            : entry.type === "emit_inbound" && entry.label === "item/completed/repeated"
+              ? [hookCompleted("stop", "blocked", "again"), hookPrompt("again"), entry]
+              : [entry],
+        ),
+      });
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make(scenario),
+          text: "Reply with the requested recovery marker.",
+        }),
+      );
+      yield* harness.awaitTerminal(1);
+      const relevant = harness.events.flatMap((event) =>
+        event.type === "turn_item.updated" &&
+        (event.turnItem.type === "system_notice" || event.turnItem.type === "assistant_message")
+          ? [event.turnItem]
+          : [],
+      );
+      assert.deepEqual(
+        relevant.map((item) => item.nativeItemRef?.nativeId),
+        ["report", "prompt-stop", "checked", "prompt-again", "repeated"],
+      );
+      assert.deepEqual(
+        relevant.map((item) => item.ordinal),
+        relevant.map((item) => item.ordinal).toSorted((a, b) => a - b),
+      );
+      const runId = relevant[0]?.runId;
+      assert.isNotNull(runId);
+      const reply =
+        runId == null
+          ? undefined
+          : stopHookResultForRun(relevant, { id: runId, status: "completed" });
+      assert.equal(reply?.report.text, "The test passes now.");
+      assert.equal(
+        reply?.followUp,
+        "Hook asked: Check the test.\nThe test passes now.\n\nHook asked: Check the test.\nI re-ran it to check.",
+      );
+      assert.equal(harness.terminalEvents()[0]?.status, "completed");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
 
   it.effect.each([false, true])(
     "preserves a final answer that repeats a preceding partial answer (streamed: %s)",

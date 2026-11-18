@@ -289,6 +289,57 @@ with a stop-hook self-check fully expanded", "keeps a response with a Claude
 stop-hook follow-up unfolded"). Retire them only once those fold tests pass on
 upstream's code without the fork's checks.
 
+### Delegation: Stop hook results
+
+Codex correlates a blocked `stop` notification with the injected `hookPrompt`
+before opening a Stop hook round. Its redundant-final text check resets at that
+boundary. Completed native item IDs still suppress replays. Claude classifies
+synthetic root Stop feedback and goal evaluator feedback separately. Both adapters
+persist the boundary kind on an ordered notice. The selector consumes that kind,
+while the clients still use the Stop hook notice for folding.
+
+The selector chooses the last provider turn with a reply before comparing item
+ordinals, which can overlap across turns. In that turn, it uses item start times
+from the child host to compare accepted steers with provider output and breaks
+ties using projection insertion order. The report
+is the final response before the first Stop hook. A new hook or goal evaluator
+boundary closes the current round. Claude joins text blocks by native response
+ID and records tool-use response IDs alongside the last tool ordinal. A snapshot
+with a tool-use stop reason can include progress text after the tool item.
+
+**Stop hook follow-up** lists retained rounds newest first. A short **Hook asked**
+line precedes each answer when the provider supplied a question. Questions and
+answers share a 4 KiB UTF-8 limit, with an omission note when needed. A failed or
+interrupted run keeps its effective outcome and includes the report as partial
+work, plus any completed hook answer.
+
+**Open item:** When the actual question follows more than 240 UTF-8 bytes of
+setup, **Hook asked** can show only the setup. Preserve an identifiable question
+or provide a way to read the full prompt when the excerpt is cut.
+
+One labelled string serves the parent notification and the existing `summary`
+and `latestTerminalSummary` fields. Separate result fields would require every
+consumer to render both. A transcript would repeat progress, and a pointer alone
+would leave the parent to find the report. The stored report offset lets the
+wake prioritize the report within its 16,000-byte allowance. It reserves space
+for the `task_status` pointer and marks any cut at a UTF-8 boundary.
+`task_status` provides the full report and acknowledges results whose source
+items span multiple transcript pages. An activity page can acknowledge a result
+only when it includes its source messages and any retained hook questions.
+
+For linked delegation, the child host selects the result using the effective run
+outcome. The existing settled wait carries report item IDs and the bounded
+appendix. The parent reads the selected blocks through the existing paginated item
+read. Failed and multipart results use a separate response field so older peers
+can still read failures from activity. The exact legacy Stop hook notice
+remains a boundary for results pending at upgrade.
+
+**On conflict:** keep provider classification at the prompt handlers, preserve
+the typed boundaries and native response IDs at projection, and keep selection
+and formatting shared between local and linked results. Check upstream changes
+to provider Stop events, Codex final-answer deduplication, and linked wait
+metadata against the regression fixtures.
+
 ### Chat: fork from a user message
 
 Upstream forks only after an assistant response. A **Fork from here** button on

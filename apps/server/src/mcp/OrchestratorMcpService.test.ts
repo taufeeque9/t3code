@@ -91,6 +91,8 @@ describe("OrchestratorMcpService", () => {
       const parentThreadId = ThreadId.make("thread:mcp-ack-parent");
       const childThreadId = ThreadId.make("thread:mcp-ack-child");
       const childRunId = RunId.make("run:mcp-ack-child");
+      const laterRunId = RunId.make("run:mcp-ack-continuation");
+      const at = DateTime.makeUnsafe("2026-10-03T10:11:00Z");
       const taskId = NodeId.make("node:mcp-ack-task");
       const resultTransferId = ContextTransferId.make("transfer:mcp-ack-result");
       const acknowledgementCommandIds = yield* Ref.make<ReadonlyArray<string>>([]);
@@ -122,11 +124,12 @@ describe("OrchestratorMcpService", () => {
             completedAt: DateTime.makeUnsafe("2026-10-03T10:10:00Z"),
           },
           {
-            id: RunId.make("run:mcp-ack-continuation"),
+            id: laterRunId,
             ordinal: 2,
-            status: "failed",
+            status: "completed",
+            restartCancelledBackgroundWork: [{ kind: "shell", awaited: true }],
             startedAt: DateTime.makeUnsafe("2026-10-03T10:02:00Z"),
-            completedAt: DateTime.makeUnsafe("2026-10-03T10:05:00Z"),
+            completedAt: at,
           },
         ],
         contextTransfers: [
@@ -148,7 +151,36 @@ describe("OrchestratorMcpService", () => {
             updatedAt: DateTime.makeUnsafe("2026-10-03T10:10:00Z"),
           },
         ],
-        turnItems: [],
+        turnItems: [
+          {
+            id: "partial",
+            type: "assistant_message",
+            messageId: "partial",
+            text: "Partial findings.",
+            status: "completed",
+          },
+          {
+            id: "notice",
+            type: "system_notice",
+            title: "Stop hook feedback",
+            message: "Stop hook feedback",
+            continuation: { kind: "stop_hook" },
+          },
+          {
+            id: "check",
+            type: "assistant_message",
+            messageId: "check",
+            text: "The audit was incomplete.",
+            status: "completed",
+          },
+        ].map((item, ordinal) => ({
+          ...item,
+          ordinal,
+          runId: laterRunId,
+          providerTurnId: null,
+          startedAt: at,
+          updatedAt: at,
+        })),
         subagents: [],
         providerThreads: [],
         providerTurns: [],
@@ -156,6 +188,7 @@ describe("OrchestratorMcpService", () => {
       } as unknown as OrchestrationV2ThreadProjection;
       let hasNestedWork = true;
       let settleAfterTaskRead = false;
+      let includeLaterRun = false;
       const layerDependencies = Layer.mergeAll(
         NodeServices.layer,
         NodeCrypto.layer,
@@ -171,7 +204,9 @@ describe("OrchestratorMcpService", () => {
                         { ...parentProjection.subagents[0]!, status: "running" as const },
                       ],
                     }
-                  : childProjection;
+                  : includeLaterRun
+                    ? childProjection
+                    : { ...childProjection, runs: [childProjection.runs[0]!], turnItems: [] };
               }
               const snapshot = hasNestedWork
                 ? {
@@ -250,6 +285,14 @@ describe("OrchestratorMcpService", () => {
         const commandIds = yield* Ref.get(acknowledgementCommandIds);
         assert.equal(commandIds.length, 2);
         assert.notEqual(commandIds[0], commandIds[1]);
+        includeLaterRun = true;
+        const later = yield* service.taskStatus(scope, taskId);
+        assert.equal(later.latestTerminalRunId, laterRunId);
+        assert.equal(later.latestTerminalStatus, "interrupted");
+        assert.equal(
+          later.latestTerminalSummary,
+          "Child task ended with status interrupted.\n\nPartial report before the Stop hook:\n\nPartial findings.\n\n## Stop hook follow-up\n\nThe audit was incomplete.",
+        );
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
     }),
   );

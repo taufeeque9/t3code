@@ -94,7 +94,9 @@ import * as Stream from "effect/Stream";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import {
   subagentResultForRun,
+  SUBAGENT_RESULT_ITEMS,
   delegatedTaskProgress,
+  delegatedWaitResultFields,
 } from "@t3tools/provider-core/server/subagentProjection";
 import {
   DispatchModeLimit,
@@ -695,20 +697,29 @@ function pageIncludesTerminalTaskResult(input: {
     transfer.sourcePoint.runId === undefined
       ? delegatedTaskRun(input.target, input.task)
       : input.target.runs.find((run) => run.id === transfer.sourcePoint.runId);
-  if (run === undefined || !isTerminalTaskStatus(taskStatusForRun(run))) return false;
+  const status = taskStatusForRun(run);
+  if (run === undefined || !isTerminalTaskStatus(status)) return false;
 
-  const result = subagentResultForRun(input.target, run);
+  const result = subagentResultForRun(input.target, { ...run, status });
   if (result.messageId === null && result.turnItemId === null) return false;
+  const completeItems = input.items.filter(
+    (item) =>
+      item.sourceThreadId === input.target.thread.id && item.text !== null && !item.textTruncated,
+  );
+  // A paginated read proves only what this page contains. task_status delivers the combined result.
+  if (
+    result.resultItemIds !== undefined &&
+    !result.resultItemIds.every((id) => completeItems.some((item) => item.itemId === id))
+  )
+    return false;
 
-  return input.items.some((item) => {
-    if (item.sourceThreadId !== input.target.thread.id) return false;
-    const matchesResult =
+  return completeItems.some(
+    (item) =>
       (result.turnItemId !== null && item.itemId === result.turnItemId) ||
       (result.messageId !== null &&
         item.type === "assistant_message" &&
-        item.messageId === result.messageId);
-    return matchesResult && item.text !== null && !item.textTruncated;
-  });
+        item.messageId === result.messageId),
+  );
 }
 
 function latestTerminalResultRun(
@@ -1111,8 +1122,11 @@ function turnItemText(item: OrchestrationV2TurnItem): string | null {
       return jsonText(item.files);
     case "run_interrupt_request":
     case "run_interrupt_result":
-    case "system_notice":
       return item.message;
+    case "system_notice":
+      return item.continuation?.kind === "stop_hook" && item.continuation.question !== undefined
+        ? `${item.message}\n\nHook asked: ${item.continuation.question}`
+        : item.message;
     case "error":
       return item.failure.message;
     case "compaction":
@@ -1806,7 +1820,7 @@ const make = Effect.gen(function* () {
         messageRoles: ["assistant"],
         messageRunIds: resultRunIds,
         turnItemRunIds: resultRunIds,
-        turnItemTypes: ["assistant_message", "error"],
+        ...SUBAGENT_RESULT_ITEMS,
       })
       .pipe(Effect.mapError(threadManagementFailure));
     const childProjection = {
@@ -1839,7 +1853,7 @@ const make = Effect.gen(function* () {
       task.result !== null
         ? task.result
         : taskResultRun !== undefined && isTerminalTaskStatus(status)
-          ? subagentResultForRun(childProjection, taskResultRun).text
+          ? subagentResultForRun(childProjection, { ...taskResultRun, status }).text
           : null;
     const resultTransfers = childControls.contextTransfers.filter(
       (transfer) =>
@@ -1860,7 +1874,8 @@ const make = Effect.gen(function* () {
     const latestTerminalSummary = canExposeTaskRunResult(terminalRun)
       ? terminalRun.id === childRun?.id
         ? derivedResult
-        : subagentResultForRun(childProjection, terminalRun).text
+        : subagentResultForRun(childProjection, { ...terminalRun, status: runOutcome(terminalRun) })
+            .text
       : null;
     const resultContextTransferId = resultTransfer?.id ?? null;
     const latestTerminalResultContextTransferId = resultTransferForRun(terminalRun)?.id ?? null;
@@ -3431,7 +3446,7 @@ const make = Effect.gen(function* () {
               messageRoles: ["assistant"],
               messageRunIds: resultRunIds,
               turnItemRunIds: resultRunIds,
-              turnItemTypes: ["assistant_message", "error"],
+              ...SUBAGENT_RESULT_ITEMS,
             })
             .pipe(Effect.mapError(threadManagementFailure));
           if (
@@ -3552,12 +3567,40 @@ const make = Effect.gen(function* () {
         : [];
       const wakesCaller =
         ownedTask && !childRequests.some((request) => request.status === "pending");
+      const terminalRuns = new Map<RunId, OrchestrationV2Run>();
+      if (
+        scope.client?.linked === true &&
+        input.untilDelegatedWorkSettled === true &&
+        !result.timedOut
+      ) {
+        for (const run of [result.run, result.resultRun]) {
+          const outcome = taskStatusForRun(run ?? undefined);
+          if (run != null && isTerminalTaskStatus(outcome)) {
+            terminalRuns.set(run.id, { ...run, status: outcome });
+          }
+        }
+      }
+      const resultParts =
+        terminalRuns.size === 0
+          ? undefined
+          : yield* threadManagement
+              .getThreadRecords(input.threadId, ["turnItems", "providerTurns"], {
+                turnItemRunIds: [...terminalRuns.keys()],
+                ...SUBAGENT_RESULT_ITEMS,
+                providerTurnAttemptIds: [...terminalRuns.values()].flatMap((run) =>
+                  run.activeAttemptId == null ? [] : [run.activeAttemptId],
+                ),
+              })
+              .pipe(Effect.mapError(threadManagementFailure));
       return {
         threadId: input.threadId,
         runId: result.run?.id ?? null,
         status,
         timedOut: result.timedOut,
         ...(wakesCaller ? { next: ORCHESTRATOR_MCP_RUNNING_TASK_NEXT } : {}),
+        ...(resultParts === undefined
+          ? {}
+          : delegatedWaitResultFields(terminalRuns.values(), resultParts)),
         ...(result.resultRun === undefined
           ? {}
           : {

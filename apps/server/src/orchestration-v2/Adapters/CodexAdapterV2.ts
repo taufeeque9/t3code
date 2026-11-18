@@ -156,6 +156,8 @@ import {
 import {
   makeSubagentChildThread,
   makeSubagentConversationArtifacts,
+  STOP_HOOK_FEEDBACK_NOTICE,
+  stopHookQuestion,
   subagentThreadTitle,
 } from "@t3tools/provider-core/server/subagentProjection";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -1278,6 +1280,8 @@ function failureResetAt(
 
 interface ActiveCodexTurnContext {
   hookStopReason?: string;
+  blockedStopHookIds?: Set<string>;
+  completedFinalAnswerItemIds?: Set<string>;
   capacityRetryAttempt?: number;
   capacityRetryPending?: Deferred.Deferred<ActiveCodexTurnContext | undefined>;
   closedCommandItemIds?: ReadonlySet<string>;
@@ -3894,6 +3898,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 .get(update.turnId)
                 ?.has(update.itemId);
               if (finalAnswerItem) {
+                if (context.completedFinalAnswerItemIds?.has(update.itemId)) return;
                 const finalAnswerItemIds = (yield* Ref.get(finalAnswerItemIdsByTurn)).get(
                   update.turnId,
                 );
@@ -5057,9 +5062,24 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
         yield* client.handleServerNotification("hook/completed", (payload) =>
           Effect.gen(function* () {
-            if (payload.turnId == null || payload.run.status !== "stopped") return;
+            if (
+              payload.turnId == null ||
+              (payload.run.status !== "stopped" && payload.run.eventName !== "stop")
+            )
+              return;
             const context = (yield* Ref.get(activeTurns)).get(payload.turnId);
             if (context?.providerThread.nativeThreadRef?.nativeId !== payload.threadId) return;
+            if (payload.run.eventName === "stop") {
+              if (
+                payload.run.status === "blocked" &&
+                payload.run.entries.some((entry) => entry.kind === "feedback" && entry.text.trim())
+              ) {
+                (context.blockedStopHookIds ??= new Set()).add(payload.run.id);
+              } else {
+                context.blockedStopHookIds?.delete(payload.run.id);
+              }
+            }
+            if (payload.run.status !== "stopped") return;
             const reason = payload.run.entries
               .filter((entry) => entry.kind === "stop")
               .map((entry) => entry.text.trim())
@@ -5530,6 +5550,62 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }
             const { context, settled } = resolved;
 
+            if (payload.item.type === "hookPrompt") {
+              const blockedStops = context.blockedStopHookIds;
+              if (
+                settled ||
+                context.providerThread.nativeThreadRef?.nativeId !== payload.threadId ||
+                blockedStops === undefined
+              )
+                return;
+              const injected = payload.item.fragments.filter((fragment) =>
+                blockedStops.has(fragment.hookRunId),
+              );
+              if (injected.length === 0) return;
+              blockedStops.clear();
+              const question = stopHookQuestion(
+                injected.map((fragment) => fragment.text).join(" "),
+              );
+              yield* agentMessageDeltas.flushTurn(payload.turnId);
+              yield* Ref.update(completedFinalAnswerTextsByTurn, (current) => {
+                const next = new Map(current);
+                next.delete(payload.turnId);
+                return next;
+              });
+              const nativeItemId = payload.item.id;
+              const now = DateTime.makeUnsafe(payload.completedAtMs);
+              yield* emitProviderEvent({
+                type: "turn_item.updated",
+                driver: CODEX_PROVIDER,
+                turnItem: {
+                  id: idAllocator.derive.turnItemFromProviderItem({
+                    driver: CODEX_PROVIDER,
+                    nativeItemId,
+                  }),
+                  threadId: context.projectionThreadId,
+                  runId: context.projectionRunId,
+                  nodeId: context.providerNodeId,
+                  providerThreadId: context.providerThread.id,
+                  providerTurnId: context.providerTurnId,
+                  nativeItemRef: codexNativeItemRef(nativeItemId),
+                  parentItemId: null,
+                  ordinal: yield* resolveItemOrdinal(context, nativeItemId),
+                  type: "system_notice",
+                  status: "completed",
+                  title: STOP_HOOK_FEEDBACK_NOTICE,
+                  message: STOP_HOOK_FEEDBACK_NOTICE,
+                  continuation: {
+                    kind: "stop_hook",
+                    ...(question === undefined ? {} : { question }),
+                  },
+                  startedAt: now,
+                  completedAt: now,
+                  updatedAt: now,
+                },
+              });
+              return;
+            }
+
             if (payload.item.type === "reasoning") {
               yield* completeReasoning(payload.turnId, payload.item);
               return;
@@ -5808,6 +5884,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             if (payload.item.phase != null)
               context.messagePhases.set(payload.item.id, payload.item.phase);
             const finalAnswer = payload.item.phase == null || payload.item.phase === "final_answer";
+            if (finalAnswer && context.completedFinalAnswerItemIds?.has(payload.item.id)) return;
             if (finalAnswer) {
               yield* Ref.update(finalAnswerItemIdsByTurn, (current) => {
                 const updated = new Map(current);
@@ -5825,6 +5902,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               itemId: payload.item.id,
               finalText: payload.item.text,
             });
+            if (finalAnswer)
+              (context.completedFinalAnswerItemIds ??= new Set()).add(payload.item.id);
             yield* Ref.update(finalAnswerItemIdsByTurn, (current) => {
               const itemIds = current.get(payload.turnId);
               if (itemIds === undefined || !itemIds.has(payload.item.id)) {
