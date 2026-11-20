@@ -476,12 +476,13 @@ export interface ThreadManagementServiceShape {
   readonly waitForThread: (
     input: ThreadManagementWaitInput,
   ) => Effect.Effect<ThreadManagementWaitResult, ThreadManagementError>;
-  /** Waits for the agent's run and automatic follow-ups before settling.
+  /** Waits for the agent's run and automatic follow-ups before settling, or archiving.
    * A new user turn or an unsuccessful ending leaves the thread active. */
   readonly settleAfterRun: (input: {
     readonly projectId: ProjectId;
     readonly threadId: ThreadId;
     readonly runId: RunId;
+    readonly action?: "settle" | "archive";
   }) => Effect.Effect<void, ThreadManagementFailure>;
   readonly settleThread: (input: {
     readonly threadId: ThreadId;
@@ -489,6 +490,14 @@ export interface ThreadManagementServiceShape {
     readonly byOwnAgent: boolean;
   }) => Effect.Effect<
     { readonly sequence: number } | { readonly settlesWhenTurnEnds: true },
+    Orchestrator.OrchestratorV2Error | ThreadManagementProviderInstanceDisabledError
+  >;
+  /** Archiving detaches the provider session, so an agent archiving its own thread waits for its turn. */
+  readonly archiveOwnThread: (input: {
+    readonly threadId: ThreadId;
+    readonly commandId: CommandId;
+  }) => Effect.Effect<
+    { readonly sequence: number } | { readonly archivesWhenTurnEnds: true },
     Orchestrator.OrchestratorV2Error | ThreadManagementProviderInstanceDisabledError
   >;
   readonly interruptThread: (
@@ -1135,6 +1144,7 @@ const make = Effect.gen(function* () {
     const trySettle = Effect.gen(function* () {
       const sequence = yield* orchestrator.getThreadEventSequence(input.threadId);
       const records = yield* getProjectThreadRecords(input, ["runs"]);
+      if (input.action === "archive" && records.thread.archivedAt !== null) return true;
       // Settling ends every watch; one the agent started after asking to settle must outlive it.
       if (
         threadPullRequestsOf(records.thread).some(
@@ -1198,12 +1208,21 @@ const make = Effect.gen(function* () {
       }
       const latest = latestRun(records);
       if (latest === undefined) return true;
-      return yield* dispatch({
-        type: "thread.settle",
-        commandId: CommandId.make(`server:settle-after-run:${input.runId}:${sequence}`),
-        threadId: input.threadId,
-        expectedLatestRunId: latest.id,
-      }).pipe(
+      return yield* dispatch(
+        input.action === "archive"
+          ? {
+              type: "thread.archive",
+              commandId: CommandId.make(`server:archive-after-run:${input.runId}:${sequence}`),
+              threadId: input.threadId,
+              onlyIfIdle: true,
+            }
+          : {
+              type: "thread.settle",
+              commandId: CommandId.make(`server:settle-after-run:${input.runId}:${sequence}`),
+              threadId: input.threadId,
+              expectedLatestRunId: latest.id,
+            },
+      ).pipe(
         Effect.as(true),
         // A notification can start between the projection read and the guarded dispatch.
         Effect.catchTags({
@@ -1218,7 +1237,8 @@ const make = Effect.gen(function* () {
           .streamStoredEventsFrom({
             threadId: input.threadId,
             afterSequence,
-            eventType: "run.updated",
+            // Archive also waits on delegated tasks, which end without a run update.
+            ...(input.action === "archive" ? {} : { eventType: "run.updated" as const }),
           })
           .pipe(Stream.mapEffect(() => trySettle)),
       ),
@@ -1242,6 +1262,27 @@ const make = Effect.gen(function* () {
     }
     const result = yield* dispatch({
       type: "thread.settle",
+      commandId: input.commandId,
+      threadId: input.threadId,
+    });
+    return { sequence: result.sequence };
+  });
+
+  const archiveOwnThread: ThreadManagementServiceShape["archiveOwnThread"] = Effect.fn(
+    "orchestrationV2.threadManagement.archiveOwnThread",
+  )(function* (input) {
+    const shell = yield* orchestrator.getThreadShell(input.threadId);
+    if (shell != null && shell.activeRunId !== null) {
+      yield* settleAfterRun({
+        projectId: shell.projectId,
+        threadId: shell.id,
+        runId: shell.activeRunId,
+        action: "archive",
+      }).pipe(Effect.ignoreCause({ log: true }), Effect.forkIn(layerScope));
+      return { archivesWhenTurnEnds: true } as const;
+    }
+    const result = yield* dispatch({
+      type: "thread.archive",
       commandId: input.commandId,
       threadId: input.threadId,
     });
@@ -1777,6 +1818,7 @@ const make = Effect.gen(function* () {
     waitForThread,
     settleAfterRun,
     settleThread,
+    archiveOwnThread,
     interruptThread,
     stopDelegatedTasks,
     stopWorkflow,

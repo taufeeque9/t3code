@@ -580,6 +580,31 @@ variable (a fresh shell, the devbox server) never sends events.
 
 **On conflict:** take upstream's code and re-apply both defaults.
 
+### An agent archiving its own thread waits for its turn
+
+Upstream's `thread.archive` detaches every provider session, including the one
+running the caller's turn, so an agent that archives its own thread as its last
+step fails that turn with "The provider event stream closed unexpectedly"
+([pingdotgg/t3code#15135](https://github.com/pingdotgg/t3code/issues/15135)).
+Scheduled tasks that archive their run threads all ended as failed.
+
+- `ThreadManagementService.ts`: `archiveOwnThread` defers an archive during an
+  active run through `settleAfterRun` with `action: "archive"`, the same wait an
+  own-agent settle uses (a failed turn or a new user message leaves the thread
+  active). Its retry wakes on every thread event, since a delegated task that
+  blocks archiving can end without a run update.
+- The deferred `thread.archive` sends `onlyIfIdle` (contracts), and the
+  orchestrator refuses it while any run is active or queued, so it never cancels
+  a held message or detaches a turn that started after the caller's.
+- `t3_thread_organize` routes an agent's archive of its own thread through
+  `archiveOwnThread` and can return `{ archivesWhenTurnEnds: true }`; its
+  description says archiving this thread applies at turn end.
+
+**On conflict:** upstream's open fix (#23451) instead refuses archiving a thread
+with an active run, which would make these agents' archive calls fail. If it
+lands, keep the own-agent deferral on top of it and ask which behavior to keep
+for other callers.
+
 ## Retired: superseded by upstream
 
 ### Packaged backend ships zod for @cursor/sdk

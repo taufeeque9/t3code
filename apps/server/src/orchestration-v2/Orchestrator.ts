@@ -4215,8 +4215,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
     if (command.type === "thread.archive") {
       const records = yield* projectionStore
-        .getThreadRecords(command.threadId, ["subagents"])
+        .getThreadRecords(command.threadId, ["subagents", "runs"])
         .pipe(mapDispatchError(command));
+      if (
+        command.onlyIfIdle === true &&
+        records.runs.some((run) => run.status === "queued" || isActiveRun(run))
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} has an active or queued run.`,
+        });
+      }
       if (
         records.subagents.some(
           (task) =>

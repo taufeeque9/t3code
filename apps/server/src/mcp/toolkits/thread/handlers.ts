@@ -368,6 +368,9 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           .settleThread({ ...common, byOwnAgent: caller?.id === projection.thread.id })
           .pipe(Effect.mapError(dispatchFailure));
       }
+      if (input.action === "archive" && caller?.id === projection.thread.id) {
+        return yield* threads.archiveOwnThread(common).pipe(Effect.mapError(dispatchFailure));
+      }
       let command: OrchestrationV2Command;
       switch (input.action) {
         case "snooze":

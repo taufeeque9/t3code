@@ -3160,6 +3160,8 @@ export const OrchestrationV2Command = Schema.Union([
     type: Schema.Literal("thread.archive"),
     commandId: CommandId,
     threadId: ThreadId,
+    /** Refuse while any run is active or queued, so archiving cancels and detaches nothing. */
+    onlyIfIdle: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.guest-share.close"),
