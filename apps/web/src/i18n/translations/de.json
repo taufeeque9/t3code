@@ -7651,7 +7651,7 @@
       "v": "v"
     }
   ],
-  "07e110f8d342c50e": "Markiert Formulierungen in Agent-Antworten. Eine Formulierung trifft ganze Wörter unabhängig von Groß- und Kleinschreibung; eine Regex-Regel nutzt JavaScript-Syntax. Überschneiden sich Treffer, gewinnt die weiter oben stehende Regel.",
+  "4ffc9a2adb778e40": "Markiert Formulierungen in Agent-Antworten. Eine Formulierung trifft ganze Wörter unabhängig von Groß- und Kleinschreibung; eine Regex-Regel nutzt JavaScript-Syntax. Überschneiden sich Treffer, gewinnt der früher beginnende; bei Gleichstand entscheidet die weiter oben stehende Regel.",
   "6b6e5dad23496e1d": "Hervorhebungen auf Standard zurücksetzen",
   "ac4f6f39e3a26d00": "Hervorhebung {number}",
   "703191da47e04d63": "{name} hervorheben",
@@ -7676,6 +7676,7 @@
     " Hervorhebungen"
   ],
   "c0b7079aa9880c11": "Regex",
+  "2cad551ba0b86db3": "Möglicherweise zu langsam; vermeide verschachtelte Wiederholungen",
   "d0e747ae0c4f68a5": "t3 konnte nicht installiert werden",
   "ba3ac338f36cba74": "t3 konnte nicht entfernt werden",
   "9c942b53b58119b8": "t3 konnte nicht zu PATH hinzugefügt werden",

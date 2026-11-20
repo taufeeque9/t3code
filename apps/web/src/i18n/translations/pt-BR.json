@@ -7650,7 +7650,7 @@
       "v": "v"
     }
   ],
-  "07e110f8d342c50e": "Destaca frases nas respostas do agente. Uma frase corresponde a palavras inteiras, sem diferenciar maiúsculas e minúsculas; uma regra regex usa a sintaxe do JavaScript. Quando correspondências se sobrepõem, vence a regra mais acima na lista.",
+  "4ffc9a2adb778e40": "Destaca frases nas respostas do agente. Uma frase corresponde a palavras inteiras, sem diferenciar maiúsculas e minúsculas; uma regra regex usa a sintaxe do JavaScript. Quando correspondências se sobrepõem, vence a que começa primeiro, e a regra mais acima na lista desempata.",
   "6b6e5dad23496e1d": "Redefinir os destaques para o padrão",
   "ac4f6f39e3a26d00": "Destaque {number}",
   "703191da47e04d63": "Destacar {name}",
@@ -7675,6 +7675,7 @@
     " destaques"
   ],
   "c0b7079aa9880c11": "Regex",
+  "2cad551ba0b86db3": "Pode ser lenta demais; evite repetições aninhadas",
   "d0e747ae0c4f68a5": "Não foi possível instalar o t3",
   "ba3ac338f36cba74": "Não foi possível remover o t3",
   "9c942b53b58119b8": "Não foi possível adicionar o t3 ao PATH",

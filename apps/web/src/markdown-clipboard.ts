@@ -485,10 +485,6 @@ function mathSourceElement(wrapper: Element): Element {
 }
 
 function sanitizedHtmlFrom(container: Element): string {
-  // Highlights are a reading aid in this app, not part of the reply.
-  for (const highlight of container.querySelectorAll(`[${CHAT_HIGHLIGHT_ATTRIBUTE}]`)) {
-    highlight.replaceWith(...highlight.childNodes);
-  }
   for (const diagram of container.querySelectorAll("[data-markdown-mermaid]")) {
     const source = diagram.getAttribute("data-markdown-copy");
     if (source !== null) diagram.replaceChildren(mermaidSourceHtml(source));
@@ -551,6 +547,12 @@ export function chatMarkdownClipboardPayload(
     if (range.collapsed) continue;
     const container = document.createElement("div");
     container.appendChild(range.cloneContents());
+    // Highlights are a reading aid, not part of the reply. Merging the text they split keeps
+    // `build_id` from serializing as `build\_id`.
+    for (const highlight of container.querySelectorAll(`[${CHAT_HIGHLIGHT_ATTRIBUTE}]`)) {
+      highlight.replaceWith(...highlight.childNodes);
+    }
+    container.normalize();
     keepStartListNumbers(range, container);
     // The indentation typed at a line start only shows; pasted, it would turn lines into code.
     for (const indentation of container.querySelectorAll("[data-leading-whitespace]")) {

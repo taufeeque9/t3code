@@ -7650,7 +7650,7 @@
       "v": "v"
     }
   ],
-  "07e110f8d342c50e": "Resalta frases en las respuestas del agente. Una frase coincide con palabras completas sin distinguir mayúsculas; una regla regex usa la sintaxis de JavaScript. Si las coincidencias se solapan, gana la regla más arriba en la lista.",
+  "4ffc9a2adb778e40": "Resalta frases en las respuestas del agente. Una frase coincide con palabras completas sin distinguir mayúsculas; una regla regex usa la sintaxis de JavaScript. Si las coincidencias se solapan, gana la que empieza antes, y la regla más arriba en la lista decide los empates.",
   "6b6e5dad23496e1d": "Restablecer los resaltados al valor predeterminado",
   "ac4f6f39e3a26d00": "Resaltado {number}",
   "703191da47e04d63": "Resaltar {name}",
@@ -7675,6 +7675,7 @@
     " resaltados"
   ],
   "c0b7079aa9880c11": "Regex",
+  "2cad551ba0b86db3": "Puede ser demasiado lenta; evita las repeticiones anidadas",
   "d0e747ae0c4f68a5": "No se pudo instalar t3",
   "ba3ac338f36cba74": "No se pudo quitar t3",
   "9c942b53b58119b8": "No se pudo añadir t3 al PATH",

@@ -1,5 +1,5 @@
 import { MISSING_FILE_ACCESS_MESSAGE } from "@t3tools/client-runtime/state/assets";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { type ChatHighlightRule, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { type ReactElement } from "react";
 import remarkGfm from "remark-gfm";
@@ -125,12 +125,20 @@ vi.mock(import("../hooks/useTheme"), async (original) => {
   };
 });
 
-const settingsOverrides = vi.hoisted(() => ({ mathRenderingEnabled: false }));
+const settingsOverrides = vi.hoisted(() => ({
+  mathRenderingEnabled: false,
+  chatHighlightRules: null as ReadonlyArray<ChatHighlightRule> | null,
+}));
 vi.mock(import("../hooks/useSettings"), async (original) => {
   const actual = await original();
   type Settings = ReturnType<typeof actual.getClientSettings>;
   function useClientSettings<T = Settings>(select?: (settings: Settings) => T): T {
-    const settings = { ...actual.getClientSettings(), ...settingsOverrides };
+    const { chatHighlightRules, ...overrides } = settingsOverrides;
+    const settings = {
+      ...actual.getClientSettings(),
+      ...overrides,
+      ...(chatHighlightRules ? { chatHighlightRules } : {}),
+    };
     return select ? select(settings) : (settings as T);
   }
   return { ...actual, useClientSettings };
@@ -166,6 +174,7 @@ function setup() {
   appearance.value = "light";
   parsedSources.length = 0;
   settingsOverrides.mathRenderingEnabled = false;
+  settingsOverrides.chatHighlightRules = null;
   renderDiagram.mockReset();
   workspaceSearch.mockReset().mockResolvedValue(AsyncResult.success({ entries: [] }));
   filesystemMetadata.mockReset().mockResolvedValue(AsyncResult.success({ entries: [null] }));
@@ -758,6 +767,22 @@ describe("ChatMarkdown copy", () => {
     const payload = chatMarkdownClipboardPayload(selection);
     expect(payload?.text).toBe("I pushed the fix.");
     expect(payload?.html).toBe('<meta charset="utf-8">I pushed the fix.');
+  });
+
+  it("copies text a highlight split without escaping it", async () => {
+    setup();
+    settingsOverrides.chatHighlightRules = [
+      { id: "u", label: "", pattern: "_", regex: true, color: "#000000", enabled: true },
+    ];
+    await using screen = await renderText("See build_id here.", { highlightRules: true });
+    const paragraph = screen.container.querySelector("p")!;
+    expect(paragraph.querySelector("mark")?.textContent).toBe("_");
+    const range = document.createRange();
+    range.selectNodeContents(paragraph);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    expect(chatMarkdownClipboardPayload(selection)?.text).toBe("See build_id here.");
   });
 
   it("copies part of inline code without prose escapes", async () => {

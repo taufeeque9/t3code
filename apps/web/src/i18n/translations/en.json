@@ -7658,7 +7658,7 @@
       "v": "v"
     }
   ],
-  "07e110f8d342c50e": "Marks phrases in agent replies. A phrase matches whole words in any case; a regex rule uses JavaScript syntax. Where matches overlap, the rule higher in the list wins.",
+  "4ffc9a2adb778e40": "Marks phrases in agent replies. A phrase matches whole words in any case; a regex rule uses JavaScript syntax. Where matches overlap, the one that starts first wins, and the rule higher in the list breaks a tie.",
   "6b6e5dad23496e1d": "Reset highlights to default",
   "ac4f6f39e3a26d00": "Highlight {number}",
   "703191da47e04d63": "Highlight {name}",
@@ -7683,6 +7683,7 @@
     " highlights"
   ],
   "c0b7079aa9880c11": "Regex",
+  "2cad551ba0b86db3": "May be too slow; avoid nested repetition",
   "d0e747ae0c4f68a5": "Could not install t3",
   "ba3ac338f36cba74": "Could not remove t3",
   "9c942b53b58119b8": "Could not add t3 to PATH",

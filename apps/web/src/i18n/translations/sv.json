@@ -7656,7 +7656,7 @@
       "v": "v"
     }
   ],
-  "07e110f8d342c50e": "Markerar fraser i agentens svar. En fras matchar hela ord oavsett skiftläge; en regex-regel använder JavaScript-syntax. När träffar överlappar vinner regeln högre upp i listan.",
+  "4ffc9a2adb778e40": "Markerar fraser i agentens svar. En fras matchar hela ord oavsett skiftläge; en regex-regel använder JavaScript-syntax. När träffar överlappar vinner den som börjar först, och regeln högre upp i listan avgör vid lika.",
   "6b6e5dad23496e1d": "Återställ markeringar till standard",
   "ac4f6f39e3a26d00": "Markering {number}",
   "703191da47e04d63": "Markera {name}",
@@ -7681,6 +7681,7 @@
     " markeringar"
   ],
   "c0b7079aa9880c11": "Regex",
+  "2cad551ba0b86db3": "Kan vara för långsam; undvik nästlad upprepning",
   "d0e747ae0c4f68a5": "Kunde inte installera t3",
   "ba3ac338f36cba74": "Kunde inte ta bort t3",
   "9c942b53b58119b8": "Kunde inte lägga till t3 i PATH",

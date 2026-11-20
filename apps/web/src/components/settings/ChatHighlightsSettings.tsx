@@ -7,14 +7,15 @@ import {
 import * as Equal from "effect/Equal";
 import { T, useGT, Var } from "gt-react";
 import { PlusIcon, XIcon } from "lucide-react";
-import { useState } from "react";
+import { type ChangeEvent, useEffect, useId, useRef, useState } from "react";
 
 import { hexToHsv, hsvToHex, type HsvColor } from "../../lib/color";
 import { randomUUID } from "../../lib/utils";
-import { highlightRuleRegex } from "../chat/markdownHighlights";
+import { useCommitOnBlur } from "../../hooks/useCommitOnBlur";
+import { highlightRuleProblem } from "../chat/markdownHighlights";
 import { Button } from "../ui/button";
 import { ColorHueSlider, ColorSaturationValuePlane } from "../ui/color-picker";
-import { DraftInput } from "../ui/draft-input";
+import type { DraftInputProps } from "../ui/draft-input";
 import { Input } from "../ui/input";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Switch } from "../ui/switch";
@@ -38,7 +39,7 @@ export function ChatHighlightsRow() {
     <SettingsRow
       {...setting("chat-highlights")}
       description={gt(
-        "Marks phrases in agent replies. A phrase matches whole words in any case; a regex rule uses JavaScript syntax. Where matches overlap, the rule higher in the list wins.",
+        "Marks phrases in agent replies. A phrase matches whole words in any case; a regex rule uses JavaScript syntax. Where matches overlap, the one that starts first wins, and the rule higher in the list breaks a tie.",
       )}
       resetAction={
         Equal.equals(rules, DEFAULT_CHAT_HIGHLIGHT_RULES) ? null : (
@@ -103,7 +104,8 @@ function ChatHighlightRuleFields(props: {
   const gt = useGT();
   const { rule, onChange } = props;
   const name = rule.label || gt("Highlight {number}", { number: props.number });
-  const invalid = rule.regex && rule.pattern.length > 0 && highlightRuleRegex(rule) === null;
+  const problem = highlightRuleProblem(rule);
+  const problemId = useId();
   return (
     <div role="group" aria-label={name} className="flex flex-col gap-1">
       <div className="flex flex-wrap items-center gap-2">
@@ -113,7 +115,7 @@ function ChatHighlightRuleFields(props: {
           onCheckedChange={(checked) => onChange({ enabled: Boolean(checked) })}
           aria-label={gt("Highlight {name}", { name })}
         />
-        <DraftInput
+        <FlushedDraftInput
           nativeInput
           size="sm"
           className="w-36"
@@ -123,7 +125,7 @@ function ChatHighlightRuleFields(props: {
           aria-label={gt("Label for {name}", { name })}
           onCommit={(label) => onChange({ label })}
         />
-        <DraftInput
+        <FlushedDraftInput
           nativeInput
           size="sm"
           font="mono"
@@ -132,7 +134,8 @@ function ChatHighlightRuleFields(props: {
           maxLength={MAX_CHAT_HIGHLIGHT_PATTERN_LENGTH}
           placeholder={rule.regex ? gt("Regular expression") : gt("Phrase")}
           aria-label={gt("Pattern for {name}", { name })}
-          aria-invalid={invalid || undefined}
+          aria-invalid={problem !== null || undefined}
+          aria-describedby={problem ? problemId : undefined}
           spellCheck={false}
           onCommit={(pattern) => onChange({ pattern })}
         />
@@ -159,12 +162,46 @@ function ChatHighlightRuleFields(props: {
           <XIcon />
         </Button>
       </div>
-      {invalid ? (
-        <p className="text-xs text-destructive">
-          <T>Invalid regular expression</T>
+      {problem ? (
+        <p id={problemId} className="text-xs text-destructive">
+          {problem === "invalid" ? (
+            <T>Invalid regular expression</T>
+          ) : (
+            <T>May be too slow; avoid nested repetition</T>
+          )}
         </p>
       ) : null}
     </div>
+  );
+}
+
+/** A pending edit to save when the field unmounts, since leaving Settings fires no blur. */
+function usePendingEdit() {
+  const pending = useRef<(() => void) | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Saves an edit still in progress when Settings closes.
+  useEffect(() => () => pending.current?.(), []);
+  return (edit: (() => void) | null) => {
+    pending.current = edit;
+  };
+}
+
+function FlushedDraftInput({ value, onCommit, normalizeDraft, ...rest }: DraftInputProps) {
+  const bag = useCommitOnBlur(value, onCommit, normalizeDraft);
+  const setPending = usePendingEdit();
+  return (
+    <Input
+      {...rest}
+      {...bag}
+      onChange={(event: ChangeEvent<HTMLInputElement>) => {
+        bag.onChange(event);
+        const draft = event.target.value;
+        setPending(draft === value ? null : () => onCommit(draft));
+      }}
+      onBlur={() => {
+        setPending(null);
+        bag.onBlur();
+      }}
+    />
   );
 }
 
@@ -176,10 +213,16 @@ function HighlightColorPicker(props: {
 }) {
   const gt = useGT();
   const [draft, setDraft] = useState<string | null>(null);
+  const setPending = usePendingEdit();
+  const preview = (color: string) => {
+    setDraft(color);
+    setPending(color === props.value ? null : () => props.onCommit(color));
+  };
   return (
     <Popover
       onOpenChange={(open) => {
         if (open) return;
+        setPending(null);
         if (draft !== null && draft !== props.value) props.onCommit(draft);
         setDraft(null);
       }}
@@ -196,7 +239,7 @@ function HighlightColorPicker(props: {
         }
       />
       <PopoverPopup side="bottom" align="end" sideOffset={6} padding="none">
-        <HighlightColorPanel value={draft ?? props.value} onChange={setDraft} />
+        <HighlightColorPanel value={draft ?? props.value} onChange={preview} />
       </PopoverPopup>
     </Popover>
   );
