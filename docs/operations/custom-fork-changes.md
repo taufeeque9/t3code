@@ -620,10 +620,15 @@ per-device rule list, each rule with its own color.
   plugin, which runs after sanitizing. Within a block, text joins across inline
   elements, so `not **pushed**` keeps its negation; code, links, `kbd`, plain
   quotes and block boundaries break it (alerts and insights are highlighted).
-  Skill and mention tokens are never wrapped, since chips are parsed from the
-  rendered text. Marks are capped per block, and regex rules with nested
-  repetition are rejected: rules persist and the thread renders under the
-  Settings modal, so a catastrophic pattern could otherwise lock the app.
+  Skill and model-mention tokens are never wrapped, since chips are parsed from
+  the rendered text; the plugin finds them with the chip parsers' own matchers
+  (`matchInlineSkillTokens`, added to `packages/shared/src/inlineSkills.ts`, and
+  `collectComposerModelMentions`). Inline elements are the sanitizer's allowed
+  tags (`CHAT_MARKDOWN_ALLOWED_TAGS`, exported from `markdownPipeline.ts`) minus
+  block and skipped ones. Marks and regex searches are capped per block, and
+  regex rules with nested repetition are rejected: rules persist and the thread
+  renders under the Settings modal, so a catastrophic pattern could otherwise
+  lock the app.
   `withChatHighlights` builds one plugin list per rule configuration, keyed by the
   settings array and then by its enabled rules, so each configuration has one
   shared renderer and parse cache, and streaming keeps block splitting.

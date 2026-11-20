@@ -248,6 +248,10 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
   },
 } satisfies Parameters<typeof rehypeSanitize>[0];
 
+/** Elements rendered chat markdown can hold once sanitized. */
+export const CHAT_MARKDOWN_ALLOWED_TAGS: ReadonlyArray<string> =
+  CHAT_MARKDOWN_SANITIZE_SCHEMA.tagNames ?? [];
+
 export const CHAT_MARKDOWN_REMARK_PLUGINS: PluggableList = [
   remarkGfm,
   remarkEndAutolinksAtScriptPunctuation,

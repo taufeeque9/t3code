@@ -75,6 +75,14 @@ describe("highlightRuleProblem", () => {
     ["[(a+)]+", null],
     [String.raw`\(a+\)+`, null],
     [String.raw`(?<!\b(?:no|not)\s)done`, null],
+    ["[](a+)+", "slow"],
+    ["[^](a+)+", "slow"],
+    [String.raw`[\]](a+)+`, "slow"],
+    [String.raw`(\u{61}){2}`, null],
+    [String.raw`(\x41){2}`, null],
+    [String.raw`(\cA){3}`, null],
+    [String.raw`(\p{L}){2}`, null],
+    [String.raw`(?<n>a)\k<n>{2}`, null],
     ["(unclosed", "invalid"],
   ])("%s → %s", (pattern, problem) => {
     expect(highlightRuleProblem(rule(pattern, { regex: true }))).toBe(problem);
@@ -103,7 +111,16 @@ describe("findHighlightMatches", () => {
       ["a b", "b b"],
     ],
     ["leaves skill tokens whole", "Use $deploy now.", [rule("deploy")], []],
-    ["leaves mentions whole", "Ask @deploy now.", [rule("deploy")], []],
+    ["leaves model mentions whole", "Use (model:codex/sol) here", [rule("sol")], []],
+    ["treats a dollar amount as prose", "It costs $5 today", [rule("costs $5")], ["costs $5"]],
+    ["drops whitespace-only matches", "a   b", [rule("\\s+", { regex: true })], []],
+    ["steps over an emoji after an empty match", "😀x", [rule("x*", { regex: true })], ["x"]],
+    [
+      "steps over an emoji inside a chip token",
+      "Use model:a/😀😀 now 😀",
+      [rule("😀", { regex: true })],
+      ["😀"],
+    ],
     [
       "highlights around a skill token",
       "Should I run $deploy now?",
@@ -132,6 +149,14 @@ describe("findHighlightMatches", () => {
     expect(highlighted(text, rules).map(([match]) => match)).toEqual(expected);
   });
 
+  it("stops when the block's searches run out", () => {
+    const budget = { searches: 3 };
+    expect(
+      findHighlightMatches("a a a a a", compileHighlightRules([rule("a")]), Infinity, budget),
+    ).toHaveLength(3);
+    expect(budget.searches).toBe(0);
+  });
+
   it("stops at the limit", () => {
     expect(findHighlightMatches("a a a a", compileHighlightRules([rule("a")]), 2)).toHaveLength(2);
   });
@@ -158,6 +183,8 @@ describe("default highlight rules", () => {
     ["not dropped", []],
     ["I dropped the table.", [["dropped", "Destructive"]]],
     ["The fix is not pushed.", [["not pushed", "Not done"]]],
+    ["The fix is not  pushed.", []],
+    ["zero   OOM here", []],
     ["I pushed the fix.", [["pushed", "Action taken"]]],
     ["Should I merge it?", [["Should I merge", "Permission ask"]]],
     ["Done. Which port should it use? Tell me.", [["Which port should it use?", "Question"]]],
@@ -186,6 +213,15 @@ describe("rehypeChatHighlights", () => {
 
   it("highlights inside an agent callout", () => {
     expect(markup("> [!NOTE]\n> We deploy now")).toContain(MARK);
+  });
+
+  it.each([
+    ["var", "We de<var>ploy</var> now"],
+    ["strike", "We de<strike>ploy</strike> now"],
+  ])("joins text across inline %s", (tag, source) => {
+    expect(markup(source)).toBe(
+      `<p>We ${MARK.replace("deploy", "de")}<${tag}>${MARK.replace("deploy", "ploy")}</${tag}> now</p>`,
+    );
   });
 
   it("leaves a skill token whole", () => {

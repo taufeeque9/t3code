@@ -28,7 +28,7 @@ const GREEN = "#22c55e";
 const RED = "#ef4444";
 
 const negated = (alternation: string) =>
-  String.raw`(?<!\b(?:no|not|nothing|never|zero|without)\s)(?:${alternation})`;
+  String.raw`(?<!\b(?:no|not|nothing|never|zero|without)\s{1,3})(?:${alternation})`;
 
 const regexRule = (id: string, label: string, color: string, pattern: string) =>
   ({ id, label, pattern, regex: true, color, enabled: true }) satisfies ChatHighlightRule;
