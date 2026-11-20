@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 
 export const MAX_CHAT_HIGHLIGHT_RULES = 50;
-export const MAX_CHAT_HIGHLIGHT_PATTERN_LENGTH = 1000;
+export const MAX_CHAT_HIGHLIGHT_PATTERN_LENGTH = 500;
 
 export const ChatHighlightColor = Schema.String.check(Schema.isPattern(/^#[0-9a-fA-F]{6}$/));
 
@@ -28,12 +28,12 @@ const GREEN = "#22c55e";
 const RED = "#ef4444";
 
 const negated = (alternation: string) =>
-  String.raw`(?<!\b(?:no|not|nothing|never|zero|without)\s+)(?:${alternation})`;
+  String.raw`(?<!\b(?:no|not|nothing|never|zero|without)\s)(?:${alternation})`;
 
 const regexRule = (id: string, label: string, color: string, pattern: string) =>
   ({ id, label, pattern, regex: true, color, enabled: true }) satisfies ChatHighlightRule;
 
-/** Earlier rules win where matches overlap. */
+/** Where matches overlap the earliest start wins, and an earlier rule breaks a tie. */
 export const DEFAULT_CHAT_HIGHLIGHT_RULES: ChatHighlightRules = [
   regexRule(
     "permission-ask",
@@ -64,7 +64,7 @@ export const DEFAULT_CHAT_HIGHLIGHT_RULES: ChatHighlightRules = [
     "question",
     "Question",
     BLUE,
-    String.raw`(?<=^|[.!?\n:]\s*)[^.!?\n\s][^.!?\n]*\?(?=\s|$)`,
+    String.raw`(?<=^|[.!?\n:]\s*)[^.!?\n:\s][^.!?\n:]*\?(?=\s|$)`,
   ),
   regexRule(
     "open-question",

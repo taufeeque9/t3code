@@ -152,9 +152,11 @@ question for you, a decision you need to make, or something that was pushed or d
 has its own color. Edit, recolor, turn off, or add rules in **Settings → Chat → Highlights**.
 
 A phrase rule matches whole words in any case. Turn on **Regex** to read the pattern as a
-JavaScript regular expression instead. Where two rules match overlapping text, the rule higher in
-the list wins. Text in code, links, and quotes is never highlighted, and copied text leaves the
-highlights out. Rules are saved separately on each device. Mobile does not show highlights.
+JavaScript regular expression instead. A regex that nests repetition, such as `(a+)+`, is
+rejected because it can make replies slow to render. Where matches overlap, the one that starts
+first wins, and the rule higher in the list breaks a tie. Text in code, links, and plain quotes is
+never highlighted; callouts such as `> [!NOTE]` are. Copied text leaves the highlights out. Rules
+are saved separately on each device. Mobile does not show highlights.
 
 ## Recall a sent prompt
 

@@ -615,15 +615,23 @@ per-device rule list, each rule with its own color.
   and the default rules mined from past replies. Negation guards wrap the whole
   alternation, since a lookbehind before `a|b` guards only `a`.
   `settings.ts` adds the `chatHighlightRules` client setting and its patch key.
-- `apps/web/src/components/chat/markdownHighlights.ts` and its test: matching,
-  overlap resolution, and the rehype plugin, which runs after sanitizing and skips
-  code, links, `kbd`, and plain quotes (alerts and insights are highlighted).
+- `apps/web/src/components/chat/markdownHighlights.ts` and its test: a greedy
+  scan over all rules (earliest start wins, list order breaks ties) and the rehype
+  plugin, which runs after sanitizing. Within a block, text joins across inline
+  elements, so `not **pushed**` keeps its negation; code, links, `kbd`, plain
+  quotes and block boundaries break it (alerts and insights are highlighted).
+  Skill and mention tokens are never wrapped, since chips are parsed from the
+  rendered text. Marks are capped per block, and regex rules with nested
+  repetition are rejected: rules persist and the thread renders under the
+  Settings modal, so a catastrophic pattern could otherwise lock the app.
   `withChatHighlights` builds one plugin list per rule configuration, keyed by the
   settings array and then by its enabled rules, so each configuration has one
   shared renderer and parse cache, and streaming keeps block splitting.
-- `ChatMarkdown.tsx` takes `highlightRules`; `TimelineAssistantRows.tsx` sets it
-  for assistant and sent messages only. `index.css` styles `mark.chat-highlight`.
-  `markdown-clipboard.ts` unwraps highlights from copied HTML.
+- `ChatMarkdown.tsx` takes `highlightRules`, and skips it in a thread hidden under
+  a modal route (`HiddenThreadContext`); `TimelineAssistantRows.tsx` sets it for
+  assistant and sent messages only. `index.css` styles `mark.chat-highlight`.
+  `markdown-clipboard.ts` unwraps highlights and merges the text they split
+  before serializing a copy.
 - `apps/web/src/components/settings/ChatHighlightsSettings.tsx`, the Highlights
   section in `ChatSettingsPanel` and Restore defaults (`SettingsPanels.tsx`), its
   settings-search entry, translations, and `docs/user/composer.md`.

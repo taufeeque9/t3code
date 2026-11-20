@@ -224,6 +224,7 @@ import { MarkdownFileLink } from "./chat/MarkdownFileLink";
 import { canUseMarkdownFileShellActions } from "./chat/MarkdownFileLink.logic";
 import { rehypeChipPunctuation } from "./chat/markdownChipPunctuation";
 import { withChatHighlights } from "./chat/markdownHighlights";
+import { HiddenThreadContext } from "./chat/backgroundThread";
 import { handleMarkdownFragmentClick, rehypeHeadingIds } from "./chat/markdownFragments";
 import { rehypeTextDirection } from "./chat/markdownTextDirection";
 import { hastHasText, hastPlainTextDeep, plainHastText } from "./chat/markdownHast.logic";
@@ -1898,8 +1899,11 @@ function ChatMarkdown({
 }: ChatMarkdownProps) {
   const { componentState, handleCopy, markdownRef, localMediaPreview, closeLocalMediaPreview } =
     useChatMarkdownState({ text, inline, ...props });
+  // A thread hidden under Settings stays mounted; skipping its highlights keeps Settings
+  // responsive while a slow rule is being fixed there.
+  const hiddenThread = use(HiddenThreadContext);
   const highlightSettings = useClientSettings((settings) =>
-    highlightRules ? settings.chatHighlightRules : NO_HIGHLIGHT_RULES,
+    highlightRules && !hiddenThread ? settings.chatHighlightRules : NO_HIGHLIGHT_RULES,
   );
   const hasInsights = renderInsights && text.includes("★ Insight");
   // Streaming re-renders only the last block; offsets for task edits need the whole text.
