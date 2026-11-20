@@ -60,7 +60,12 @@ export const DEFAULT_CHAT_HIGHLIGHT_RULES: ChatHighlightRules = [
     AMBER,
     negated(String.raw`\b(?:pending|open|remaining) decisions?\b`),
   ),
-  regexRule("question", "Question", BLUE, String.raw`[^.!?\n]+\?(?=\s|$)`),
+  regexRule(
+    "question",
+    "Question",
+    BLUE,
+    String.raw`(?<=^|[.!?\n:]\s*)[^.!?\n\s][^.!?\n]*\?(?=\s|$)`,
+  ),
   regexRule(
     "open-question",
     "Open question",
