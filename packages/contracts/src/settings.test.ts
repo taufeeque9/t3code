@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
 import { type CommandId, ProjectId } from "./baseSchemas.ts";
+import { DEFAULT_CHAT_HIGHLIGHT_RULES, MAX_CHAT_HIGHLIGHT_RULES } from "./chatHighlights.ts";
 import {
   ProviderDriverKind,
   ProviderInstanceEnvironment,
@@ -329,6 +330,29 @@ describe("ClientSettings notifications", () => {
     expect(decodeClientSettings({}).inAppNotificationsEnabled).toBe(false);
     expect(decodeClientSettingsPatch({})).not.toHaveProperty("inAppNotificationsEnabled");
     expect(decodeClientSettingsPatch({})).not.toHaveProperty("notificationMode");
+  });
+});
+
+describe("ClientSettings chat highlights", () => {
+  const highlight = {
+    id: "a",
+    label: "",
+    pattern: "x",
+    regex: false,
+    color: "#aabbcc",
+    enabled: true,
+  };
+
+  it("starts from the default rules", () => {
+    expect(decodeClientSettings({}).chatHighlightRules).toEqual(DEFAULT_CHAT_HIGHLIGHT_RULES);
+    expect(decodeClientSettings({ chatHighlightRules: [] }).chatHighlightRules).toEqual([]);
+  });
+
+  it.each([
+    ["too many rules", Array.from({ length: MAX_CHAT_HIGHLIGHT_RULES + 1 }, () => highlight)],
+    ["a color that is not a hex triplet", [{ ...highlight, color: "red" }]],
+  ])("rejects %s", (_name, chatHighlightRules) => {
+    expect(() => decodeClientSettingsPatch({ chatHighlightRules })).toThrow();
   });
 });
 

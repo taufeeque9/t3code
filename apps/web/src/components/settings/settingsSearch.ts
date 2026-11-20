@@ -817,6 +817,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("queue steer running turn send default behavior composer")],
   },
   {
+    id: "chat-highlights",
+    title: msg("Highlights"),
+    to: "/settings/chat",
+    searchTerms: [msg("highlight keywords phrases regex colors agent replies mark skim")],
+  },
+  {
     id: "provider-update-checks",
     title: msg("Provider update checks"),
     to: "/settings/maintenance",

@@ -605,6 +605,35 @@ with an active run, which would make these agents' archive calls fail. If it
 lands, keep the own-agent deferral on top of it and ask which behavior to keep
 for other callers.
 
+### Chat: highlighted phrases in agent replies
+
+Long replies hide the parts that need Taufeeque: a decision, a question, or a
+claim that something was pushed or deployed. Agent replies tint phrases from a
+per-device rule list, each rule with its own color.
+
+- `packages/contracts/src/chatHighlights.ts`: the rule schema, its 50-rule bound,
+  and the default rules mined from past replies. Negation guards wrap the whole
+  alternation, since a lookbehind before `a|b` guards only `a`.
+  `settings.ts` adds the `chatHighlightRules` client setting and its patch key.
+- `apps/web/src/components/chat/markdownHighlights.ts` and its test: matching,
+  overlap resolution, and the rehype plugin, which runs after sanitizing and skips
+  code, links, `kbd`, and plain quotes (alerts and insights are highlighted).
+  `withChatHighlights` builds one plugin list per rule configuration, keyed by the
+  settings array and then by its enabled rules, so each configuration has one
+  shared renderer and parse cache, and streaming keeps block splitting.
+- `ChatMarkdown.tsx` takes `highlightRules`; `TimelineAssistantRows.tsx` sets it
+  for assistant and sent messages only. `index.css` styles `mark.chat-highlight`.
+  `markdown-clipboard.ts` unwraps highlights from copied HTML.
+- `apps/web/src/components/settings/ChatHighlightsSettings.tsx`, the Highlights
+  section in `ChatSettingsPanel` and Restore defaults (`SettingsPanels.tsx`), its
+  settings-search entry, translations, and `docs/user/composer.md`.
+- Mobile is not supported: it renders replies through a separate native markdown
+  library.
+
+**On conflict:** if upstream adds message highlighting, compare it and ask
+Taufeeque which to keep. A change to the rehype plugin lists in `ChatMarkdown.tsx`
+only needs `withChatHighlights` re-applied around the chosen list.
+
 ## Retired: superseded by upstream
 
 ### Packaged backend ships zod for @cursor/sdk

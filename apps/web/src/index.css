@@ -2048,6 +2048,21 @@ code {
   text-decoration: none;
 }
 
+/* User highlight rules; --chat-highlight is the rule's color. The negative margin keeps the
+   padded tint from shifting the surrounding text. */
+.chat-markdown mark.chat-highlight {
+  margin-inline: -0.12em;
+  border-radius: 0.2em;
+  padding-inline: 0.12em;
+  background: color-mix(in oklab, var(--chat-highlight) 26%, transparent);
+  color: inherit;
+  box-decoration-break: clone;
+}
+
+.dark .chat-markdown mark.chat-highlight {
+  background: color-mix(in oklab, var(--chat-highlight) 34%, transparent);
+}
+
 /* Triple-click selection stops at block-level boxes, flex items included, so file chips in
    prose stay inline-level down to the icon and label. */
 .chat-markdown-file-link {

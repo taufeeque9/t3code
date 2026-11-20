@@ -145,6 +145,17 @@ The quoted text and comment count toward the message limit.
 Mobile displays saved quotes and comments, but does not create citations or
 navigate to their sources.
 
+## Highlight phrases in replies
+
+On web and desktop, agent replies tint phrases you want to notice while skimming, such as a
+question for you, a decision you need to make, or something that was pushed or deployed. Each rule
+has its own color. Edit, recolor, turn off, or add rules in **Settings → Chat → Highlights**.
+
+A phrase rule matches whole words in any case. Turn on **Regex** to read the pattern as a
+JavaScript regular expression instead. Where two rules match overlapping text, the rule higher in
+the list wins. Text in code, links, and quotes is never highlighted, and copied text leaves the
+highlights out. Rules are saved separately on each device. Mobile does not show highlights.
+
 ## Recall a sent prompt
 
 Press `ArrowUp` in an empty composer to bring back the last prompt you sent in this thread. Press

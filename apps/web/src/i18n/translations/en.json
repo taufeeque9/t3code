@@ -7658,6 +7658,31 @@
       "v": "v"
     }
   ],
+  "07e110f8d342c50e": "Marks phrases in agent replies. A phrase matches whole words in any case; a regex rule uses JavaScript syntax. Where matches overlap, the rule higher in the list wins.",
+  "6b6e5dad23496e1d": "Reset highlights to default",
+  "ac4f6f39e3a26d00": "Highlight {number}",
+  "703191da47e04d63": "Highlight {name}",
+  "691c0b60e0c4b574": "Label",
+  "23d8c4f2b0f90dee": "Label for {name}",
+  "0eac4ca8508d243c": "Regular expression",
+  "0ab6d781bae295f4": "Phrase",
+  "0e98b845384f5b9d": "Pattern for {name}",
+  "8f271fbb0064c145": "Regex for {name}",
+  "af959e191816cf76": "Color for {name}",
+  "7fdb5f710e4fff2f": "Highlight color",
+  "7bfc9c26bc8877db": "Highlight color hue",
+  "403f3055aa276128": "Highlight color hex value",
+  "564432194167e62c": "Add highlight",
+  "3eb96f75a97e7c5f": [
+    "Up to ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " highlights"
+  ],
+  "c0b7079aa9880c11": "Regex",
   "d0e747ae0c4f68a5": "Could not install t3",
   "ba3ac338f36cba74": "Could not remove t3",
   "9c942b53b58119b8": "Could not add t3 to PATH",
@@ -9695,6 +9720,7 @@
   "3540317917c8f48b": "Follow system",
   "64c8eaaee17ddc77": "Theme mix",
   "36ec9a942db62602": "Diff colors",
+  "a20f488e54e98722": "Highlights",
   "a044b6e4df214ae1": "Panel animations",
   "2c1c93a646bbea6e": "Language",
   "e5144f91364fd9b7": "Time format",
@@ -11491,6 +11517,7 @@
   "ade91c8927c48175": "composer rich text tiptap bold italic markdown styled wysiwyg",
   "34d74827c2a8b009": "enter return command ctrl multiline prompt new line composer",
   "9d1013084c46ecce": "queue steer running turn send default behavior composer",
+  "1f12fc6c435662d3": "highlight keywords phrases regex colors agent replies mark skim",
   "5b8b854de7ee6f4d": "installed cli versions newer available codex claude cursor grok fx kiro opencode",
   "64f12530d55d2ad1": "resume running active interrupted work restart reboot machine crash desktop update automatically",
   "214a98497c4ed05d": "caffeinate sleep prevent stay awake power laptop lid inhibit",

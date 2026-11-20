@@ -7650,6 +7650,31 @@
       "v": "v"
     }
   ],
+  "07e110f8d342c50e": "Resalta frases en las respuestas del agente. Una frase coincide con palabras completas sin distinguir mayúsculas; una regla regex usa la sintaxis de JavaScript. Si las coincidencias se solapan, gana la regla más arriba en la lista.",
+  "6b6e5dad23496e1d": "Restablecer los resaltados al valor predeterminado",
+  "ac4f6f39e3a26d00": "Resaltado {number}",
+  "703191da47e04d63": "Resaltar {name}",
+  "691c0b60e0c4b574": "Etiqueta",
+  "23d8c4f2b0f90dee": "Etiqueta de {name}",
+  "0eac4ca8508d243c": "Expresión regular",
+  "0ab6d781bae295f4": "Frase",
+  "0e98b845384f5b9d": "Patrón de {name}",
+  "8f271fbb0064c145": "Regex de {name}",
+  "af959e191816cf76": "Color de {name}",
+  "7fdb5f710e4fff2f": "Color de resaltado",
+  "7bfc9c26bc8877db": "Tono del color de resaltado",
+  "403f3055aa276128": "Valor hexadecimal del color de resaltado",
+  "564432194167e62c": "Añadir resaltado",
+  "3eb96f75a97e7c5f": [
+    "Hasta ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " resaltados"
+  ],
+  "c0b7079aa9880c11": "Regex",
   "d0e747ae0c4f68a5": "No se pudo instalar t3",
   "ba3ac338f36cba74": "No se pudo quitar t3",
   "9c942b53b58119b8": "No se pudo añadir t3 al PATH",
@@ -9683,6 +9708,7 @@
   "3540317917c8f48b": "Seguir al sistema",
   "64c8eaaee17ddc77": "Mezcla de temas",
   "36ec9a942db62602": "Colores del diff",
+  "a20f488e54e98722": "Resaltados",
   "a044b6e4df214ae1": "Animaciones de paneles",
   "2c1c93a646bbea6e": "Idioma",
   "e5144f91364fd9b7": "Formato de hora",
@@ -11476,6 +11502,7 @@
   "ade91c8927c48175": "cuadro mensaje compositor texto enriquecido tiptap negrita cursiva markdown con estilo wysiwyg",
   "34d74827c2a8b009": "enter intro comando ctrl multilínea prompt nueva línea cuadro mensaje compositor",
   "9d1013084c46ecce": "cola redirigir turno en ejecución enviar comportamiento predeterminado cuadro mensaje compositor",
+  "1f12fc6c435662d3": "resaltar resaltado palabras clave frases regex colores agente respuestas marcar highlight",
   "5b8b854de7ee6f4d": "instalado cli versiones más recientes disponibles codex claude cursor grok fx kiro opencode",
   "64f12530d55d2ad1": "reanudar en ejecución activo interrumpido trabajo reiniciar máquina fallo actualización de escritorio automáticamente",
   "214a98497c4ed05d": "caffeinate reposo evitar mantener activo energía portátil tapa inhibir",

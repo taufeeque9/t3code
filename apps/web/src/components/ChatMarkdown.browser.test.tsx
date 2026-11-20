@@ -745,6 +745,21 @@ describe("ChatMarkdown copy", () => {
     },
   );
 
+  it("copies highlighted reply text without its highlights", async () => {
+    setup();
+    await using screen = await renderText("I pushed the fix.", { highlightRules: true });
+    const paragraph = screen.container.querySelector("p")!;
+    expect(paragraph.querySelector("mark")?.textContent).toBe("pushed");
+    const range = document.createRange();
+    range.selectNodeContents(paragraph);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    const payload = chatMarkdownClipboardPayload(selection);
+    expect(payload?.text).toBe("I pushed the fix.");
+    expect(payload?.html).toBe('<meta charset="utf-8">I pushed the fix.');
+  });
+
   it("copies part of inline code without prose escapes", async () => {
     setup();
     await using screen = await renderText("Read `items[0]*_x` and a*b*c.");

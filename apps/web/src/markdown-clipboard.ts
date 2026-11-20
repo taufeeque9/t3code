@@ -1,5 +1,7 @@
 import { UNFINISHED_DRIVE_PATH } from "@t3tools/shared/markdownWindowsPaths";
 
+import { CHAT_HIGHLIGHT_ATTRIBUTE } from "./components/chat/markdownHighlights";
+
 const SKIPPED_TAGS = new Set(["BUTTON", "INPUT", "SCRIPT", "STYLE", "TEMPLATE"]);
 const SKIPPED_CLASS_NAMES = ["select-none", "sr-only"];
 const SANITIZED_HTML_SELECTOR = [
@@ -483,6 +485,10 @@ function mathSourceElement(wrapper: Element): Element {
 }
 
 function sanitizedHtmlFrom(container: Element): string {
+  // Highlights are a reading aid in this app, not part of the reply.
+  for (const highlight of container.querySelectorAll(`[${CHAT_HIGHLIGHT_ATTRIBUTE}]`)) {
+    highlight.replaceWith(...highlight.childNodes);
+  }
   for (const diagram of container.querySelectorAll("[data-markdown-mermaid]")) {
     const source = diagram.getAttribute("data-markdown-copy");
     if (source !== null) diagram.replaceChildren(mermaidSourceHtml(source));
