@@ -10,6 +10,7 @@ import { PlusIcon, XIcon } from "lucide-react";
 import { type ChangeEvent, useEffect, useId, useRef, useState } from "react";
 
 import { hexToHsv, hsvToHex, type HsvColor } from "../../lib/color";
+import { getClientSettings } from "../../hooks/useSettings";
 import { randomUUID } from "../../lib/utils";
 import { useCommitOnBlur } from "../../hooks/useCommitOnBlur";
 import { highlightRuleProblem } from "../chat/markdownHighlights";
@@ -19,6 +20,7 @@ import type { DraftInputProps } from "../ui/draft-input";
 import { Input } from "../ui/input";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Switch } from "../ui/switch";
+import { withRulePatch } from "./ChatHighlightsSettings.logic";
 import { SettingResetButton, SettingsRow } from "./settingsLayout";
 import { useSearchableSetting } from "./settingsSearch";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
@@ -32,8 +34,13 @@ export function ChatHighlightsRow() {
   const updateSettings = useUpdateScopedSettings();
   const save = (chatHighlightRules: ReadonlyArray<ChatHighlightRule>) =>
     updateSettings({ chatHighlightRules });
-  const change = (index: number, patch: Partial<ChatHighlightRule>) =>
-    save(rules.map((rule, candidate) => (candidate === index ? { ...rule, ...patch } : rule)));
+  // Edits apply to the saved list as it is when they land: a field that saves as Settings closes
+  // must not restore rules a reset or removal dropped since it rendered.
+  const latest = () => getClientSettings().chatHighlightRules;
+  const change = (id: string, patch: Partial<ChatHighlightRule>) => {
+    const next = withRulePatch(latest(), id, patch);
+    if (next) save(next);
+  };
 
   return (
     <SettingsRow
@@ -56,8 +63,8 @@ export function ChatHighlightsRow() {
             key={rule.id}
             rule={rule}
             number={index + 1}
-            onChange={(patch) => change(index, patch)}
-            onRemove={() => save(rules.filter((_, candidate) => candidate !== index))}
+            onChange={(patch) => change(rule.id, patch)}
+            onRemove={() => save(latest().filter((candidate) => candidate.id !== rule.id))}
           />
         ))}
         <div>
@@ -67,7 +74,7 @@ export function ChatHighlightsRow() {
             disabled={rules.length >= MAX_CHAT_HIGHLIGHT_RULES}
             onClick={() =>
               save([
-                ...rules,
+                ...latest(),
                 {
                   id: randomUUID(),
                   label: "",
