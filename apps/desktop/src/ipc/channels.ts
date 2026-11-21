@@ -47,7 +47,7 @@ export const GET_HOST_ENVIRONMENT_ID_CHANNEL = "desktop:get-host-environment-id"
 export const GET_LOCAL_ENVIRONMENT_BEARER_TOKEN_CHANNEL =
   "desktop:get-local-environment-bearer-token";
 export const GET_CLIENT_SETTINGS_CHANNEL = "desktop:get-client-settings";
-export const SET_CLIENT_SETTINGS_CHANNEL = "desktop:set-client-settings";
+export const PATCH_CLIENT_SETTINGS_CHANNEL = "desktop:patch-client-settings";
 export const CLIENT_SETTINGS_CHANGED_CHANNEL = "desktop:client-settings-changed";
 export const SETUP_SNAP_SHOT_CHANNEL = "desktop:setup-snap-shot";
 export const PREVIEW_SNAP_SHOT_CONFIG_CHANNEL = "desktop:preview-snap-shot-config";

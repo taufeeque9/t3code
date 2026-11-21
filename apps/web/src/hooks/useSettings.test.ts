@@ -94,7 +94,9 @@ describe("client settings hydration", () => {
 
     const completedSettings = { ...savedSettings, onboardingCompletedAt };
     await expect(persistClientSettingsUpdate(complete)).resolves.toEqual(completedSettings);
-    expect(persistenceMocks.setClientSettings).toHaveBeenCalledExactlyOnceWith(completedSettings);
+    expect(persistenceMocks.setClientSettings).toHaveBeenCalledExactlyOnceWith(completedSettings, {
+      onboardingCompletedAt,
+    });
     expect(persistenceMocks.getClientSettings).toHaveBeenCalledTimes(2);
   });
 
@@ -192,8 +194,12 @@ describe("persistClientSettingsPatch", () => {
     finishFirst();
     await Promise.all([first, second]);
 
-    expect(persistenceMocks.setClientSettings).toHaveBeenNthCalledWith(1, firstSettings);
-    expect(persistenceMocks.setClientSettings).toHaveBeenNthCalledWith(2, secondSettings);
+    expect(persistenceMocks.setClientSettings).toHaveBeenNthCalledWith(1, firstSettings, {
+      snapShotFlash: false,
+    });
+    expect(persistenceMocks.setClientSettings).toHaveBeenNthCalledWith(2, secondSettings, {
+      snapShotPlaySound: false,
+    });
   });
 
   // regression: #35010 a save in one tab reverted settings another tab saved after it loaded
@@ -209,11 +215,80 @@ describe("persistClientSettingsPatch", () => {
 
       await persistClientSettingsPatch({ wordWrap: false });
 
-      expect(persistenceMocks.setClientSettings).toHaveBeenLastCalledWith({
-        ...otherTabSettings,
-        wordWrap: false,
-      });
+      expect(persistenceMocks.setClientSettings).toHaveBeenLastCalledWith(
+        { ...otherTabSettings, wordWrap: false },
+        { wordWrap: false },
+      );
     } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe("desktop settings file changes", () => {
+  const editedSettings = { ...DEFAULT_CLIENT_SETTINGS, timestampFormat: "12-hour" as const };
+  // Resolves after every refresh queued before it.
+  const drainPersistence = () =>
+    persistClientSettingsUpdate(
+      (current) => current,
+      async () => {},
+    );
+  function stubDesktopBridge() {
+    const listeners = new Set<() => void>();
+    vi.stubGlobal("window", {
+      desktopBridge: {
+        onClientSettingsChanged: (listener: () => void) => {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
+      },
+    });
+    return { announce: () => listeners.forEach((listener) => listener()) };
+  }
+
+  it("refreshes after hydrating when the file changed during the first read", async () => {
+    const bridge = stubDesktopBridge();
+    try {
+      let finishRead!: (settings: ClientSettings) => void;
+      persistenceMocks.getClientSettings
+        .mockReturnValueOnce(
+          new Promise((resolve) => {
+            finishRead = resolve;
+          }),
+        )
+        .mockResolvedValue(editedSettings);
+
+      const hydration = ensureClientSettingsHydrated();
+      bridge.announce();
+      finishRead(DEFAULT_CLIENT_SETTINGS);
+      await hydration;
+      await drainPersistence();
+
+      expect(getClientSettings()).toEqual(editedSettings);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("rereads once when a refresh finds no readable settings", async () => {
+    const bridge = stubDesktopBridge();
+    vi.useFakeTimers();
+    try {
+      await ensureClientSettingsHydrated();
+      persistenceMocks.getClientSettings
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(editedSettings);
+
+      bridge.announce();
+      await drainPersistence();
+      expect(getClientSettings()).toBe(DEFAULT_CLIENT_SETTINGS);
+      await vi.advanceTimersByTimeAsync(500);
+      await drainPersistence();
+
+      expect(getClientSettings()).toEqual(editedSettings);
+      expect(persistenceMocks.getClientSettings).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
       vi.unstubAllGlobals();
     }
   });
@@ -338,7 +413,7 @@ describe("onboarding completion persistence", () => {
       completedSettings,
     );
     expect(getClientSettings()).toEqual(completedSettings);
-    expect(persist).toHaveBeenLastCalledWith(completedSettings);
+    expect(persist).toHaveBeenLastCalledWith(completedSettings, { onboardingCompletedAt });
   });
 });
 

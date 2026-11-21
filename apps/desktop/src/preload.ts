@@ -164,8 +164,8 @@ const desktopBridge = {
     ipcRenderer.invoke(IpcChannels.SET_LOCAL_ENVIRONMENT_ENABLED_CHANNEL, enabled),
   getHostEnvironmentId: () => ipcRenderer.invoke(IpcChannels.GET_HOST_ENVIRONMENT_ID_CHANNEL),
   getClientSettings: () => ipcRenderer.invoke(IpcChannels.GET_CLIENT_SETTINGS_CHANNEL),
-  setClientSettings: (settings) =>
-    ipcRenderer.invoke(IpcChannels.SET_CLIENT_SETTINGS_CHANNEL, settings),
+  patchClientSettings: (patch) =>
+    ipcRenderer.invoke(IpcChannels.PATCH_CLIENT_SETTINGS_CHANNEL, patch),
   onClientSettingsChanged: (listener) => {
     const handler = () => listener();
     ipcRenderer.on(IpcChannels.CLIENT_SETTINGS_CHANGED_CHANNEL, handler);

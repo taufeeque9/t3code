@@ -1,4 +1,4 @@
-import { ClientSettingsSchema } from "@t3tools/contracts";
+import { ClientSettingsPatch, ClientSettingsSchema, type ClientSettings } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -11,13 +11,29 @@ import * as DesktopSnapShot from "../../snapShot/DesktopSnapShot.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 
+const applyNativeClientSettings = Effect.fn("desktop.ipc.clientSettings.applyNative")(function* (
+  settings: ClientSettings,
+) {
+  const snapShot = yield* DesktopSnapShot.DesktopSnapShot;
+  yield* snapShot.configure(settings);
+  yield* applyLanguage(settings.language);
+});
+
+const announceClientSettingsChange = Effect.fn("desktop.ipc.clientSettings.announceChange")(
+  function* () {
+    const electronWindow = yield* ElectronWindow.ElectronWindow;
+    yield* electronWindow.sendAll(IpcChannels.CLIENT_SETTINGS_CHANGED_CHANNEL);
+  },
+);
+
 export const installClientSettingsChangeForwarding = Effect.fn(
   "desktop.ipc.clientSettings.installChangeForwarding",
 )(function* () {
   const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
-  const electronWindow = yield* ElectronWindow.ElectronWindow;
   yield* clientSettings.externalChanges.pipe(
-    Stream.runForEach(() => electronWindow.sendAll(IpcChannels.CLIENT_SETTINGS_CHANGED_CHANNEL)),
+    Stream.runForEach((settings) =>
+      applyNativeClientSettings(settings).pipe(Effect.andThen(announceClientSettingsChange())),
+    ),
     Effect.ignoreCause({ log: true }),
     Effect.forkScoped,
   );
@@ -33,15 +49,15 @@ export const getClientSettings = DesktopIpc.makeIpcMethod({
   }),
 });
 
-export const setClientSettings = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.SET_CLIENT_SETTINGS_CHANNEL,
-  payload: ClientSettingsSchema,
+export const patchClientSettings = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PATCH_CLIENT_SETTINGS_CHANNEL,
+  payload: ClientSettingsPatch,
   result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.clientSettings.set")(function* (settings) {
+  handler: Effect.fn("desktop.ipc.clientSettings.patch")(function* (patch) {
     const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
-    const snapShot = yield* DesktopSnapShot.DesktopSnapShot;
-    yield* clientSettings.set(settings);
-    yield* snapShot.configure(settings);
-    yield* applyLanguage(settings.language);
+    const patched = yield* clientSettings.patch(patch);
+    yield* applyNativeClientSettings(patched.settings);
+    // The sender's snapshot lacks the merged edit, as may other windows'.
+    if (patched.mergedExternalEdit) yield* announceClientSettingsChange();
   }),
 });

@@ -12,7 +12,12 @@ import type {
 import { AuthAccessTokenResult, AuthSessionState } from "./auth.ts";
 import { AdvertisedEndpoint } from "./remoteAccess.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
-import { type ClientSettings, type QuitConfirmationMode, SnapShotShortcut } from "./settings.ts";
+import {
+  type ClientSettings,
+  type ClientSettingsPatch,
+  type QuitConfirmationMode,
+  SnapShotShortcut,
+} from "./settings.ts";
 import type { EditorId } from "./editor.ts";
 import { KeybindingShortcut, type PreviewForwardedShortcut } from "./keybindings.ts";
 
@@ -1094,7 +1099,8 @@ export interface DesktopBridge {
   getHostEnvironmentId?: () => Promise<string | null>;
   getLocalEnvironmentBearerToken: () => Promise<string>;
   getClientSettings: () => Promise<ClientSettings | null>;
-  setClientSettings: (settings: ClientSettings) => Promise<void>;
+  /** Main applies the patch to the file's current settings, keeping edits made outside the app. */
+  patchClientSettings: (patch: ClientSettingsPatch) => Promise<void>;
   /** Fires when something outside the app rewrites the client settings file. */
   onClientSettingsChanged: (listener: () => void) => () => void;
   getConnectionCatalog: () => Promise<string | null>;
@@ -1384,6 +1390,7 @@ export interface LocalApi {
   };
   persistence: {
     getClientSettings: () => Promise<ClientSettings | null>;
-    setClientSettings: (settings: ClientSettings) => Promise<void>;
+    /** `patch` holds the keys this save changed; desktop persists only those. */
+    setClientSettings: (settings: ClientSettings, patch: ClientSettingsPatch) => Promise<void>;
   };
 }

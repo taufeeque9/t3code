@@ -505,7 +505,7 @@ const layerTest = (
           DesktopClientSettings.DesktopClientSettings,
           DesktopClientSettings.DesktopClientSettings.of({
             get: settingsGet,
-            set: () => Effect.void,
+            patch: () => Effect.die("unused"),
             externalChanges: Stream.empty,
           }),
         ),

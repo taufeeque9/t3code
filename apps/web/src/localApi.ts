@@ -73,9 +73,9 @@ export function createLocalApi(): LocalApi {
         }
         return readBrowserClientSettings();
       },
-      setClientSettings: async (settings) => {
+      setClientSettings: async (settings, patch) => {
         if (window.desktopBridge) {
-          return window.desktopBridge.setClientSettings(settings);
+          return window.desktopBridge.patchClientSettings(patch);
         }
         writeBrowserClientSettings(settings);
       },

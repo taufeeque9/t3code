@@ -80,6 +80,9 @@ let clientSettingsHydrationGeneration = 0;
 let clientSettingsPersistenceQueue: Promise<void> = Promise.resolve();
 let deferredClientSettingsPatchCount = 0;
 let unsubscribePersistedClientSettings: (() => void) | null = null;
+let persistedClientSettingsChangedDuringHydration = false;
+// An editor mid-save can leave the file missing or invalid for a moment.
+const CLIENT_SETTINGS_REFRESH_RETRY_MS = 500;
 
 function emitClientSettingsChange() {
   for (const listener of clientSettingsListeners) {
@@ -150,6 +153,10 @@ async function hydrateClientSettings(): Promise<void> {
   );
   const nextHydration = (async () => {
     try {
+      // Subscribed before the read so a change that lands during it is not missed.
+      unsubscribePersistedClientSettings ??= subscribePersistedClientSettingsChanges(
+        handlePersistedClientSettingsChange,
+      );
       const persistedSettings = await ensureLocalApi().persistence.getClientSettings();
       if (hydrationGeneration !== clientSettingsHydrationGeneration) {
         return;
@@ -157,10 +164,11 @@ async function hydrateClientSettings(): Promise<void> {
       if (persistedSettings) {
         replaceClientSettingsSnapshot({ ...DEFAULT_CLIENT_SETTINGS, ...persistedSettings });
       }
-      unsubscribePersistedClientSettings ??= subscribePersistedClientSettingsChanges(
-        refreshPersistedClientSettings,
-      );
       setClientSettingsHydrationStatus("ready");
+      if (persistedClientSettingsChangedDuringHydration) {
+        persistedClientSettingsChangedDuringHydration = false;
+        refreshPersistedClientSettings();
+      }
     } catch (error) {
       if (hydrationGeneration === clientSettingsHydrationGeneration) {
         setClientSettingsHydrationStatus("failed");
@@ -190,22 +198,46 @@ function subscribePersistedClientSettingsChanges(onChange: () => void): () => vo
     : subscribeBrowserClientSettingsWrites(onChange);
 }
 
-function refreshPersistedClientSettings(): void {
+function handlePersistedClientSettingsChange(): void {
+  if (clientSettingsHydrationStatus === "ready") {
+    refreshPersistedClientSettings();
+  } else {
+    persistedClientSettingsChangedDuringHydration = true;
+  }
+}
+
+function refreshPersistedClientSettings(attempt: "first" | "retry" = "first"): void {
   void enqueueClientSettingsPersistence(async () => {
-    const persistedSettings = await ensureLocalApi().persistence.getClientSettings();
+    const persistedSettings = await ensureLocalApi()
+      .persistence.getClientSettings()
+      .catch((error: unknown) => {
+        console.error(`${CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE} refresh failed`, {
+          operation: "refresh",
+          ...safeErrorLogAttributes(error),
+        });
+        return null;
+      });
     if (persistedSettings) {
       replaceClientSettingsSnapshot({ ...DEFAULT_CLIENT_SETTINGS, ...persistedSettings });
+    } else if (attempt === "first") {
+      setTimeout(() => refreshPersistedClientSettings("retry"), CLIENT_SETTINGS_REFRESH_RETRY_MS);
     }
-  }).catch((error) => {
-    console.error(`${CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE} refresh failed`, {
-      operation: "refresh",
-      ...safeErrorLogAttributes(error),
-    });
   });
 }
 
-const defaultClientSettingsPersistence = (settings: ClientSettings): Promise<void> =>
-  ensureLocalApi().persistence.setClientSettings(settings);
+type ClientSettingsPersistence = (
+  settings: ClientSettings,
+  patch: ClientSettingsPatch,
+) => Promise<void>;
+
+const defaultClientSettingsPersistence: ClientSettingsPersistence = (settings, patch) =>
+  ensureLocalApi().persistence.setClientSettings(settings, patch);
+
+function changedClientSettings(current: ClientSettings, next: ClientSettings): ClientSettingsPatch {
+  return Object.fromEntries(
+    Object.entries(next).filter(([key, value]) => current[key as keyof ClientSettings] !== value),
+  ) as ClientSettingsPatch;
+}
 
 function enqueueClientSettingsPersistence<A>(work: () => Promise<A>): Promise<A> {
   const result = clientSettingsPersistenceQueue.then(work);
@@ -218,7 +250,7 @@ function enqueueClientSettingsPersistence<A>(work: () => Promise<A>): Promise<A>
 
 export function persistClientSettingsPatch(
   patch: ClientSettingsPatch,
-  persist: (settings: ClientSettings) => Promise<void> = defaultClientSettingsPersistence,
+  persist: ClientSettingsPersistence = defaultClientSettingsPersistence,
 ): Promise<void> {
   // Patches queued before hydration must publish before newer optimistic patches.
   const deferPatch =
@@ -245,7 +277,7 @@ export function persistClientSettingsPatch(
     ) {
       replaceClientSettingsSnapshot({ ...current, ...patch });
     }
-    await persist(getClientSettingsSnapshot());
+    await persist(getClientSettingsSnapshot(), patch);
   }).catch((error) => {
     console.error(`${CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE} persist failed`, {
       operation: "persist",
@@ -257,7 +289,7 @@ export function persistClientSettingsPatch(
 /** Reapply to newer snapshots after pending writes to avoid losing concurrent changes. */
 export async function persistClientSettingsUpdate(
   update: (current: ClientSettings) => ClientSettings,
-  persist: (settings: ClientSettings) => Promise<void> = defaultClientSettingsPersistence,
+  persist: ClientSettingsPersistence = defaultClientSettingsPersistence,
 ): Promise<ClientSettings> {
   return enqueueClientSettingsPersistence(async () => {
     if (clientSettingsHydrationStatus !== "ready") {
@@ -266,7 +298,7 @@ export async function persistClientSettingsUpdate(
     for (;;) {
       const current = getClientSettingsSnapshot();
       const next = update(current);
-      await persist(next);
+      await persist(next, changedClientSettings(current, next));
       if (getClientSettingsSnapshot() === current) {
         replaceClientSettingsSnapshot(next);
         return next;
@@ -826,6 +858,7 @@ export function __resetClientSettingsPersistenceForTests(): void {
   clientSettingsHydrationPromise = null;
   clientSettingsPersistenceQueue = Promise.resolve();
   deferredClientSettingsPatchCount = 0;
+  persistedClientSettingsChangedDuringHydration = false;
   unsubscribePersistedClientSettings?.();
   unsubscribePersistedClientSettings = null;
   clientSettingsListeners.clear();
