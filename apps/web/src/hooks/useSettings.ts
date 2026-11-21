@@ -201,6 +201,8 @@ function subscribePersistedClientSettingsChanges(onChange: () => void): () => vo
 function handlePersistedClientSettingsChange(): void {
   if (clientSettingsHydrationStatus === "ready") {
     refreshPersistedClientSettings();
+  } else if (clientSettingsHydrationStatus === "failed") {
+    void hydrateClientSettings().catch(() => undefined);
   } else {
     persistedClientSettingsChangedDuringHydration = true;
   }

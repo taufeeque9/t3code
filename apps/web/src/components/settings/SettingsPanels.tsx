@@ -697,7 +697,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       notifyThemeRestoreFailure();
       return;
     }
-    updateSettings({
+    const defaults: Parameters<typeof updateSettings>[0] = {
       appearanceContrast: DEFAULT_UNIFIED_SETTINGS.appearanceContrast,
       diffColorScheme: DEFAULT_UNIFIED_SETTINGS.diffColorScheme,
       chatWidth: DEFAULT_UNIFIED_SETTINGS.chatWidth,
@@ -773,7 +773,16 @@ export function useSettingsRestore(onRestored?: () => void) {
       browserAutoShowFloatingPreview: DEFAULT_UNIFIED_SETTINGS.browserAutoShowFloatingPreview,
       pullRequestLinksOpenInApp: DEFAULT_UNIFIED_SETTINGS.pullRequestLinksOpenInApp,
       enableAgentBrowserAccess: DEFAULT_UNIFIED_SETTINGS.enableAgentBrowserAccess,
-    });
+    };
+    // Keys already at their default stay out, so a reset cannot overwrite an edit this window has
+    // not loaded yet.
+    updateSettings(
+      Object.fromEntries(
+        Object.entries(defaults).filter(
+          ([key, value]) => !Equal.equals(settings[key as keyof typeof settings], value),
+        ),
+      ) as typeof defaults,
+    );
     onRestored?.();
   };
 

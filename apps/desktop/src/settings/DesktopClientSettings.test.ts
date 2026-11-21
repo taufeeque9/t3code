@@ -128,6 +128,8 @@ const watchClientSettings = Effect.fn("test.watchClientSettings")(function* (opt
   readonly directories: ReadonlyArray<string>;
   readonly armed: number;
   readonly failFirstWatchOf?: string;
+  /** Runs as each watch is installed, before the service learns it is ready. */
+  readonly onArm?: (directory: string) => Effect.Effect<void, PlatformError.PlatformError>;
 }) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -141,6 +143,10 @@ const watchClientSettings = Effect.fn("test.watchClientSettings")(function* (opt
   const readStarted = yield* Queue.unbounded<void>();
   const calls = { readFileString: 0, readLink: 0, makeDirectory: 0 };
   let heldRead: Deferred.Deferred<void> | undefined;
+  const writeHooks: {
+    afterTemporaryWrite?: Effect.Effect<void, PlatformError.PlatformError> | undefined;
+    failRename?: boolean;
+  } = {};
   const settings = yield* DesktopClientSettings.make.pipe(
     Effect.provideService(
       FileSystem.FileSystem,
@@ -166,6 +172,30 @@ const watchClientSettings = Effect.fn("test.watchClientSettings")(function* (opt
             calls.readLink += 1;
             return fileSystem.readLink(linkPath);
           }),
+        writeFileString: (filePath, data, writeOptions) =>
+          fileSystem.writeFileString(filePath, data, writeOptions).pipe(
+            Effect.andThen(
+              Effect.suspend(() => {
+                const hook = filePath.endsWith(".tmp") ? writeHooks.afterTemporaryWrite : undefined;
+                if (hook === undefined) return Effect.void;
+                writeHooks.afterTemporaryWrite = undefined;
+                return hook;
+              }),
+            ),
+          ),
+        rename: (from, to) =>
+          Effect.suspend(() => {
+            if (!writeHooks.failRename) return fileSystem.rename(from, to);
+            writeHooks.failRename = false;
+            return Effect.fail(
+              PlatformError.systemError({
+                _tag: "PermissionDenied",
+                module: "FileSystem",
+                method: "rename",
+                pathOrDescriptor: to,
+              }),
+            );
+          }),
         makeDirectory: (directory, makeOptions) =>
           Effect.suspend(() => {
             calls.makeDirectory += 1;
@@ -178,8 +208,14 @@ const watchClientSettings = Effect.fn("test.watchClientSettings")(function* (opt
   yield* settings.externalChanges.pipe(
     Stream.runForEach((changed) => Queue.offer(changes, changed)),
     Effect.provideService(FileSystem.WatchBackend, {
-      register: (directory) => {
-        const started = Stream.fromEffect(Queue.offer(registered, directory)).pipe(Stream.drain);
+      register: (directory, _info, watchOptions) => {
+        const started = Stream.fromEffect(
+          (options.onArm?.(directory) ?? Effect.void).pipe(
+            Effect.andThen(Queue.offer(registered, directory)),
+            Effect.andThen(Effect.sync(() => watchOptions?.onReady?.())),
+            Effect.orDie,
+          ),
+        ).pipe(Stream.drain);
         const queue = events.get(directory);
         if (queue === undefined) return Option.some(Stream.concat(started, Stream.never));
         if (failWatch !== directory) {
@@ -221,6 +257,7 @@ const watchClientSettings = Effect.fn("test.watchClientSettings")(function* (opt
       heldRead = gate;
     },
     readStarted,
+    writeHooks,
     touch: Effect.fn("test.touch")(function* (filePath: string) {
       const queue = events.get(path.dirname(filePath));
       assert.isDefined(queue);
@@ -233,8 +270,24 @@ const watchClientSettings = Effect.fn("test.watchClientSettings")(function* (opt
     settle: TestClock.adjust(DesktopClientSettings.EXTERNAL_CHANGE_DEBOUNCE).pipe(
       Effect.andThen(Queue.take(reads)),
     ),
+    /** Saves, then consumes the read signals the save produced. */
     patch: (patch: ClientSettingsPatch) =>
-      settings.patch(patch).pipe(Effect.ensuring(Queue.take(reads))),
+      Effect.suspend(() => {
+        const readsBefore = calls.readFileString;
+        return settings
+          .patch(patch)
+          .pipe(
+            Effect.ensuring(
+              Effect.suspend(() =>
+                Effect.forEach(
+                  Array.from({ length: calls.readFileString - readsBefore }),
+                  () => Queue.take(reads),
+                  { discard: true },
+                ),
+              ),
+            ),
+          );
+      }),
   };
 });
 
@@ -359,6 +412,75 @@ describe("DesktopClientSettings", () => {
     ),
   );
 
+  it.effect("waits briefly for a half-written file and never saves over it", () =>
+    withClientSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settingsPath = environment.clientSettingsPath;
+        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.writeFileString(settingsPath, JSON.stringify(clientSettings));
+        const watched = yield* watchClientSettings({
+          directories: [environment.stateDir],
+          armed: 1,
+        });
+        const halfWritten = '{"language":"fr","wordWrap":';
+        yield* fileSystem.writeFileString(settingsPath, halfWritten);
+
+        const failed = yield* watched.settings
+          .patch({ wordWrap: false })
+          .pipe(Effect.flip, Effect.forkChild({ startImmediately: true }));
+        for (let retry = 0; retry < 3; retry++) {
+          yield* watched.awaitRead;
+          yield* TestClock.adjust("100 millis");
+        }
+        yield* watched.awaitRead;
+        assert.equal((yield* Fiber.join(failed)).operation, "read-current-settings");
+        assert.equal(yield* fileSystem.readFileString(settingsPath), halfWritten);
+
+        const saved = yield* watched.settings
+          .patch({ wordWrap: false })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* watched.awaitRead;
+        yield* fileSystem.writeFileString(settingsPath, JSON.stringify(edited));
+        yield* TestClock.adjust("100 millis");
+        assert.deepEqual(yield* Fiber.join(saved), {
+          settings: { ...edited, wordWrap: false },
+          mergedExternalEdit: true,
+        });
+      }),
+    ),
+  );
+
+  it.effect("patches an outside write that lands between its read and its rename", () =>
+    withClientSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settingsPath = environment.clientSettingsPath;
+        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.writeFileString(settingsPath, JSON.stringify(clientSettings));
+        const watched = yield* watchClientSettings({
+          directories: [environment.stateDir],
+          armed: 1,
+        });
+        watched.writeHooks.afterTemporaryWrite = fileSystem.writeFileString(
+          settingsPath,
+          JSON.stringify(edited),
+        );
+
+        assert.deepEqual(yield* watched.patch({ wordWrap: false }), {
+          settings: { ...edited, wordWrap: false },
+          mergedExternalEdit: true,
+        });
+        assert.deepEqual(
+          yield* decodeClientSettingsJson(yield* fileSystem.readFileString(settingsPath)),
+          { ...edited, wordWrap: false },
+        );
+      }),
+    ),
+  );
+
   it.effect("reports an outside edit a save merges before anything was known", () =>
     withClientSettings(
       Effect.gen(function* () {
@@ -389,11 +511,9 @@ describe("DesktopClientSettings", () => {
           armed: 1,
         });
 
-        yield* fileSystem.remove(settingsPath);
-        yield* fileSystem.makeDirectory(`${settingsPath}/occupied`, { recursive: true });
+        watched.writeHooks.failRename = true;
         const error = yield* watched.patch({ wordWrap: false }).pipe(Effect.flip);
         assert.equal(error.operation, "replace-settings-file");
-        yield* fileSystem.remove(settingsPath, { recursive: true });
 
         yield* fileSystem.writeFileString(settingsPath, JSON.stringify(editedAgain));
         yield* watched.touch(settingsPath);
@@ -447,21 +567,26 @@ describe("DesktopClientSettings", () => {
     ),
   );
 
-  it.effect("rewatches after a watch failure and announces an edit made meanwhile", () =>
+  it.effect("rewatches after a watch failure and announces an edit made while rewatching", () =>
     withClientSettings(
       Effect.gen(function* () {
         const environment = yield* DesktopEnvironment.DesktopEnvironment;
         const fileSystem = yield* FileSystem.FileSystem;
         const settingsPath = environment.clientSettingsPath;
+        let arms = 0;
         const watched = yield* watchClientSettings({
           directories: [environment.stateDir],
           armed: 1,
           failFirstWatchOf: environment.stateDir,
+          // The edit lands while the restarted watch is installed, so no event reports it.
+          onArm: () =>
+            ++arms === 2
+              ? fileSystem.writeFileString(settingsPath, JSON.stringify(edited))
+              : Effect.void,
         });
 
         const restartsBefore = watched.calls.makeDirectory;
         yield* watched.touch(settingsPath);
-        yield* fileSystem.writeFileString(settingsPath, JSON.stringify(edited));
         yield* TestClock.adjust("999 millis");
         assert.equal(watched.calls.makeDirectory, restartsBefore);
         yield* TestClock.adjust("1 millis");
@@ -546,13 +671,11 @@ describe("DesktopClientSettings", () => {
     withClientSettings(
       Effect.gen(function* () {
         const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const watched = yield* watchClientSettings({ directories: [], armed: 1 });
         const fileSystem = yield* FileSystem.FileSystem;
-        const settings = yield* DesktopClientSettings.DesktopClientSettings;
-        yield* fileSystem.makeDirectory(`${environment.clientSettingsPath}/occupied`, {
-          recursive: true,
-        });
+        watched.writeHooks.failRename = true;
 
-        const error = yield* settings.patch(clientSettings).pipe(Effect.flip);
+        const error = yield* watched.patch(clientSettings).pipe(Effect.flip);
 
         assert.equal(error.operation, "replace-settings-file");
         assert.deepEqual(

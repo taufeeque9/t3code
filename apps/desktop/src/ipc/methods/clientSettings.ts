@@ -53,11 +53,20 @@ export const patchClientSettings = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PATCH_CLIENT_SETTINGS_CHANNEL,
   payload: ClientSettingsPatch,
   result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.clientSettings.patch")(function* (patch) {
+  handler: Effect.fn("desktop.ipc.clientSettings.patch")(function* (patch, event) {
     const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
+    const electronWindow = yield* ElectronWindow.ElectronWindow;
     const patched = yield* clientSettings.patch(patch);
     yield* applyNativeClientSettings(patched.settings);
-    // The sender's snapshot lacks the merged edit, as may other windows'.
-    if (patched.mergedExternalEdit) yield* announceClientSettingsChange();
+    // The sender already shows its own save, and refreshing it would race its queued saves.
+    // A merged outside edit is missing from its snapshot too.
+    if (patched.mergedExternalEdit || event === undefined) {
+      yield* announceClientSettingsChange();
+    } else {
+      yield* electronWindow.sendAllExcept(
+        event.sender.id,
+        IpcChannels.CLIENT_SETTINGS_CHANGED_CHANNEL,
+      );
+    }
   }),
 });

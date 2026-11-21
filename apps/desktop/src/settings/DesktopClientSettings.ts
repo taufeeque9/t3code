@@ -8,8 +8,10 @@ import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import { resolveSymlinkTarget } from "@t3tools/shared/symlink";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -40,6 +42,10 @@ const encodeClientSettingsJson = Schema.encodeEffect(ClientSettingsJson);
 
 // Editors and agents often save in several steps; read once the file settles.
 export const EXTERNAL_CHANGE_DEBOUNCE = Duration.millis(150);
+// A save waits this long for a half-written file to become readable before giving up.
+const UNREADABLE_SAVE_RETRY = { schedule: Schedule.spaced("100 millis"), times: 3 };
+// Each attempt re-reads before replacing; the last one replaces regardless.
+const SAVE_ATTEMPTS = 3;
 const WATCH_RETRY = Schedule.exponential("1 second").pipe(
   Schedule.modifyDelay(({ duration }) =>
     Effect.succeed(Duration.min(duration, Duration.minutes(1))),
@@ -60,6 +66,7 @@ export class DesktopClientSettingsReadError extends Schema.TaggedError<DesktopCl
 }
 
 const DesktopClientSettingsWriteOperation = Schema.Literals([
+  "read-current-settings",
   "create-temporary-file-name",
   "resolve-symlink",
   "encode-document",
@@ -105,54 +112,45 @@ export class DesktopClientSettings extends Context.Service<
   }
 >()("@t3tools/desktop/settings/DesktopClientSettings") {}
 
-const readClientSettings = (
+const readRawClientSettings = (
   fileSystem: FileSystem.FileSystem,
   settingsPath: string,
-): Effect.Effect<Option.Option<ClientSettings>, DesktopClientSettingsReadError> =>
+): Effect.Effect<Option.Option<string>, DesktopClientSettingsReadError> =>
   fileSystem.readFileString(settingsPath).pipe(
     Effect.asSome,
     Effect.catchTags({
       PlatformError: (cause) =>
         cause.reason._tag === "NotFound"
           ? Effect.succeed(Option.none<string>())
-          : Effect.logWarning("Could not read desktop client settings.", cause).pipe(
-              Effect.annotateLogs({ settingsPath }),
-              Effect.andThen(
-                Effect.fail(
-                  new DesktopClientSettingsReadError({
-                    operation: "read-file",
-                    path: settingsPath,
-                    cause,
-                  }),
-                ),
-              ),
+          : Effect.fail(
+              new DesktopClientSettingsReadError({
+                operation: "read-file",
+                path: settingsPath,
+                cause,
+              }),
             ),
     }),
-    Effect.flatMap(
-      Option.match({
-        onNone: () => Effect.succeed(Option.none<ClientSettings>()),
-        onSome: (raw) =>
-          decodeClientSettingsJson(raw).pipe(
-            Effect.asSome,
-            Effect.catchTags({
-              SchemaError: (cause) =>
-                Effect.logWarning("Could not decode desktop client settings.", cause).pipe(
-                  Effect.annotateLogs({ settingsPath }),
-                  Effect.andThen(
-                    Effect.fail(
-                      new DesktopClientSettingsReadError({
-                        operation: "decode-document",
-                        path: settingsPath,
-                        cause,
-                      }),
-                    ),
-                  ),
-                ),
-            }),
-          ),
-      }),
-    ),
   );
+
+const decodeRawClientSettings = (
+  raw: Option.Option<string>,
+  settingsPath: string,
+): Effect.Effect<Option.Option<ClientSettings>, DesktopClientSettingsReadError> =>
+  Option.match(raw, {
+    onNone: () => Effect.succeed(Option.none<ClientSettings>()),
+    onSome: (contents) =>
+      decodeClientSettingsJson(contents).pipe(
+        Effect.asSome,
+        Effect.mapError(
+          (cause) =>
+            new DesktopClientSettingsReadError({
+              operation: "decode-document",
+              path: settingsPath,
+              cause,
+            }),
+        ),
+      ),
+  });
 
 const writeClientSettings = Effect.fnUntraced(function* (input: {
   readonly fileSystem: FileSystem.FileSystem;
@@ -160,7 +158,9 @@ const writeClientSettings = Effect.fnUntraced(function* (input: {
   readonly settingsPath: string;
   readonly encoded: string;
   readonly suffix: string;
-}): Effect.fn.Return<void, DesktopClientSettingsWriteError> {
+  /** Runs just before the rename; `false` leaves the file alone and reports it not replaced. */
+  readonly stillCurrent?: Effect.Effect<boolean>;
+}): Effect.fn.Return<boolean, DesktopClientSettingsWriteError> {
   const targetPath = yield* resolveSymlinkTarget(input.settingsPath).pipe(
     Effect.provideService(FileSystem.FileSystem, input.fileSystem),
     Effect.provideService(Path.Path, input.path),
@@ -185,7 +185,7 @@ const writeClientSettings = Effect.fnUntraced(function* (input: {
         }),
     ),
   );
-  yield* Effect.gen(function* () {
+  return yield* Effect.gen(function* () {
     yield* input.fileSystem.writeFileString(tempPath, `${input.encoded}\n`).pipe(
       Effect.mapError(
         (cause) =>
@@ -196,6 +196,7 @@ const writeClientSettings = Effect.fnUntraced(function* (input: {
           }),
       ),
     );
+    if (input.stillCurrent && !(yield* input.stillCurrent)) return false;
     yield* input.fileSystem.rename(tempPath, targetPath).pipe(
       Effect.mapError(
         (cause) =>
@@ -206,6 +207,7 @@ const writeClientSettings = Effect.fnUntraced(function* (input: {
           }),
       ),
     );
+    return true;
   }).pipe(Effect.ensuring(input.fileSystem.remove(tempPath, { force: true }).pipe(Effect.ignore)));
 });
 
@@ -215,23 +217,53 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const random = yield* SecureRandom.SecureRandom;
   const settingsPath = environment.clientSettingsPath;
-  const read = readClientSettings(fileSystem, settingsPath);
+  const readRaw = readRawClientSettings(fileSystem, settingsPath);
+  const readUnlogged = readRaw.pipe(
+    Effect.flatMap((raw) => decodeRawClientSettings(raw, settingsPath)),
+  );
+  const read = readUnlogged.pipe(
+    Effect.tapError((error) =>
+      Effect.logWarning("Could not read desktop client settings.", error).pipe(
+        Effect.annotateLogs({ settingsPath }),
+      ),
+    ),
+  );
+  const toKnown = (settings: ClientSettings) =>
+    encodeClientSettingsJson(settings).pipe(
+      Effect.map((encoded): KnownSettings => ({ encoded, settings })),
+      Effect.orDie,
+    );
   // Patches and the watcher's compare each read the file and update lastKnownRef as one step.
   const fileLock = yield* Semaphore.make(1);
   // What the app last wrote or announced, so its own writes stay silent.
   const lastKnownRef = yield* Ref.make(Option.none<KnownSettings>());
 
   const readKnown = read.pipe(
-    Effect.flatMap(
-      Option.match({
-        onNone: () => Effect.succeedNone,
-        onSome: (settings) =>
-          encodeClientSettingsJson(settings).pipe(
-            Effect.map((encoded) => Option.some({ encoded, settings })),
-          ),
-      }),
-    ),
+    Effect.flatMap((settings) => Effect.transposeOption(Option.map(settings, toKnown))),
     Effect.orElseSucceed(() => Option.none<KnownSettings>()),
+  );
+  // A missing file reads as none; one that exists but stays unreadable fails the save.
+  const readForSave = Effect.gen(function* () {
+    const raw = yield* readRaw;
+    const current = yield* decodeRawClientSettings(raw, settingsPath).pipe(
+      Effect.flatMap((settings) => Effect.transposeOption(Option.map(settings, toKnown))),
+    );
+    return { raw, current };
+  }).pipe(
+    Effect.retry(UNREADABLE_SAVE_RETRY),
+    Effect.tapError((error) =>
+      Effect.logWarning("Not saving over desktop client settings that cannot be read.", error).pipe(
+        Effect.annotateLogs({ settingsPath }),
+      ),
+    ),
+    Effect.mapError(
+      (cause) =>
+        new DesktopClientSettingsWriteError({
+          operation: "read-current-settings",
+          path: settingsPath,
+          cause,
+        }),
+    ),
   );
   const isLastKnown = (known: KnownSettings, lastKnown: Option.Option<KnownSettings>) =>
     Option.isSome(lastKnown) && lastKnown.value.encoded === known.encoded;
@@ -258,9 +290,9 @@ export const make = Effect.gen(function* () {
     Effect.provideService(Path.Path, path),
   );
   // Writes replace files by rename, which detaches a watcher on the file itself.
-  const watchFile = (filePath: string) =>
+  const watchFile = (filePath: string, ready: Deferred.Deferred<void>) =>
     fileSystem
-      .watch(path.dirname(filePath))
+      .watch(path.dirname(filePath), { onReady: () => Deferred.doneUnsafe(ready, Effect.void) })
       .pipe(Stream.filter((event) => path.basename(event.path) === path.basename(filePath)));
 
   // The settings path reports edits and replaced links; a link's target directory reports edits
@@ -268,17 +300,32 @@ export const make = Effect.gen(function* () {
   const externalChanges = Stream.unwrap(
     Effect.gen(function* () {
       yield* fileSystem.makeDirectory(path.dirname(settingsPath), { recursive: true });
-      // A restart after a watch failure may have missed an edit, so it compares instead of seeding.
       const restarted = yield* Ref.getAndSet(watchStartedRef, true);
-      if (!restarted) yield* seedLastKnown;
-      const missedChange = restarted ? Stream.fromEffect(readExternalChange()) : Stream.empty;
       const linkPath = path.resolve(settingsPath);
       const targetRef = yield* SubscriptionRef.make(yield* resolveSettingsTarget);
+      const linkReady = yield* Deferred.make<void>();
+      const targetReady = yield* Deferred.make<void>();
       const targetEvents = SubscriptionRef.changes(targetRef).pipe(
         Stream.changes,
-        Stream.switchMap((target) => (target === linkPath ? Stream.empty : watchFile(target))),
+        Stream.switchMap((target) =>
+          target === linkPath
+            ? Stream.fromEffect(Deferred.succeed(targetReady, undefined)).pipe(Stream.drain)
+            : watchFile(target, targetReady),
+        ),
       );
-      const settledChanges = Stream.merge(watchFile(settingsPath), targetEvents).pipe(
+      // Read once the watches are armed, so an edit during startup is either read or reported.
+      // A restart after a watch failure may have missed an edit, so it compares instead of seeding.
+      const reconcile = Stream.fromEffect(
+        Deferred.await(linkReady).pipe(
+          Effect.andThen(Deferred.await(targetReady)),
+          Effect.andThen(
+            restarted
+              ? readExternalChange()
+              : seedLastKnown.pipe(Effect.as(Option.none<ClientSettings>())),
+          ),
+        ),
+      );
+      const settledChanges = Stream.merge(watchFile(settingsPath, linkReady), targetEvents).pipe(
         Stream.debounce(EXTERNAL_CHANGE_DEBOUNCE),
         Stream.mapEffect(() =>
           resolveSettingsTarget.pipe(
@@ -287,7 +334,7 @@ export const make = Effect.gen(function* () {
           ),
         ),
       );
-      return Stream.concat(missedChange, settledChanges);
+      return Stream.merge(reconcile, settledChanges);
     }),
   ).pipe(
     Stream.filter(Option.isSome),
@@ -303,33 +350,49 @@ export const make = Effect.gen(function* () {
   return DesktopClientSettings.of({
     get: read.pipe(Effect.withSpan("desktop.clientSettings.get")),
     patch: Effect.fn("desktop.clientSettings.patch")(function* (patch) {
-      const current = yield* readKnown;
       const lastKnown = yield* Ref.get(lastKnownRef);
-      // An unreadable or missing file keeps what the app last knew rather than resetting.
-      const base = Option.orElse(current, () => lastKnown).pipe(
-        Option.match({
-          onNone: () => DEFAULT_CLIENT_SETTINGS,
-          onSome: (known) => known.settings,
-        }),
-      );
-      const settings: ClientSettings = { ...base, ...patch };
-      const encoded = yield* encodeClientSettingsJson(settings).pipe(
-        Effect.mapError(
-          (cause) =>
-            new DesktopClientSettingsWriteError({
-              operation: "encode-document",
-              path: settingsPath,
-              cause,
-            }),
-        ),
-      );
-      const suffix = (yield* random.uuidV4()).replace(/-/g, "");
-      yield* writeClientSettings({ fileSystem, path, settingsPath, encoded, suffix });
-      yield* Ref.set(lastKnownRef, Option.some({ encoded, settings }));
-      return {
-        settings,
-        mergedExternalEdit: Option.isSome(current) && !isLastKnown(current.value, lastKnown),
-      };
+      for (let attempt = 1; ; attempt += 1) {
+        const { raw, current } = yield* readForSave;
+        // A missing file keeps what the app last knew rather than resetting.
+        const base = Option.orElse(current, () => lastKnown).pipe(
+          Option.match({
+            onNone: () => DEFAULT_CLIENT_SETTINGS,
+            onSome: (known) => known.settings,
+          }),
+        );
+        const settings: ClientSettings = { ...base, ...patch };
+        const encoded = yield* encodeClientSettingsJson(settings).pipe(
+          Effect.mapError(
+            (cause) =>
+              new DesktopClientSettingsWriteError({
+                operation: "encode-document",
+                path: settingsPath,
+                cause,
+              }),
+          ),
+        );
+        const suffix = (yield* random.uuidV4()).replace(/-/g, "");
+        // An outside write between the read and the rename is re-read and patched instead.
+        const replaced = yield* writeClientSettings({
+          fileSystem,
+          path,
+          settingsPath,
+          encoded,
+          suffix,
+          ...(attempt < SAVE_ATTEMPTS && {
+            stillCurrent: readRaw.pipe(
+              Effect.map((now) => Equal.equals(now, raw)),
+              Effect.orElseSucceed(() => false),
+            ),
+          }),
+        });
+        if (!replaced) continue;
+        yield* Ref.set(lastKnownRef, Option.some({ encoded, settings }));
+        return {
+          settings,
+          mergedExternalEdit: Option.isSome(current) && !isLastKnown(current.value, lastKnown),
+        };
+      }
     }, fileLock.withPermits(1)),
     externalChanges,
   });

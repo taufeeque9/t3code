@@ -316,6 +316,7 @@ function layerTest(input: {
     prepareReveal: () => Effect.succeed(false),
     reveal: (window) => Effect.sync(() => input.onReveal?.(window)),
     sendAll: () => Effect.void,
+    sendAllExcept: () => Effect.void,
     destroyAll: input.destroyAll ?? Effect.void,
     syncAllAppearance: (sync) =>
       input.appearanceWindows === undefined
@@ -449,6 +450,7 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
       prepareReveal: () => Effect.succeed(false),
       reveal: (window) => Ref.update(revealedWindows, (windows) => [...windows, window]),
       sendAll: () => Effect.void,
+      sendAllExcept: () => Effect.void,
       destroyAll: Effect.void,
       syncAllAppearance: (sync) =>
         fallbackWindow ? sync(fallbackWindow, { titleBarOverlay: true }) : Effect.void,

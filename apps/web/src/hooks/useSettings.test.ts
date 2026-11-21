@@ -270,6 +270,26 @@ describe("desktop settings file changes", () => {
     }
   });
 
+  it("retries a failed first read when the file changes", async () => {
+    const bridge = stubDesktopBridge();
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      persistenceMocks.getClientSettings
+        .mockRejectedValueOnce(new Error("settings unreadable"))
+        .mockResolvedValue(editedSettings);
+      await expect(ensureClientSettingsHydrated()).rejects.toThrow("settings unreadable");
+
+      bridge.announce();
+      expect(persistenceMocks.getClientSettings).toHaveBeenCalledTimes(2);
+      await ensureClientSettingsHydrated();
+
+      expect(getClientSettings()).toEqual(editedSettings);
+      expect(persistenceMocks.getClientSettings).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("rereads once when a refresh finds no readable settings", async () => {
     const bridge = stubDesktopBridge();
     vi.useFakeTimers();

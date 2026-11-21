@@ -129,6 +129,11 @@ export class ElectronWindow extends Context.Service<
     readonly prepareReveal: (window: Electron.BrowserWindow) => Effect.Effect<boolean>;
     readonly reveal: (window: Electron.BrowserWindow) => Effect.Effect<void>;
     readonly sendAll: (channel: string, ...args: readonly unknown[]) => Effect.Effect<void>;
+    readonly sendAllExcept: (
+      webContentsId: number,
+      channel: string,
+      ...args: readonly unknown[]
+    ) => Effect.Effect<void>;
     readonly destroyAll: Effect.Effect<void>;
     readonly syncAllAppearance: <E, R>(
       sync: (
@@ -239,6 +244,30 @@ export const make = Effect.gen(function* () {
     const focused = Option.fromNullishOr(Electron.BrowserWindow.getFocusedWindow() ?? null);
     if (Option.isSome(focused) && (yield* isAppWindow(focused.value))) return focused;
     return yield* liveMain;
+  });
+
+  /* Window broadcasts run for streamed updates; avoid a span per broadcast. */
+  const sendToWindows = Effect.fnUntraced(function* (
+    exceptWebContentsId: number | undefined,
+    channel: string,
+    args: readonly unknown[],
+  ) {
+    for (const window of yield* listWindows) {
+      if ((yield* isWindowDestroyed(window)) || window.webContents.id === exceptWebContentsId) {
+        continue;
+      }
+      yield* Effect.try({
+        try: () => window.webContents.send(channel, ...args),
+        catch: (cause) =>
+          new ElectronWindowOperationError({
+            operation: "send-window-message",
+            platform,
+            windowId: window.id,
+            channel,
+            cause,
+          }),
+      }).pipe(Effect.orDie);
+    }
   });
 
   return ElectronWindow.of({
@@ -386,26 +415,12 @@ export const make = Effect.gen(function* () {
           }),
       }).pipe(Effect.orDie);
     }),
-    sendAll:
-      /* Window broadcasts run for streamed updates; avoid a span per broadcast. */
-      Effect.fnUntraced(function* (channel, ...args) {
-        for (const window of yield* listWindows) {
-          if (yield* isWindowDestroyed(window)) {
-            continue;
-          }
-          yield* Effect.try({
-            try: () => window.webContents.send(channel, ...args),
-            catch: (cause) =>
-              new ElectronWindowOperationError({
-                operation: "send-window-message",
-                platform,
-                windowId: window.id,
-                channel,
-                cause,
-              }),
-          }).pipe(Effect.orDie);
-        }
-      }),
+    sendAll: Effect.fnUntraced(function* (channel, ...args) {
+      yield* sendToWindows(undefined, channel, args);
+    }),
+    sendAllExcept: Effect.fnUntraced(function* (webContentsId, channel, ...args) {
+      yield* sendToWindows(webContentsId, channel, args);
+    }),
     destroyAll: Effect.gen(function* () {
       let firstFailure: Cause.Cause<never> | undefined;
       for (const window of yield* listWindows) {

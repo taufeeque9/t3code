@@ -105,6 +105,7 @@ function layerElectronWindow(window: ReturnType<typeof makeTestWindow>["window"]
       prepareReveal: () => Effect.succeed(false),
       reveal: () => Effect.void,
       sendAll: () => Effect.void,
+      sendAllExcept: () => Effect.void,
       destroyAll: Effect.void,
       syncAllAppearance: () => Effect.void,
     }),

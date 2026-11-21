@@ -82,6 +82,7 @@ function layerElectronWindow(destroyAll: Effect.Effect<void> = Effect.void) {
     prepareReveal: () => Effect.succeed(false),
     reveal: () => Effect.void,
     sendAll: () => Effect.void,
+    sendAllExcept: () => Effect.void,
     destroyAll,
     syncAllAppearance: () => Effect.void,
   });

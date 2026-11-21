@@ -661,25 +661,37 @@ overwritten. The fork picks such edits up while the app runs and keeps them.
   save would revert an edit the renderer had not refreshed yet, even one main
   had announced. A patch replaces a whole top-level key, so an outside edit to
   another entry of the same map or list (`favorites`, project overrides) that
-  the renderer has not refreshed yet is still lost.
+  the renderer has not refreshed yet is still lost. Restore defaults
+  (`SettingsPanels.tsx`) sends only keys not already at their default.
 - `DesktopClientSettings.ts`: `patch` reads the file, applies the patch, writes
-  it, and only then records it as last known. It reports `mergedExternalEdit`
-  when the file held settings it had neither written nor announced. Patches and
-  the watcher's read and compare share one semaphore.
+  it, and only then records it as last known. A file that exists but does not
+  decode (an editor mid-save) is re-read for up to 300 ms, then the save fails
+  and leaves it alone. Just before its rename, a save re-reads the file and, if
+  it changed, patches the new contents instead (three attempts; the last
+  renames regardless, and a write in the moment before the rename is still
+  lost). It reports `mergedExternalEdit` when the file held settings it had
+  neither written nor announced. Patches and the watcher's read and compare
+  share one semaphore.
 - `externalChanges` watches the settings path's directory, since writes replace
-  the file by rename, plus a link target's directory. It debounces events by
+  the file by rename, plus a link target's directory. Only the settings file's
+  own link and its final target directory are watched: retargeting an
+  intermediate link in a chain goes unnoticed until the next event. Each
+  start arms the watches before its first read. It debounces events by
   150 ms, then re-resolves the link (re-arming the target watch) and announces
   settings that differ from the last known ones, seeded when watching starts.
   Invalid, partial and deleted files announce nothing. Watch failures retry
   with a backoff capped at a minute, and a restart compares the file instead of
   seeding, so an edit made meanwhile is announced.
-- `ipc/methods/clientSettings.ts`: an announced change, or a patch that merged
-  one, runs `snapShot.configure` and `applyLanguage` like an in-app save and
-  sends `CLIENT_SETTINGS_CHANGED_CHANNEL` to every window (`preload.ts`:
-  `onClientSettingsChanged`).
+- `ipc/methods/clientSettings.ts`: an announced change and every patch run
+  `snapShot.configure` and `applyLanguage` like an in-app save and send
+  `CLIENT_SETTINGS_CHANGED_CHANNEL` (`preload.ts`: `onClientSettingsChanged`).
+  An announced change or a merging patch goes to every window; an ordinary
+  patch skips its sender (`ElectronWindow.sendAllExcept`), whose refresh would
+  race its queued saves.
 - `useSettings.ts`: hydration subscribes to that event (storage events in a
   browser) before its first read and refreshes once more if one arrived during
-  it. A refresh that finds no readable settings retries once after 500 ms.
+  it; the event also retries a hydration that failed. A refresh that finds no
+  readable settings retries once after 500 ms.
 
 **On conflict:** if upstream starts watching the file or saving patches, take
 theirs and keep only what it lacks (patch saves, own-write suppression, all
