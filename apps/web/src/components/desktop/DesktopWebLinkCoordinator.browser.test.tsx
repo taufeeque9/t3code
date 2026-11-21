@@ -164,6 +164,7 @@ async function mount(...urls: string[]) {
   stack.use(
     stubGlobal("desktopBridge", {
       getClientSettings: async () => null,
+      onClientSettingsChanged: () => () => undefined,
       webLinks: {
         onOpen: (listener: (url: string) => void) => {
           deliver = listener;

@@ -3,13 +3,16 @@ import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import { resolveSymlinkTarget } from "@t3tools/shared/symlink";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Ref from "effect/Ref";
+import * as Stream from "effect/Stream";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 
@@ -26,6 +29,9 @@ const decodeClientSettingsJson = Effect.fnUntraced(function* (raw: string) {
   );
 });
 const encodeClientSettingsJson = Schema.encodeEffect(ClientSettingsJson);
+
+// Editors and agents often save in several steps; read once the file settles.
+const EXTERNAL_CHANGE_DEBOUNCE = Duration.millis(150);
 
 export class DesktopClientSettingsReadError extends Schema.TaggedError<DesktopClientSettingsReadError>()(
   "DesktopClientSettingsReadError",
@@ -69,6 +75,8 @@ export class DesktopClientSettings extends Context.Service<
     readonly set: (
       settings: ClientSettings,
     ) => Effect.Effect<void, DesktopClientSettingsWriteError>;
+    /** Settings written to the file by someone other than this service. One consumer. */
+    readonly externalChanges: Stream.Stream<ClientSettings, PlatformError.PlatformError>;
   }
 >()("@t3tools/desktop/settings/DesktopClientSettings") {}
 
@@ -125,7 +133,7 @@ const writeClientSettings = Effect.fnUntraced(function* (input: {
   readonly fileSystem: FileSystem.FileSystem;
   readonly path: Path.Path;
   readonly settingsPath: string;
-  readonly settings: ClientSettings;
+  readonly encoded: string;
   readonly suffix: string;
 }): Effect.fn.Return<void, DesktopClientSettingsWriteError> {
   const targetPath = yield* resolveSymlinkTarget(input.settingsPath).pipe(
@@ -142,16 +150,6 @@ const writeClientSettings = Effect.fnUntraced(function* (input: {
   );
   const directory = input.path.dirname(targetPath);
   const tempPath = `${targetPath}.${process.pid}.${input.suffix}.tmp`;
-  const encoded = yield* encodeClientSettingsJson(input.settings).pipe(
-    Effect.mapError(
-      (cause) =>
-        new DesktopClientSettingsWriteError({
-          operation: "encode-document",
-          path: input.settingsPath,
-          cause,
-        }),
-    ),
-  );
   yield* input.fileSystem.makeDirectory(directory, { recursive: true }).pipe(
     Effect.mapError(
       (cause) =>
@@ -163,7 +161,7 @@ const writeClientSettings = Effect.fnUntraced(function* (input: {
     ),
   );
   yield* Effect.gen(function* () {
-    yield* input.fileSystem.writeFileString(tempPath, `${encoded}\n`).pipe(
+    yield* input.fileSystem.writeFileString(tempPath, `${input.encoded}\n`).pipe(
       Effect.mapError(
         (cause) =>
           new DesktopClientSettingsWriteError({
@@ -191,25 +189,73 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const random = yield* SecureRandom.SecureRandom;
+  const settingsPath = environment.clientSettingsPath;
+  const read = readClientSettings(fileSystem, settingsPath);
+  // Encoded form of the settings the app last wrote or announced, so its own writes stay silent.
+  const lastKnownRef = yield* Ref.make(Option.none<string>());
 
-  return DesktopClientSettings.of({
-    get: readClientSettings(fileSystem, environment.clientSettingsPath).pipe(
-      Effect.withSpan("desktop.clientSettings.get"),
-    ),
-    set: Effect.fn("desktop.clientSettings.set")(function (settings) {
-      return random.uuidV4().pipe(
-        Effect.map((uuid) => uuid.replace(/-/g, "")),
-        Effect.flatMap((suffix) =>
-          writeClientSettings({
-            fileSystem,
-            path,
-            settingsPath: environment.clientSettingsPath,
-            settings,
-            suffix,
-          }),
-        ),
+  const encodeReadSettings = (settings: ClientSettings) =>
+    encodeClientSettingsJson(settings).pipe(Effect.option);
+
+  /* Runs once per settled file event; the stream boundary already traces the watcher. */
+  const readExternalChange = Effect.fnUntraced(function* () {
+    const settings = yield* read.pipe(Effect.orElseSucceed(() => Option.none<ClientSettings>()));
+    if (Option.isNone(settings)) return Option.none<ClientSettings>();
+    const encoded = yield* encodeReadSettings(settings.value);
+    if (Option.isNone(encoded)) return Option.none<ClientSettings>();
+    const changed = yield* Ref.modify(lastKnownRef, (lastKnown) =>
+      Option.isSome(lastKnown) && lastKnown.value === encoded.value
+        ? [false, lastKnown]
+        : [true, encoded],
+    );
+    return changed ? settings : Option.none<ClientSettings>();
+  });
+
+  const externalChanges = Stream.unwrap(
+    Effect.gen(function* () {
+      const targetPath = yield* resolveSymlinkTarget(settingsPath).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+      );
+      const directory = path.dirname(targetPath);
+      const fileName = path.basename(targetPath);
+      yield* fileSystem.makeDirectory(directory, { recursive: true });
+      const initial = yield* read.pipe(Effect.orElseSucceed(() => Option.none<ClientSettings>()));
+      if (Option.isSome(initial)) {
+        const encoded = yield* encodeReadSettings(initial.value);
+        yield* Ref.update(lastKnownRef, (lastKnown) =>
+          Option.isSome(lastKnown) ? lastKnown : encoded,
+        );
+      }
+      // Writes replace the file by rename, which detaches a watcher on the file itself.
+      return fileSystem.watch(directory).pipe(
+        Stream.filter((event) => path.basename(event.path) === fileName),
+        Stream.debounce(EXTERNAL_CHANGE_DEBOUNCE),
+        Stream.mapEffect(readExternalChange),
+        Stream.filter(Option.isSome),
+        Stream.map((settings) => settings.value),
       );
     }),
+  );
+
+  return DesktopClientSettings.of({
+    get: read.pipe(Effect.withSpan("desktop.clientSettings.get")),
+    set: Effect.fn("desktop.clientSettings.set")(function* (settings) {
+      const encoded = yield* encodeClientSettingsJson(settings).pipe(
+        Effect.mapError(
+          (cause) =>
+            new DesktopClientSettingsWriteError({
+              operation: "encode-document",
+              path: settingsPath,
+              cause,
+            }),
+        ),
+      );
+      const suffix = (yield* random.uuidV4()).replace(/-/g, "");
+      yield* Ref.set(lastKnownRef, Option.some(encoded));
+      yield* writeClientSettings({ fileSystem, path, settingsPath, encoded, suffix });
+    }),
+    externalChanges,
   });
 });
 
@@ -225,6 +271,7 @@ export const layerTest = (initialSettings: Option.Option<ClientSettings> = Optio
         set: Effect.fn("DesktopClientSettings.set")(function (settings) {
           return Ref.set(settingsRef, Option.some(settings));
         }),
+        externalChanges: Stream.empty,
       });
     }),
   );

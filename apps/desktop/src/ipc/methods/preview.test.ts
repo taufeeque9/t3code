@@ -7,6 +7,7 @@ import {
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import * as PreviewManager from "../../preview/Manager.ts";
@@ -65,6 +66,7 @@ describe("preview IPC methods", () => {
         Effect.provideService(DesktopClientSettings.DesktopClientSettings, {
           get: Effect.succeedNone,
           set: () => Effect.void,
+          externalChanges: Stream.empty,
         }),
       ),
     );

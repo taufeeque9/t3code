@@ -2,12 +2,26 @@ import { ClientSettingsSchema } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
+import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import { applyLanguage } from "../../i18n/messages.ts";
 import * as DesktopClientSettings from "../../settings/DesktopClientSettings.ts";
 import * as DesktopSnapShot from "../../snapShot/DesktopSnapShot.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
+
+export const installClientSettingsChangeForwarding = Effect.fn(
+  "desktop.ipc.clientSettings.installChangeForwarding",
+)(function* () {
+  const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
+  const electronWindow = yield* ElectronWindow.ElectronWindow;
+  yield* clientSettings.externalChanges.pipe(
+    Stream.runForEach(() => electronWindow.sendAll(IpcChannels.CLIENT_SETTINGS_CHANGED_CHANNEL)),
+    Effect.ignoreCause({ log: true }),
+    Effect.forkScoped,
+  );
+});
 
 export const getClientSettings = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.GET_CLIENT_SETTINGS_CHANNEL,

@@ -15,6 +15,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import type * as Electron from "electron";
 import type { PortalShortcutState } from "./PortalCaptureShortcut.ts";
@@ -505,6 +506,7 @@ const layerTest = (
           DesktopClientSettings.DesktopClientSettings.of({
             get: settingsGet,
             set: () => Effect.void,
+            externalChanges: Stream.empty,
           }),
         ),
         Layer.succeed(

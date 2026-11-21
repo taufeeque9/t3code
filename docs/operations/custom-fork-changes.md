@@ -647,6 +647,30 @@ per-device rule list, each rule with its own color.
 Taufeeque which to keep. A change to the rehype plugin lists in `ChatMarkdown.tsx`
 only needs `withChatHighlights` re-applied around the chosen list.
 
+### Desktop: client settings follow edits to their file
+
+Upstream's desktop app reads `client-settings.json` once per renderer and
+rewrites the whole file on every settings change, so an outside edit (an agent
+changing `chatHighlightRules`) was ignored and then overwritten. The fork picks
+such edits up while the app runs.
+
+- `DesktopClientSettings.ts`: `externalChanges` watches the file's directory,
+  since writes replace the file by rename, and the symlink target's directory
+  when the file is a link. Events for the file are debounced by 150 ms, then the
+  file is decoded as `get` does. A result is emitted only when its encoded form
+  differs from the last one the service wrote (`set` records it before writing)
+  or emitted, seeded from the file when watching starts. Invalid, partial and
+  deleted files emit nothing; `get` already logs decode failures.
+- `ipc/methods/clientSettings.ts`: `installClientSettingsChangeForwarding`
+  sends `CLIENT_SETTINGS_CHANGED_CHANNEL` to every window, without a payload.
+  `preload.ts` exposes it as `onClientSettingsChanged` (contracts `ipc.ts`).
+- `useSettings.ts`: hydration subscribes to that event on desktop, or to
+  storage events in a browser, and both run the same queued refresh
+  (`refreshPersistedClientSettings`, upstream's other-tab refresh renamed).
+
+**On conflict:** if upstream starts watching the file, take theirs and keep only
+what it lacks (own-write suppression, all windows).
+
 ## Retired: superseded by upstream
 
 ### Packaged backend ships zod for @cursor/sdk

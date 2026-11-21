@@ -12,6 +12,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -112,7 +113,121 @@ const withClientSettings = <A, E, R>(
     return yield* effect.pipe(Effect.provide(layer(baseDir)));
   }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
+const settingsFileEvent = (path = "client-settings.json") =>
+  Stream.succeed<FileSystem.WatchEvent>({ _tag: "Update", path });
+const meanwhile = <E>(effect: Effect.Effect<unknown, E>) =>
+  Stream.fromEffect(effect).pipe(Stream.drain);
+
+/** One watch session in which the settings directory reports `events`, then closes. */
+const collectExternalChanges = <E>(
+  settings: DesktopClientSettings.DesktopClientSettings["Service"],
+  events: Stream.Stream<FileSystem.WatchEvent, E>,
+) =>
+  settings.externalChanges.pipe(
+    Stream.runCollect,
+    Effect.provideService(FileSystem.WatchBackend, {
+      register: () => Option.some(events.pipe(Stream.orDie)),
+    }),
+  );
+
 describe("DesktopClientSettings", () => {
+  it.effect("reports each settled external edit once and ignores its own writes", () =>
+    withClientSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        let reads = 0;
+        const settings = yield* DesktopClientSettings.make.pipe(
+          Effect.provideService(
+            FileSystem.FileSystem,
+            FileSystem.FileSystem.of({
+              ...fileSystem,
+              readFileString: (path, encoding) =>
+                Effect.suspend(() => {
+                  reads += 1;
+                  return fileSystem.readFileString(path, encoding);
+                }),
+            }),
+          ),
+        );
+        const writeExternally = (contents: string) =>
+          meanwhile(fileSystem.writeFileString(environment.clientSettingsPath, contents));
+        const edited: ClientSettings = { ...clientSettings, timestampFormat: "12-hour" };
+        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          environment.clientSettingsPath,
+          JSON.stringify(clientSettings),
+        );
+
+        assert.deepEqual(
+          yield* collectExternalChanges(
+            settings,
+            meanwhile(settings.set(edited)).pipe(Stream.concat(settingsFileEvent())),
+          ),
+          [],
+        );
+
+        reads = 0;
+        assert.deepEqual(
+          yield* collectExternalChanges(
+            settings,
+            writeExternally(JSON.stringify(clientSettings)).pipe(
+              Stream.concat(settingsFileEvent()),
+              Stream.concat(settingsFileEvent()),
+              Stream.concat(settingsFileEvent()),
+            ),
+          ),
+          [clientSettings],
+        );
+        // One read seeds the session, one follows the settled burst.
+        assert.equal(reads, 2);
+
+        assert.deepEqual(
+          yield* collectExternalChanges(
+            settings,
+            writeExternally(JSON.stringify(edited)).pipe(
+              Stream.concat(settingsFileEvent("client-settings.json.1.temp.tmp")),
+              Stream.concat(settingsFileEvent("other.json")),
+            ),
+          ),
+          [],
+        );
+        assert.deepEqual(yield* collectExternalChanges(settings, settingsFileEvent()), [edited]);
+
+        for (const unchanged of [
+          writeExternally(JSON.stringify(edited, null, 4)),
+          writeExternally('{"timestampFormat": '),
+          meanwhile(fileSystem.remove(environment.clientSettingsPath)),
+        ]) {
+          assert.deepEqual(
+            yield* collectExternalChanges(
+              settings,
+              unchanged.pipe(Stream.concat(settingsFileEvent())),
+            ),
+            [],
+          );
+        }
+      }),
+    ),
+  );
+
+  it.effect("treats the settings present when watching starts as already known", () =>
+    withClientSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = yield* DesktopClientSettings.DesktopClientSettings;
+        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          environment.clientSettingsPath,
+          JSON.stringify(clientSettings),
+        );
+
+        assert.deepEqual(yield* collectExternalChanges(settings, settingsFileEvent()), []);
+      }),
+    ),
+  );
+
   it.effect("saves through a symlinked client settings file without replacing the link", () =>
     withClientSettings(
       Effect.gen(function* () {

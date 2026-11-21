@@ -1095,6 +1095,8 @@ export interface DesktopBridge {
   getLocalEnvironmentBearerToken: () => Promise<string>;
   getClientSettings: () => Promise<ClientSettings | null>;
   setClientSettings: (settings: ClientSettings) => Promise<void>;
+  /** Fires when something outside the app rewrites the client settings file. */
+  onClientSettingsChanged: (listener: () => void) => () => void;
   getConnectionCatalog: () => Promise<string | null>;
   setConnectionCatalog: (catalog: string) => Promise<boolean>;
   discoverSshHosts: () => Promise<readonly DesktopDiscoveredSshHost[]>;

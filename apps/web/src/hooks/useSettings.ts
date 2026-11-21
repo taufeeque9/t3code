@@ -79,7 +79,7 @@ let clientSettingsHydrationPromise: Promise<void> | null = null;
 let clientSettingsHydrationGeneration = 0;
 let clientSettingsPersistenceQueue: Promise<void> = Promise.resolve();
 let deferredClientSettingsPatchCount = 0;
-let unsubscribeOtherTabClientSettings: (() => void) | null = null;
+let unsubscribePersistedClientSettings: (() => void) | null = null;
 
 function emitClientSettingsChange() {
   for (const listener of clientSettingsListeners) {
@@ -157,8 +157,8 @@ async function hydrateClientSettings(): Promise<void> {
       if (persistedSettings) {
         replaceClientSettingsSnapshot({ ...DEFAULT_CLIENT_SETTINGS, ...persistedSettings });
       }
-      unsubscribeOtherTabClientSettings ??= subscribeBrowserClientSettingsWrites(
-        refreshClientSettingsFromOtherTab,
+      unsubscribePersistedClientSettings ??= subscribePersistedClientSettingsChanges(
+        refreshPersistedClientSettings,
       );
       setClientSettingsHydrationStatus("ready");
     } catch (error) {
@@ -183,7 +183,14 @@ async function hydrateClientSettings(): Promise<void> {
   return clientSettingsHydrationPromise;
 }
 
-function refreshClientSettingsFromOtherTab(): void {
+function subscribePersistedClientSettingsChanges(onChange: () => void): () => void {
+  const desktopBridge = typeof window === "undefined" ? undefined : window.desktopBridge;
+  return desktopBridge
+    ? desktopBridge.onClientSettingsChanged(onChange)
+    : subscribeBrowserClientSettingsWrites(onChange);
+}
+
+function refreshPersistedClientSettings(): void {
   void enqueueClientSettingsPersistence(async () => {
     const persistedSettings = await ensureLocalApi().persistence.getClientSettings();
     if (persistedSettings) {
@@ -231,7 +238,7 @@ export function persistClientSettingsPatch(
         deferredClientSettingsPatchCount -= 1;
       }
     }
-    // Also reapplies an optimistic patch that a refresh from another tab replaced.
+    // Also reapplies an optimistic patch that an external refresh replaced.
     const current = getClientSettingsSnapshot();
     if (
       !Object.entries(patch).every(([key, value]) => current[key as keyof ClientSettings] === value)
@@ -819,8 +826,8 @@ export function __resetClientSettingsPersistenceForTests(): void {
   clientSettingsHydrationPromise = null;
   clientSettingsPersistenceQueue = Promise.resolve();
   deferredClientSettingsPatchCount = 0;
-  unsubscribeOtherTabClientSettings?.();
-  unsubscribeOtherTabClientSettings = null;
+  unsubscribePersistedClientSettings?.();
+  unsubscribePersistedClientSettings = null;
   clientSettingsListeners.clear();
   clientSettingsHydrationListeners.clear();
 }
