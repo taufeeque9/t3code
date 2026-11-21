@@ -75,6 +75,8 @@ export function createLocalApi(): LocalApi {
       },
       setClientSettings: async (settings, patch) => {
         if (window.desktopBridge) {
+          // An empty patch would still rewrite the file, replacing an outside edit caught mid-save.
+          if (Object.keys(patch).length === 0) return;
           return window.desktopBridge.patchClientSettings(patch);
         }
         writeBrowserClientSettings(settings);

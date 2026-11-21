@@ -657,8 +657,11 @@ overwritten. The fork picks such edits up while the app runs and keeps them.
 - Saves are patches on desktop: `persistence.setClientSettings(settings, patch)`
   (contracts `ipc.ts`) sends only `patch` through `patchClientSettings`, and a
   browser still stores `settings` whole. `useSettings.ts` passes the patch it
-  applied, or the keys an update changed. A whole-object save would revert an
-  edit the renderer had not refreshed yet, even one main had announced.
+  applied, or the keys an update changed, and skips an empty one. A whole-object
+  save would revert an edit the renderer had not refreshed yet, even one main
+  had announced. A patch replaces a whole top-level key, so an outside edit to
+  another entry of the same map or list (`favorites`, project overrides) that
+  the renderer has not refreshed yet is still lost.
 - `DesktopClientSettings.ts`: `patch` reads the file, applies the patch, writes
   it, and only then records it as last known. It reports `mergedExternalEdit`
   when the file held settings it had neither written nor announced. Patches and
@@ -668,7 +671,8 @@ overwritten. The fork picks such edits up while the app runs and keeps them.
   150 ms, then re-resolves the link (re-arming the target watch) and announces
   settings that differ from the last known ones, seeded when watching starts.
   Invalid, partial and deleted files announce nothing. Watch failures retry
-  with a backoff capped at a minute.
+  with a backoff capped at a minute, and a restart compares the file instead of
+  seeding, so an edit made meanwhile is announced.
 - `ipc/methods/clientSettings.ts`: an announced change, or a patch that merged
   one, runs `snapShot.configure` and `applyLanguage` like an in-app save and
   sends `CLIENT_SETTINGS_CHANGED_CHANNEL` to every window (`preload.ts`:

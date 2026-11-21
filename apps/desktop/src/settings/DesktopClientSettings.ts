@@ -251,6 +251,7 @@ export const make = Effect.gen(function* () {
       yield* Ref.set(lastKnownRef, yield* readKnown);
     }
   }).pipe(fileLock.withPermits(1));
+  const watchStartedRef = yield* Ref.make(false);
 
   const resolveSettingsTarget = resolveSymlinkTarget(settingsPath).pipe(
     Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -267,14 +268,17 @@ export const make = Effect.gen(function* () {
   const externalChanges = Stream.unwrap(
     Effect.gen(function* () {
       yield* fileSystem.makeDirectory(path.dirname(settingsPath), { recursive: true });
-      yield* seedLastKnown;
+      // A restart after a watch failure may have missed an edit, so it compares instead of seeding.
+      const restarted = yield* Ref.getAndSet(watchStartedRef, true);
+      if (!restarted) yield* seedLastKnown;
+      const missedChange = restarted ? Stream.fromEffect(readExternalChange()) : Stream.empty;
       const linkPath = path.resolve(settingsPath);
       const targetRef = yield* SubscriptionRef.make(yield* resolveSettingsTarget);
       const targetEvents = SubscriptionRef.changes(targetRef).pipe(
         Stream.changes,
         Stream.switchMap((target) => (target === linkPath ? Stream.empty : watchFile(target))),
       );
-      return Stream.merge(watchFile(settingsPath), targetEvents).pipe(
+      const settledChanges = Stream.merge(watchFile(settingsPath), targetEvents).pipe(
         Stream.debounce(EXTERNAL_CHANGE_DEBOUNCE),
         Stream.mapEffect(() =>
           resolveSettingsTarget.pipe(
@@ -283,6 +287,7 @@ export const make = Effect.gen(function* () {
           ),
         ),
       );
+      return Stream.concat(missedChange, settledChanges);
     }),
   ).pipe(
     Stream.filter(Option.isSome),
@@ -323,10 +328,7 @@ export const make = Effect.gen(function* () {
       yield* Ref.set(lastKnownRef, Option.some({ encoded, settings }));
       return {
         settings,
-        mergedExternalEdit:
-          Option.isSome(current) &&
-          Option.isSome(lastKnown) &&
-          !isLastKnown(current.value, lastKnown),
+        mergedExternalEdit: Option.isSome(current) && !isLastKnown(current.value, lastKnown),
       };
     }, fileLock.withPermits(1)),
     externalChanges,

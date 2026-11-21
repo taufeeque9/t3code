@@ -7,7 +7,9 @@ import {
   type ClientSettings,
   type ClientSettingsPatch,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -119,7 +121,8 @@ const withClientSettings = <A, E, R>(
 
 /**
  * The service on a scripted watch backend. `touch` reports an event 1 ms of test time later, and
- * `settle` passes the debounce and waits for the read it triggers.
+ * `settle` passes the debounce and waits for the read it triggers. Work a clock wake starts runs
+ * before `TestClock.adjust` returns, so call counts read right after an adjust are exact.
  */
 const watchClientSettings = Effect.fn("test.watchClientSettings")(function* (options: {
   readonly directories: ReadonlyArray<string>;
@@ -135,15 +138,39 @@ const watchClientSettings = Effect.fn("test.watchClientSettings")(function* (opt
   for (const directory of options.directories) {
     events.set(directory, yield* Queue.unbounded<FileSystem.WatchEvent>());
   }
+  const readStarted = yield* Queue.unbounded<void>();
+  const calls = { readFileString: 0, readLink: 0, makeDirectory: 0 };
+  let heldRead: Deferred.Deferred<void> | undefined;
   const settings = yield* DesktopClientSettings.make.pipe(
     Effect.provideService(
       FileSystem.FileSystem,
       FileSystem.FileSystem.of({
         ...fileSystem,
         readFileString: (filePath, encoding) =>
-          fileSystem
-            .readFileString(filePath, encoding)
-            .pipe(Effect.ensuring(Queue.offer(reads, undefined))),
+          Effect.suspend(() => {
+            calls.readFileString += 1;
+            const gate = heldRead;
+            heldRead = undefined;
+            const read = fileSystem.readFileString(filePath, encoding);
+            return (
+              gate === undefined
+                ? read
+                : Queue.offer(readStarted, undefined).pipe(
+                    Effect.andThen(Deferred.await(gate)),
+                    Effect.andThen(read),
+                  )
+            ).pipe(Effect.ensuring(Queue.offer(reads, undefined)));
+          }),
+        readLink: (linkPath) =>
+          Effect.suspend(() => {
+            calls.readLink += 1;
+            return fileSystem.readLink(linkPath);
+          }),
+        makeDirectory: (directory, makeOptions) =>
+          Effect.suspend(() => {
+            calls.makeDirectory += 1;
+            return fileSystem.makeDirectory(directory, makeOptions);
+          }),
       }),
     ),
   );
@@ -152,10 +179,12 @@ const watchClientSettings = Effect.fn("test.watchClientSettings")(function* (opt
     Stream.runForEach((changed) => Queue.offer(changes, changed)),
     Effect.provideService(FileSystem.WatchBackend, {
       register: (directory) => {
-        Queue.offerUnsafe(registered, directory);
+        const started = Stream.fromEffect(Queue.offer(registered, directory)).pipe(Stream.drain);
         const queue = events.get(directory);
-        if (queue === undefined) return Option.some(Stream.never);
-        if (failWatch !== directory) return Option.some(Stream.fromQueue(queue));
+        if (queue === undefined) return Option.some(Stream.concat(started, Stream.never));
+        if (failWatch !== directory) {
+          return Option.some(Stream.concat(started, Stream.fromQueue(queue)));
+        }
         failWatch = undefined;
         const failure = PlatformError.systemError({
           _tag: "Unknown",
@@ -164,7 +193,10 @@ const watchClientSettings = Effect.fn("test.watchClientSettings")(function* (opt
           pathOrDescriptor: directory,
         });
         return Option.some(
-          Stream.fromQueue(queue).pipe(Stream.mapEffect(() => Effect.fail(failure))),
+          Stream.concat(
+            started,
+            Stream.fromQueue(queue).pipe(Stream.mapEffect(() => Effect.fail(failure))),
+          ),
         );
       },
     }),
@@ -179,11 +211,16 @@ const watchClientSettings = Effect.fn("test.watchClientSettings")(function* (opt
   yield* armed(options.armed);
 
   return {
+    settings,
     changes,
     armed,
-    pendingReads: Queue.size(reads),
-    pendingRegistrations: Queue.size(registered),
+    calls,
     awaitRead: Queue.take(reads),
+    /** The next file read reports `readStarted` and waits for `gate` before reading. */
+    holdNextRead: (gate: Deferred.Deferred<void>) => {
+      heldRead = gate;
+    },
+    readStarted,
     touch: Effect.fn("test.touch")(function* (filePath: string) {
       const queue = events.get(path.dirname(filePath));
       assert.isDefined(queue);
@@ -220,9 +257,11 @@ describe("DesktopClientSettings", () => {
         yield* watched.touch(settingsPath);
         yield* watched.touch(settingsPath);
         yield* watched.touch(settingsPath);
+        const settledBefore = watched.calls.readLink;
         yield* TestClock.adjust("149 millis");
-        assert.equal(yield* watched.pendingReads, 0);
+        assert.equal(watched.calls.readLink, settledBefore);
         yield* TestClock.adjust("1 millis");
+        assert.equal(watched.calls.readLink, settledBefore + 1);
         yield* watched.awaitRead;
         assert.deepEqual(yield* Queue.take(watched.changes), edited);
 
@@ -258,9 +297,10 @@ describe("DesktopClientSettings", () => {
         yield* fileSystem.remove(settingsPath);
         yield* touchAndSettle;
         yield* fileSystem.writeFileString(settingsPath, JSON.stringify(edited));
+        const settledBefore = watched.calls.readLink;
         yield* watched.touch(`${settingsPath}.1.temp.tmp`);
         yield* TestClock.adjust(DesktopClientSettings.EXTERNAL_CHANGE_DEBOUNCE);
-        assert.equal(yield* watched.pendingReads, 0);
+        assert.equal(watched.calls.readLink, settledBefore);
 
         yield* touchAndSettle;
         assert.deepEqual(yield* Queue.take(watched.changes), edited);
@@ -315,6 +355,23 @@ describe("DesktopClientSettings", () => {
         yield* watched.touch(settingsPath);
         yield* watched.settle;
         assert.deepEqual(yield* Queue.take(watched.changes), editedAgain);
+      }),
+    ),
+  );
+
+  it.effect("reports an outside edit a save merges before anything was known", () =>
+    withClientSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = yield* DesktopClientSettings.DesktopClientSettings;
+        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.writeFileString(environment.clientSettingsPath, JSON.stringify(edited));
+
+        assert.deepEqual(yield* settings.patch({ wordWrap: false }), {
+          settings: { ...edited, wordWrap: false },
+          mergedExternalEdit: true,
+        });
       }),
     ),
   );
@@ -390,7 +447,7 @@ describe("DesktopClientSettings", () => {
     ),
   );
 
-  it.effect("rewatches after a watch failure once the backoff passes", () =>
+  it.effect("rewatches after a watch failure and announces an edit made meanwhile", () =>
     withClientSettings(
       Effect.gen(function* () {
         const environment = yield* DesktopEnvironment.DesktopEnvironment;
@@ -402,17 +459,57 @@ describe("DesktopClientSettings", () => {
           failFirstWatchOf: environment.stateDir,
         });
 
+        const restartsBefore = watched.calls.makeDirectory;
         yield* watched.touch(settingsPath);
+        yield* fileSystem.writeFileString(settingsPath, JSON.stringify(edited));
         yield* TestClock.adjust("999 millis");
-        assert.equal(yield* watched.pendingRegistrations, 0);
+        assert.equal(watched.calls.makeDirectory, restartsBefore);
         yield* TestClock.adjust("1 millis");
+        assert.equal(watched.calls.makeDirectory, restartsBefore + 1);
         yield* watched.awaitRead;
+        assert.deepEqual(yield* Queue.take(watched.changes), edited);
         assert.deepEqual(yield* watched.armed(1), [environment.stateDir]);
+
+        yield* fileSystem.writeFileString(settingsPath, JSON.stringify(editedAgain));
+        yield* watched.touch(settingsPath);
+        yield* watched.settle;
+        assert.deepEqual(yield* Queue.take(watched.changes), editedAgain);
+      }),
+    ),
+  );
+
+  it.effect("holds a save until the watcher finishes comparing the file", () =>
+    withClientSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settingsPath = environment.clientSettingsPath;
+        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.writeFileString(settingsPath, JSON.stringify(clientSettings));
+        const watched = yield* watchClientSettings({
+          directories: [environment.stateDir],
+          armed: 1,
+        });
+        const gate = yield* Deferred.make<void>();
 
         yield* fileSystem.writeFileString(settingsPath, JSON.stringify(edited));
         yield* watched.touch(settingsPath);
-        yield* watched.settle;
+        watched.holdNextRead(gate);
+        yield* TestClock.adjust(DesktopClientSettings.EXTERNAL_CHANGE_DEBOUNCE);
+        yield* Queue.take(watched.readStarted);
+        const readsBefore = watched.calls.readFileString;
+        const save = yield* watched.settings
+          .patch({ wordWrap: false })
+          .pipe(Effect.delay("1 millis"), Effect.forkChild({ startImmediately: true }));
+        yield* TestClock.adjust("1 millis");
+        assert.equal(watched.calls.readFileString, readsBefore);
+
+        yield* Deferred.succeed(gate, undefined);
         assert.deepEqual(yield* Queue.take(watched.changes), edited);
+        assert.deepEqual(yield* Fiber.join(save), {
+          settings: { ...edited, wordWrap: false },
+          mergedExternalEdit: false,
+        });
       }),
     ),
   );
