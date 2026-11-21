@@ -339,6 +339,18 @@ export const make = Effect.gen(function* () {
   ).pipe(
     Stream.filter(Option.isSome),
     Stream.map((settings) => settings.value),
+    // fs.watch throws synchronously for some failures (too many open files, a vanished directory).
+    Stream.catchDefect((cause) =>
+      Stream.fail(
+        PlatformError.systemError({
+          _tag: "Unknown",
+          module: "FileSystem",
+          method: "watch",
+          pathOrDescriptor: settingsPath,
+          cause,
+        }),
+      ),
+    ),
     Stream.tapError((error) =>
       Effect.logWarning("Watching desktop client settings failed; retrying.", error).pipe(
         Effect.annotateLogs({ settingsPath }),

@@ -662,7 +662,7 @@ overwritten. The fork picks such edits up while the app runs and keeps them.
   had announced. A patch replaces a whole top-level key, so an outside edit to
   another entry of the same map or list (`favorites`, project overrides) that
   the renderer has not refreshed yet is still lost. Restore defaults
-  (`SettingsPanels.tsx`) sends only keys not already at their default.
+  (`SettingsPanels.tsx`) leaves out device settings already at their default.
 - `DesktopClientSettings.ts`: `patch` reads the file, applies the patch, writes
   it, and only then records it as last known. A file that exists but does not
   decode (an editor mid-save) is re-read for up to 300 ms, then the save fails
@@ -676,7 +676,8 @@ overwritten. The fork picks such edits up while the app runs and keeps them.
   the file by rename, plus a link target's directory. Only the settings file's
   own link and its final target directory are watched: retargeting an
   intermediate link in a chain goes unnoticed until the next event. Each
-  start arms the watches before its first read. It debounces events by
+  start arms the watches before its first read, and a synchronous `fs.watch`
+  throw is retried like a watch error. It debounces events by
   150 ms, then re-resolves the link (re-arming the target watch) and announces
   settings that differ from the last known ones, seeded when watching starts.
   Invalid, partial and deleted files announce nothing. Watch failures retry

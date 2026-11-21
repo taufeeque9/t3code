@@ -58,6 +58,7 @@ import {
   readThemePreference,
   useTheme,
 } from "../../hooks/useTheme";
+import { getClientSettings } from "../../hooks/useSettings";
 import {
   useScopedSettings,
   useScopedSettingsMixed,
@@ -774,12 +775,15 @@ export function useSettingsRestore(onRestored?: () => void) {
       pullRequestLinksOpenInApp: DEFAULT_UNIFIED_SETTINGS.pullRequestLinksOpenInApp,
       enableAgentBrowserAccess: DEFAULT_UNIFIED_SETTINGS.enableAgentBrowserAccess,
     };
-    // Keys already at their default stay out, so a reset cannot overwrite an edit this window has
-    // not loaded yet.
+    // Device settings already at their default stay out, so a reset cannot overwrite a settings
+    // file edit this window has not loaded yet.
+    const clientSettings = getClientSettings();
     updateSettings(
       Object.fromEntries(
         Object.entries(defaults).filter(
-          ([key, value]) => !Equal.equals(settings[key as keyof typeof settings], value),
+          ([key, value]) =>
+            !Object.hasOwn(clientSettings, key) ||
+            !Equal.equals(clientSettings[key as keyof typeof clientSettings], value),
         ),
       ) as typeof defaults,
     );
