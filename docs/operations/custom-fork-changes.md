@@ -722,6 +722,18 @@ Claude one if the SDK starts exposing the CLI's `removalRule`, or upstream allow
 unparsed commands in bypass mode. Retire the Codex one if upstream auto-accepts
 command approvals in full access, or goes back to `approvalPolicy: "never"`.
 
+### Chat: Cite appears without the multi-click wait
+
+Upstream waits 500 ms after a double- or triple-click before showing the Cite
+button. The fork shows it on the next frame. Shown at once at the pointer, it
+would sit under the third click of a triple-click, so multi-click selections
+anchor it below the selected text instead.
+
+- `apps/web/src/lib/selectionActions.ts` (`onMouseUp`).
+
+**On conflict:** keep the two-line patch on upstream's handler. Retire it if
+upstream drops the multi-click wait.
+
 ## Retired: superseded by upstream
 
 ### Packaged backend ships zod for @cursor/sdk
