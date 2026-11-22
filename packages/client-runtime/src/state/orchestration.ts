@@ -200,6 +200,13 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       staleTimeMs: 0,
       idleTtlMs: 0,
     }),
+    // Readers refresh it when the thread settles a message.
+    researchHubLinks: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:orchestration:research-hub-links",
+      tag: ORCHESTRATION_V2_WS_METHODS.getResearchHubLinks,
+      staleTimeMs: Number.POSITIVE_INFINITY,
+      idleTtlMs: 60_000,
+    }),
     stopWorkflow: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:orchestration:stop-workflow",
       tag: ORCHESTRATION_V2_WS_METHODS.stopWorkflow,

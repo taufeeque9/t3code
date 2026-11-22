@@ -734,6 +734,27 @@ anchor it below the selected text instead.
 **On conflict:** keep the two-line patch on upstream's handler. Retire it if
 upstream drops the multi-click wait.
 
+### Thread details: research hub links
+
+Research threads keep a hub note or study open for the whole session. The
+details card lists every one the thread's messages link to, including history
+the client has not loaded, so it does not take scrolling to find.
+
+- `apps/server/src/orchestration-v2/ResearchHubLinksQuery.ts` and its test: the
+  `orchestration.getResearchHubLinks` read. It matches any host whose URL has
+  `project=notes|studies` and a `path`, so `hub.localhost`, loopback ports and
+  tailnet hosts all count, and prefers a non-loopback host for a page seen on
+  several. `hub://` references are not matched.
+- Contracts, RPC registration, auth scope and instrumentation rows beside
+  `getNativeChildWork`; the layer in `server.ts`; the handler in `ws.ts`.
+- `researchHubLinks` in `packages/client-runtime/src/state/orchestration.ts`.
+- `apps/web/src/components/chat/ThreadResearchHubPanel.tsx`, its
+  `researchHub` item in `threadDetailsItems.ts`, one render in
+  `ThreadDetailsPanel.tsx`, and its list selector in `ThreadDetailsCard.tsx`.
+  Web and desktop only.
+
+**On conflict:** keep the rows next to their `getNativeChildWork` neighbours.
+
 ## Retired: superseded by upstream
 
 ### Packaged backend ships zod for @cursor/sdk

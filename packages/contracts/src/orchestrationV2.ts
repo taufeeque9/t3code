@@ -3881,6 +3881,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   getThreadProjection: "orchestration.getThreadProjection",
   getWorkflowScript: "orchestration.getWorkflowScript",
   getNativeChildWork: "orchestration.getNativeChildWork",
+  getResearchHubLinks: "orchestration.getResearchHubLinks",
   stopWorkflow: "orchestration.stopWorkflow",
   forceStopThread: "orchestration.forceStopThread",
   getTurnItem: "orchestration.getTurnItem",
@@ -4389,6 +4390,38 @@ export const OrchestrationV2GetNativeChildWorkResult = Schema.Struct({
 export type OrchestrationV2GetNativeChildWorkResult =
   typeof OrchestrationV2GetNativeChildWorkResult.Type;
 
+export const OrchestrationV2GetResearchHubLinksInput = Schema.Struct({
+  threadId: ThreadId,
+});
+export type OrchestrationV2GetResearchHubLinksInput =
+  typeof OrchestrationV2GetResearchHubLinksInput.Type;
+
+export const OrchestrationV2ResearchHubLink = Schema.Struct({
+  project: Schema.Literals(["notes", "studies"]),
+  path: TrimmedNonEmptyString,
+  url: TrimmedNonEmptyString,
+});
+export type OrchestrationV2ResearchHubLink = typeof OrchestrationV2ResearchHubLink.Type;
+
+/** Most recently mentioned first. */
+export const OrchestrationV2GetResearchHubLinksResult = Schema.Struct({
+  links: Schema.Array(OrchestrationV2ResearchHubLink),
+});
+export type OrchestrationV2GetResearchHubLinksResult =
+  typeof OrchestrationV2GetResearchHubLinksResult.Type;
+
+export class OrchestrationV2GetResearchHubLinksError extends Schema.TaggedError<OrchestrationV2GetResearchHubLinksError>()(
+  "OrchestrationV2GetResearchHubLinksError",
+  {
+    threadId: ThreadId,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return "Failed to read the thread's research hub links.";
+  }
+}
+
 export class OrchestrationV2GetNativeChildWorkError extends Schema.TaggedError<OrchestrationV2GetNativeChildWorkError>()(
   "OrchestrationV2GetNativeChildWorkError",
   {
@@ -4591,6 +4624,10 @@ export const OrchestrationV2RpcSchemas = {
   getNativeChildWork: {
     input: OrchestrationV2GetNativeChildWorkInput,
     output: OrchestrationV2GetNativeChildWorkResult,
+  },
+  getResearchHubLinks: {
+    input: OrchestrationV2GetResearchHubLinksInput,
+    output: OrchestrationV2GetResearchHubLinksResult,
   },
   getTurnItem: {
     input: OrchestrationV2GetTurnItemInput,

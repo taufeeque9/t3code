@@ -253,6 +253,7 @@ import {
   ORCHESTRATION_V2_WS_METHODS,
   OrchestrationGetWorkflowScriptError,
   OrchestrationV2GetNativeChildWorkError,
+  OrchestrationV2GetResearchHubLinksError,
   OrchestrationV2StopWorkflowError,
   OrchestrationV2ForceStopThreadError,
   OrchestrationV2DispatchCommandError,
@@ -2109,6 +2110,15 @@ const WsOrchestrationV2GetNativeChildWorkRpc = Rpc.make(
   },
 );
 
+const WsOrchestrationV2GetResearchHubLinksRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.getResearchHubLinks,
+  {
+    payload: OrchestrationV2RpcSchemas.getResearchHubLinks.input,
+    success: OrchestrationV2RpcSchemas.getResearchHubLinks.output,
+    error: Schema.Union([OrchestrationV2GetResearchHubLinksError, EnvironmentAuthorizationError]),
+  },
+);
+
 const WsOrchestrationV2GetTurnItemRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.getTurnItem, {
   payload: OrchestrationV2RpcSchemas.getTurnItem.input,
   success: OrchestrationV2RpcSchemas.getTurnItem.output,
@@ -2500,6 +2510,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2DispatchCommandRpc,
   WsOrchestrationV2GetWorkflowScriptRpc,
   WsOrchestrationV2GetNativeChildWorkRpc,
+  WsOrchestrationV2GetResearchHubLinksRpc,
   WsOrchestrationV2StopWorkflowRpc,
   WsOrchestrationV2ForceStopThreadRpc,
   WsOrchestrationV2GetTurnItemRpc,
