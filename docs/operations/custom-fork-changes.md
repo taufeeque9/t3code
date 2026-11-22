@@ -698,6 +698,30 @@ overwritten. The fork picks such edits up while the app runs and keeps them.
 theirs and keep only what it lacks (patch saves, own-write suppression, all
 windows).
 
+### Full access: no shell safety prompts that cannot remove anything
+
+Full access should not stop a run for a command approval. Two provider checks
+still asked anyway; together they were 14 of the 19 command prompts recorded
+between 2026-10-27 and 2026-11-21.
+
+- `apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts` (`canUseTool`):
+  in bypass mode, with no matching ask rule, allow the CLI's "can't be sure it
+  read this command the way the shell will" ask. The CLI uses that wording only
+  after its rm detector found no removal in the command, and it fires on syntax
+  its parser cannot read, such as zsh's `${(f)…}`. Commands that do contain rm
+  keep upstream's automatic refusal. One row in the shell-safety table of
+  `ClaudeAdapterV2.test.ts` covers it.
+- `apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts`: accept
+  `item/commandExecution/requestApproval` in full access. Upstream's granular
+  full-access policy (#37104, which keeps browser prompts reachable) left Codex's
+  dangerous-command check asking before `rm -rf`. The full-access row of the MCP
+  approval test in `CodexAdapterV2.test.ts` covers it.
+
+**On conflict:** keep both as small patches on upstream's handlers. Retire the
+Claude one if the SDK starts exposing the CLI's `removalRule`, or upstream allows
+unparsed commands in bypass mode. Retire the Codex one if upstream auto-accepts
+command approvals in full access, or goes back to `approvalPolicy: "never"`.
+
 ## Retired: superseded by upstream
 
 ### Packaged backend ships zod for @cursor/sdk

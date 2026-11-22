@@ -5943,6 +5943,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 payload,
               );
             }
+            // Under full access's granular policy, Codex still asks before commands it rates dangerous.
+            if (context.input.runtimePolicy.runtimeMode === "full-access") {
+              return {
+                decision: "accept",
+              } satisfies CodexSchema.CommandExecutionRequestApprovalResponse;
+            }
             const allowance = sessionAllowance(payload.threadId, context);
             if (allowance.has("command")) {
               return {

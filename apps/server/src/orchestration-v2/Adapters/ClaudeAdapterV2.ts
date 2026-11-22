@@ -4358,6 +4358,9 @@ function parentToolUseIdFromSdkMessage(message: SDKMessage): string | null {
     : null;
 }
 
+const CLAUDE_UNPARSED_COMMAND_REASON =
+  "Claude Code can't be sure it read this command the way the shell will";
+
 const CLAUDE_NO_STANDING_GRANT_OPTIONS = [
   { decision: "decline", label: "Decline" },
   { decision: "accept", label: "Approve" },
@@ -12509,11 +12512,21 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const safetyReason = NodeUtil.stripVTControlCharacters(
             callbackOptions.decisionReason ?? "",
           ).trim();
-          // The SDK omits the CLI's dangerousRemoval discriminator, so match its removal warnings.
-          if (
+          const bypassSafetyCheck =
             toolName === "Bash" &&
             activePermissionMode === "bypassPermissions" &&
-            callbackOptions.matchedAskRule === undefined &&
+            callbackOptions.matchedAskRule === undefined;
+          // The CLI words this ask only when its rm detector finds no removal in the command.
+          if (bypassSafetyCheck && safetyReason.startsWith(CLAUDE_UNPARSED_COMMAND_REASON)) {
+            return {
+              behavior: "allow",
+              updatedInput: toolInput,
+              toolUseID: callbackOptions.toolUseID,
+            } satisfies PermissionResult;
+          }
+          // The SDK omits the CLI's dangerousRemoval discriminator, so match its removal warnings.
+          if (
+            bypassSafetyCheck &&
             (/^Dangerous rm(?:dir)?\b/i.test(safetyReason) ||
               safetyReason === "This shell -c script runs rm and could not be checked" ||
               safetyReason === "A permission rule denies a command in this shell -c script")

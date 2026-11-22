@@ -1970,7 +1970,13 @@ describe("ClaudeAdapterV2 resume compaction", () => {
       assert.isFunction(canUseTool);
       const shellSafetyReason =
         "Dangerous rm operation not ruled out — the shell may read this command differently than it was parsed";
-      for (const [safetyIndex, { askRule, reason }] of [
+      for (const [safetyIndex, { askRule, reason, behavior = "deny" }] of [
+        {
+          askRule: false,
+          reason:
+            "Claude Code can't be sure it read this command the way the shell will, so it can't rule out a dangerous removal. Read the command, and don't go ahead if you can't tell what it does.",
+          behavior: "allow",
+        },
         { askRule: false, reason: shellSafetyReason },
         { askRule: true, reason: shellSafetyReason },
         {
@@ -2019,7 +2025,7 @@ describe("ClaudeAdapterV2 resume compaction", () => {
         );
         assert.equal(safety.type, askRule ? "approval" : "decision");
         if (safety.type === "decision") {
-          assert.equal(safety.result?.behavior, "deny");
+          assert.equal(safety.result?.behavior, behavior);
           if (safety.result?.behavior === "deny") {
             assert.include(safety.result.message, reason);
             assert.notInclude(safety.result.message, "\u001b[");

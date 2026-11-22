@@ -1621,7 +1621,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     { runtimeMode: "full-access", turnIdKind: "present" },
     { runtimeMode: "auto-accept-edits", turnIdKind: "null" },
   ] as const)(
-    "handles MCP access approvals in $runtimeMode with a $turnIdKind turn id",
+    "handles MCP access and command approvals in $runtimeMode with a $turnIdKind turn id",
     ({ runtimeMode, turnIdKind }) =>
       Effect.gen(function* () {
         const nativeThreadId = "mcp-approval-thread";
@@ -1645,6 +1645,28 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                       },
                     }),
               }),
+              ...(runtimeMode === "full-access"
+                ? ([
+                    {
+                      type: "emit_inbound",
+                      frame: {
+                        id: 1,
+                        method: "item/commandExecution/requestApproval",
+                        params: {
+                          threadId: nativeThreadId,
+                          turnId: nativeTurnId,
+                          itemId: "exec-rm-scratch",
+                          startedAtMs: 1782622441000,
+                          command: '/bin/zsh -lc "rm -rf -- /tmp/scratch"',
+                        },
+                      },
+                    },
+                    {
+                      type: "expect_outbound",
+                      frame: { id: 1, result: { decision: "accept" } },
+                    },
+                  ] as const)
+                : []),
               {
                 type: "emit_inbound",
                 frame: {
