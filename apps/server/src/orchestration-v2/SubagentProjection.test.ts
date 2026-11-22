@@ -493,7 +493,7 @@ it("exposes the provider failure rather than a progress message from the failed 
   assert.isNull(result.messageId);
 });
 
-it("reports a provider's stop reason for a completed run without an assistant result", () => {
+it("reports a provider's stop reason with and without assistant progress", () => {
   const { projection, run } = taskFixture();
   const notice = {
     id: IdAllocator.derive.runSignalTurnItem({
@@ -520,6 +520,48 @@ it("reports a provider's stop reason for a completed run without an assistant re
   assert.equal(
     subagentResultForRun({ ...projection, turnItems: [notice] }, run).text,
     `Child task completed without an assistant result.\n\n${notice.message}`,
+  );
+  const progress = makeSubagentConversationArtifacts({
+    messageId: MessageId.make("before-hook-stop"),
+    turnItemId: TurnItemId.make("before-hook-stop"),
+    threadId: parentThreadId,
+    rootNodeId: NodeId.make("root"),
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    role: "assistant",
+    text: "I am checking the remaining files.",
+    ordinal: 1,
+    now: childCreatedAt,
+  });
+  assert.equal(
+    subagentResultForRun(
+      {
+        ...projection,
+        messages: [{ ...progress.message, runId: run.id }],
+        turnItems: [{ ...progress.turnItem, runId: run.id }, notice],
+      },
+      run,
+    ).text,
+    `${progress.message.text}\n\n${notice.message}`,
+  );
+  const interruptResult = {
+    ...notice,
+    id: IdAllocator.derive.runSignalTurnItem({ runId: run.id, signal: "interrupt-result" }),
+    status: "interrupted",
+    title: "Interrupted",
+    type: "run_interrupt_result",
+  } satisfies OrchestrationV2TurnItem;
+  assert.equal(
+    subagentResultForRun(
+      {
+        ...projection,
+        messages: [{ ...progress.message, runId: run.id }],
+        turnItems: [{ ...progress.turnItem, runId: run.id }, interruptResult],
+      },
+      { ...run, status: "interrupted" },
+    ).text,
+    `${progress.message.text}\n\n${notice.message}`,
   );
 });
 
@@ -633,6 +675,20 @@ it("orders a task's assistant messages by turn item, not by timestamps", () => {
   assert.equal(
     hookedResult.text,
     "All steps passed.\n\n## Stop hook follow-up\n\nThe layout still regresses on mobile.\n\nThe browser was not checked.",
+  );
+  const { continuation: _continuation, ...stopReasonBase } = hook(99);
+  const stopReason = {
+    ...stopReasonBase,
+    id: IdAllocator.derive.runSignalTurnItem({
+      runId: run.id,
+      signal: PROVIDER_STOP_REASON_SIGNAL,
+    }),
+    message: "Stop hook: review limit reached.",
+  };
+  assert.equal(
+    subagentResultForRun({ ...withHooks, turnItems: [...withHooks.turnItems, stopReason] }, run)
+      .text,
+    `${hookedResult.text}\n\n${stopReason.message}`,
   );
   assert.equal(
     subagentResultForRun(

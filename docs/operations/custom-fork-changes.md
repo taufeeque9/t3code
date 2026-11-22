@@ -130,6 +130,8 @@ A queued account switch is a `restart_and_resume`, so upstream's queue hold in
 `Orchestrator.ts` applies: it waits while the replaced session runs background work,
 even between separate transcript trees.
 
+`docs/user/providers-claude.md` describes the switch.
+
 Sharing a transcript tree through symlinks avoids copying. Distinct directories
 are supported without changing their links or account credentials. Claude ↔
 Codex switches still use upstream's portable handoff.
@@ -213,7 +215,8 @@ and child threads on the parent's account.
   the toggle is `AutoPickProviderAccountRow` in Settings → Providers → Advanced, with a
   settings-search entry. Mobile has no toggle; it follows the server setting.
 - `apps/server/src/mcp/OrchestratorMcpService.ts`: `pickAccountByLimits`, called at the
-  top of `resolveTarget`, and `inheritsSelection` covering a picked same-driver account;
+  top of `resolveTarget` (an Antigravity model with a thinking suffix matches its base
+  model), and `inheritsSelection` covering a picked same-driver account;
   tested in `OrchestratorMcpService.test.ts` ("delegation with … by usage limits")
 
 Upstream's `fallbackModelSelection` setting (#26164) swaps an exhausted default
@@ -313,7 +316,8 @@ with a tool-use stop reason can include progress text after the tool item.
 line precedes each answer when the provider supplied a question. Questions and
 answers share a 4 KiB UTF-8 limit, with an omission note when needed. A failed or
 interrupted run keeps its effective outcome and includes the report as partial
-work, plus any completed hook answer.
+work, plus any completed hook answer. Upstream's provider stop reason
+(`withStopNotice`) ends the result as it does any other.
 
 **Open item:** When the actual question follows more than 240 UTF-8 bytes of
 setup, **Hook asked** can show only the setup. Preserve an identifiable question
@@ -393,19 +397,20 @@ runs upstream's standalone `/compact` (`compactThreadContext`).
 - `ComposerPrimaryActions.tsx`: the chip calls `onCompactAndSendMessage` and
   keeps upstream's narrow-composer layout; the send button no longer changes
   label or tooltip for compaction
-- `ChatComposer.tsx`: `handleCompactAndSendMessage` passes `compactFirst`
-  through `submitComposer` to `onSend`, via `ComposerFooterControls.tsx`; the
+- `ChatComposer.tsx`: `handleCompactAndSendMessage` passes `compactFirst` in
+  `submitComposer`'s options to `onSend`, via `ComposerFooterControls.tsx`; the
   mobile collapsed send button sends
 - `useComposerSend.ts`: `onSend` takes `compactFirst` and hands it to
   `planComposerTurn` (`ChatView.logic.ts`); `ChatView.tsx` no longer keeps the
   per-thread full-history toggle state
 - `docs/user/providers-claude.md`: the chip's description
 
-`submitComposer` also forwards `compactFirst` through `submitComposerRef`, so a
-chip click during dictation still compacts once the transcript lands. Upstream's
+`submitComposer` also forwards `compactFirst` through `submitComposerRef` and
+upstream's detached send, so a chip click during dictation still compacts once
+the transcript lands. Upstream's
 `/clear` wins over the chip: an armed fresh session never compacts. This is web
-and desktop only. Upstream's mobile composer has no chip and compacts an eligible
-send first (#27935).
+and desktop only. Upstream's mobile composer has its own chip, on by default:
+an eligible send compacts first unless the chip is tapped (#36872).
 
 **On conflict:** keep upstream's offer conditions (`shouldOfferResumeCompaction`)
 and re-apply the opt-in wiring. Retire it if upstream makes plain send the
@@ -441,7 +446,8 @@ prefix (`tf-c/<hex>`), still recognising upstream's `t3` and legacy shapes.
   `buildTemporaryWorktreeBranchName`, `flattenTemporaryWorktreeBranchName`, and
   `isTemporaryWorktreeBranch`, plus `temporaryWorktreeBranchPrefix`
 - `apps/server/src/orchestration-v2/ThreadLaunchService.ts` passes the project's
-  `branchNamePrefix`
+  `branchNamePrefix`, and upstream's `TaskFolders.create` reads it to flatten a
+  temporary name nested under an existing prefix branch
 - `docs/user/project-settings.md`: one sentence under "Worktree branch names"
 
 Mobile still sends `t3/<hex>` names, which the server recognises and renames.
@@ -489,12 +495,13 @@ once upstream shows the amounts itself.
 Upstream lists one repository per project, the canonical one (`upstream`, else
 `origin`). A fork checkout then lists the original project's pull requests
 instead of the fork's, and a submodule's pull requests never show. The fork
-lists the fork (`RepositoryIdentity.origin`, which is itself fork-owned) in
-place of the canonical repository, and adds one entry per initialized direct
+lists the fork (upstream's `RepositoryIdentity.origin`) in place of the
+canonical repository, and adds one entry per initialized direct
 submodule. Project grouping still uses the canonical identity.
 
 - `RepositoryIdentityResolver.ts`: `changeRequestRepositoryIdentity` rebuilds
-  an identity on its `origin` remote; `resolveSubmodules` reads the top-level
+  an identity on its `origin` remote, keeping the origin's key, which upstream
+  resolves through SSH host aliases; `resolveSubmodules` reads the top-level
   `.gitmodules` and keeps paths whose own checkout lies below the project's.
   Test stubs of the resolver use `Layer.mock` so the extra method needs no stub.
 - `PullRequestService.ts`: `repositoryCheckouts` expands each project into its
@@ -507,8 +514,10 @@ submodule. Project grouping still uses the canonical identity.
   keys by repository. `checkout` exposes the shell to the review guide. The
   tracked-upstream lookup reads the project shell through `readShell`, which
   shares upstream's per-sweep cache (`withSharedProjectReads`).
-- `PullRequestReviewGuideService.ts`: writes from `checkout`'s directory and
-  accepts the checkout's identity or, at the project root, the canonical one.
+- `PullRequestReviewGuideService.ts`: writes from `checkout`'s directory. At
+  the project root upstream's `ownPullRequestRepositories` (#39601) accepts the
+  canonical repository and its `origin` fork; a submodule's checkout passes its
+  own identity instead.
 - Web `pullRequestDiffStatKey` includes the repository, because one project can list
   the same number twice.
 - Web `PullRequestDetailPanel.tsx`: a submodule pull request checks out in
@@ -616,22 +625,24 @@ per-device rule list, each rule with its own color.
   alternation, since a lookbehind before `a|b` guards only `a`.
   `settings.ts` adds the `chatHighlightRules` client setting and its patch key.
 - `apps/web/src/components/chat/markdownHighlights.ts` and its test: a greedy
-  scan over all rules (earliest start wins, list order breaks ties) and the rehype
-  plugin, which runs after sanitizing. Within a block, text joins across inline
+  scan over all rules (earliest start wins, list order breaks ties) and the hast
+  transform, which upstream's `wordsHast` runs last, after sanitizing, through an
+  optional `highlight` on `WordsHastOptions`. Within a block, text joins across inline
   elements, so `not **pushed**` keeps its negation; code, links, `kbd`, plain
   quotes and block boundaries break it (alerts and insights are highlighted).
   Skill and model-mention tokens are never wrapped, since chips are parsed from
   the rendered text; the plugin finds them with the chip parsers' own matchers
   (`matchInlineSkillTokens`, added to `packages/shared/src/inlineSkills.ts`, and
   `collectComposerModelMentions`). Inline elements are the sanitizer's allowed
-  tags (`CHAT_MARKDOWN_ALLOWED_TAGS`, exported from `markdownPipeline.ts`) minus
+  tags (`CHAT_MARKDOWN_ALLOWED_TAGS`, exported from `markdownHast.ts`) minus
   block and skipped ones. Marks and regex searches are capped per block, and
   regex rules with nested repetition are rejected: rules persist and the thread
   renders under the Settings modal, so a catastrophic pattern could otherwise
   lock the app.
-  `withChatHighlights` builds one plugin list per rule configuration, keyed by the
-  settings array and then by its enabled rules, so each configuration has one
-  shared renderer and parse cache, and streaming keeps block splitting.
+  `chatHighlighter` returns one transform per rule configuration, keyed by the
+  settings array and then by its enabled rules, and ChatMarkdown's `wordsOptions`
+  keys its options by that transform, so each configuration has one shared
+  renderer and parse cache, and streaming keeps block splitting.
 - `ChatMarkdown.tsx` takes `highlightRules`, and skips it in a thread hidden under
   a modal route (`HiddenThreadContext`); `TimelineAssistantRows.tsx` sets it for
   assistant and sent messages only. `index.css` styles `mark.chat-highlight`.
@@ -644,8 +655,8 @@ per-device rule list, each rule with its own color.
   library.
 
 **On conflict:** if upstream adds message highlighting, compare it and ask
-Taufeeque which to keep. A change to the rehype plugin lists in `ChatMarkdown.tsx`
-only needs `withChatHighlights` re-applied around the chosen list.
+Taufeeque which to keep. A change to `wordsHast` or `wordsOptions` only needs the
+`highlight` option re-applied.
 
 ### Desktop: client settings follow edits to their file
 
@@ -717,22 +728,14 @@ between 2026-10-27 and 2026-11-21.
   dangerous-command check asking before `rm -rf`. The full-access row of the MCP
   approval test in `CodexAdapterV2.test.ts` covers it.
 
+Upstream's #38581 denies the same ask on purpose, matching its "dangerous
+removal" wording; the fork's allow runs first, and upstream's test row expecting
+the denial is dropped.
+
 **On conflict:** keep both as small patches on upstream's handlers. Retire the
 Claude one if the SDK starts exposing the CLI's `removalRule`, or upstream allows
 unparsed commands in bypass mode. Retire the Codex one if upstream auto-accepts
 command approvals in full access, or goes back to `approvalPolicy: "never"`.
-
-### Chat: Cite appears without the multi-click wait
-
-Upstream waits 500 ms after a double- or triple-click before showing the Cite
-button. The fork shows it on the next frame. Shown at once at the pointer, it
-would sit under the third click of a triple-click, so multi-click selections
-anchor it below the selected text instead.
-
-- `apps/web/src/lib/selectionActions.ts` (`onMouseUp`).
-
-**On conflict:** keep the two-line patch on upstream's handler. Retire it if
-upstream drops the multi-click wait.
 
 ### Thread details: research hub links
 
@@ -756,6 +759,13 @@ the client has not loaded, so it does not take scrolling to find.
 **On conflict:** keep the rows next to their `getNativeChildWork` neighbours.
 
 ## Retired: superseded by upstream
+
+### Cite without the multi-click wait
+
+Retired on 2026-11-22 when upstream's `immediateMultiClick` (#33221) showed Cite
+at once after a double- or triple-click, anchored below the selection. The
+assistant toolbar is its only caller, so the fork's patch to every observer did
+the same thing.
 
 ### Packaged backend ships zod for @cursor/sdk
 

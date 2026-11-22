@@ -1,8 +1,8 @@
 import { collectComposerModelMentions } from "@t3tools/client-runtime/composer-model-mentions";
 import type { ChatHighlightRule } from "@t3tools/contracts";
 import { matchInlineSkillTokens } from "@t3tools/shared/inlineSkills";
-import { CHAT_MARKDOWN_ALLOWED_TAGS } from "@t3tools/shared/markdownPipeline";
-import type { PluggableList } from "unified";
+import { CHAT_MARKDOWN_ALLOWED_TAGS } from "@t3tools/shared/markdownHast";
+import type { Root } from "hast";
 
 type HastNode = {
   type?: string;
@@ -446,50 +446,45 @@ function rehypeChatHighlights(options: { rules: ReadonlyArray<CompiledHighlightR
   };
 }
 
-interface HighlightPluginLists {
-  readonly byBase: WeakMap<PluggableList, PluggableList>;
-  readonly rules: ReadonlyArray<CompiledHighlightRule>;
+/** Marks rule matches in a rendered chat tree. */
+export type ChatHighlighter = (tree: Root) => void;
+
+interface HighlightConfig {
+  readonly highlight: ChatHighlighter | undefined;
 }
 
-const listsBySettings = new WeakMap<ReadonlyArray<ChatHighlightRule>, HighlightPluginLists>();
+const configsBySettings = new WeakMap<ReadonlyArray<ChatHighlightRule>, HighlightConfig>();
 // Equal rules decoded anew (another tab, a reset) keep the same renderer and its parse cache.
 const MAX_RECENT_CONFIGS = 8;
-const listsByKey = new Map<string, HighlightPluginLists>();
+const configsByKey = new Map<string, HighlightConfig>();
 
-function pluginListsFor(settings: ReadonlyArray<ChatHighlightRule>): HighlightPluginLists {
-  const known = listsBySettings.get(settings);
+function configFor(settings: ReadonlyArray<ChatHighlightRule>): HighlightConfig {
+  const known = configsBySettings.get(settings);
   if (known) return known;
   const enabled = settings.filter((rule) => rule.enabled);
   const key = JSON.stringify(enabled.map((rule) => [rule.pattern, rule.regex, rule.color]));
-  let lists = listsByKey.get(key);
-  if (lists) {
-    listsByKey.delete(key);
+  let config = configsByKey.get(key);
+  if (config) {
+    configsByKey.delete(key);
   } else {
-    lists = { byBase: new WeakMap(), rules: compileHighlightRules(enabled) };
-    if (listsByKey.size >= MAX_RECENT_CONFIGS) {
-      listsByKey.delete(listsByKey.keys().next().value!);
+    const rules = compileHighlightRules(enabled);
+    const run = rules.length === 0 ? undefined : rehypeChatHighlights({ rules });
+    config = { highlight: run && ((tree) => run(tree as HastNode)) };
+    if (configsByKey.size >= MAX_RECENT_CONFIGS) {
+      configsByKey.delete(configsByKey.keys().next().value!);
     }
   }
-  listsByKey.set(key, lists);
-  listsBySettings.set(settings, lists);
-  return lists;
+  configsByKey.set(key, config);
+  configsBySettings.set(settings, config);
+  return config;
 }
 
 /**
- * `base` with the highlight plugin appended, one stable list per rule configuration, so each
- * configuration gets one renderer and an unchanged one keeps its parse cache.
+ * One stable highlighter per rule configuration, so each configuration gets one renderer and an
+ * unchanged one keeps its parse cache. Undefined when no rule applies.
  */
-export function withChatHighlights(
-  base: PluggableList,
+export function chatHighlighter(
   settings: ReadonlyArray<ChatHighlightRule>,
-): PluggableList {
-  if (settings.length === 0) return base;
-  const lists = pluginListsFor(settings);
-  if (lists.rules.length === 0) return base;
-  let combined = lists.byBase.get(base);
-  if (!combined) {
-    combined = [...base, [rehypeChatHighlights, { rules: lists.rules }]];
-    lists.byBase.set(base, combined);
-  }
-  return combined;
+): ChatHighlighter | undefined {
+  return settings.length === 0 ? undefined : configFor(settings).highlight;
 }

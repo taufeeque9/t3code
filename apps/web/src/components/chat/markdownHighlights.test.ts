@@ -1,20 +1,32 @@
 import { type ChatHighlightRule, DEFAULT_CHAT_HIGHLIGHT_RULES } from "@t3tools/contracts";
-import {
-  CHAT_MARKDOWN_REHYPE_PLUGINS,
-  CHAT_MARKDOWN_REMARK_PLUGINS,
-} from "@t3tools/shared/markdownPipeline";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  chatHighlighter,
   compileHighlightRules,
   findHighlightMatches,
   highlightRuleProblem,
   highlightRuleRegex,
   MAX_HIGHLIGHT_MARKS_PER_BLOCK,
-  withChatHighlights,
 } from "./markdownHighlights";
 import { createMarkdownRenderer } from "./markdownRenderer";
+
+function markupWith(rules: ReadonlyArray<ChatHighlightRule>) {
+  const renderer = createMarkdownRenderer({
+    markdown: {
+      math: false,
+      breaks: false,
+      escapeHtml: false,
+      insights: false,
+      extensions: {},
+      highlight: chatHighlighter(rules),
+    },
+    components: {},
+    urlTransform: (url) => url,
+  });
+  return (source: string) => renderToStaticMarkup(renderer.element(renderer.parse(source)));
+}
 
 const rule = (pattern: string, overrides: Partial<ChatHighlightRule> = {}): ChatHighlightRule => ({
   id: pattern,
@@ -197,18 +209,12 @@ describe("default highlight rules", () => {
 
 describe("rehypeChatHighlights", () => {
   const rules = [rule("deploy", { color: "#22c55e" })];
-  const render = createMarkdownRenderer({
-    remarkPlugins: CHAT_MARKDOWN_REMARK_PLUGINS,
-    rehypePlugins: withChatHighlights(CHAT_MARKDOWN_REHYPE_PLUGINS, rules),
-    components: {},
-    urlTransform: (url) => url,
-  });
-  const markup = (source: string) => renderToStaticMarkup(render(source));
+  const markup = markupWith(rules);
   const MARK =
     '<mark class="chat-highlight" data-chat-highlight="" style="--chat-highlight:#22c55e">deploy</mark>';
 
   it("wraps prose matches after sanitizing", () => {
-    expect(markup("We **deploy** now")).toBe(`<p>We <strong>${MARK}</strong> now</p>`);
+    expect(markup("We **deploy** now")).toBe(`<p dir="ltr">We <strong>${MARK}</strong> now</p>`);
   });
 
   it("highlights inside an agent callout", () => {
@@ -220,7 +226,7 @@ describe("rehypeChatHighlights", () => {
     ["strike", "We de<strike>ploy</strike> now"],
   ])("joins text across inline %s", (tag, source) => {
     expect(markup(source)).toBe(
-      `<p>We ${MARK.replace("deploy", "de")}<${tag}>${MARK.replace("deploy", "ploy")}</${tag}> now</p>`,
+      `<p dir="ltr">We ${MARK.replace("deploy", "de")}<${tag}>${MARK.replace("deploy", "ploy")}</${tag}> now</p>`,
     );
   });
 
@@ -229,13 +235,7 @@ describe("rehypeChatHighlights", () => {
   });
 
   it("caps the marks in one block", () => {
-    const one = createMarkdownRenderer({
-      remarkPlugins: CHAT_MARKDOWN_REMARK_PLUGINS,
-      rehypePlugins: withChatHighlights(CHAT_MARKDOWN_REHYPE_PLUGINS, [rule("a")]),
-      components: {},
-      urlTransform: (url) => url,
-    });
-    const marks = renderToStaticMarkup(one("a ".repeat(500))).split("<mark").length - 1;
+    const marks = markupWith([rule("a")])("a ".repeat(500)).split("<mark").length - 1;
     expect(marks).toBe(MAX_HIGHLIGHT_MARKS_PER_BLOCK);
   });
 
@@ -251,12 +251,7 @@ describe("rehypeChatHighlights", () => {
 });
 
 describe("rehypeChatHighlights with the default rules", () => {
-  const render = createMarkdownRenderer({
-    remarkPlugins: CHAT_MARKDOWN_REMARK_PLUGINS,
-    rehypePlugins: withChatHighlights(CHAT_MARKDOWN_REHYPE_PLUGINS, DEFAULT_CHAT_HIGHLIGHT_RULES),
-    components: {},
-    urlTransform: (url) => url,
-  });
+  const markup = markupWith(DEFAULT_CHAT_HIGHLIGHT_RULES);
   const mark = (color: string, text: string) =>
     `<mark class="chat-highlight" data-chat-highlight="" style="--chat-highlight:${color}">${text}</mark>`;
 
@@ -264,36 +259,34 @@ describe("rehypeChatHighlights with the default rules", () => {
     [
       "keeps a negation across emphasis",
       "I have not **pushed**.",
-      `<p>I ${mark("#a855f7", "have not ")}<strong>${mark("#a855f7", "pushed")}</strong>.</p>`,
+      `<p dir="ltr">I ${mark("#a855f7", "have not ")}<strong>${mark("#a855f7", "pushed")}</strong>.</p>`,
     ],
     [
       "highlights a question with bold inside it",
       "Which **port**?",
-      `<p>${mark("#3b82f6", "Which ")}<strong>${mark("#3b82f6", "port")}</strong>${mark("#3b82f6", "?")}</p>`,
+      `<p dir="ltr">${mark("#3b82f6", "Which ")}<strong>${mark("#3b82f6", "port")}</strong>${mark("#3b82f6", "?")}</p>`,
     ],
     [
       "breaks a match at inline code",
       "Did `vp` really crash?",
-      `<p>Did <code data-inline-code="">vp</code> really ${mark("#ef4444", "crash")}?</p>`,
+      `<p dir="ltr">Did <code data-inline-code="" dir="ltr">vp</code> really ${mark("#ef4444", "crash")}?</p>`,
     ],
   ])("%s", (_name, source, expected) => {
-    expect(renderToStaticMarkup(render(source))).toBe(expected);
+    expect(markup(source)).toBe(expected);
   });
 });
 
-describe("withChatHighlights", () => {
-  const base = CHAT_MARKDOWN_REHYPE_PLUGINS;
-
-  it("reuses one list per rule configuration", () => {
+describe("chatHighlighter", () => {
+  it("reuses one highlighter per rule configuration", () => {
     const rules = [rule("deploy")];
-    const list = withChatHighlights(base, rules);
-    expect(withChatHighlights(base, rules)).toBe(list);
-    expect(withChatHighlights(base, [rule("deploy")])).toBe(list);
-    expect(withChatHighlights(base, [rule("deploy", { color: "#ffffff" })])).not.toBe(list);
+    const highlight = chatHighlighter(rules);
+    expect(chatHighlighter(rules)).toBe(highlight);
+    expect(chatHighlighter([rule("deploy")])).toBe(highlight);
+    expect(chatHighlighter([rule("deploy", { color: "#ffffff" })])).not.toBe(highlight);
   });
 
-  it("keeps the base list when no rule applies", () => {
-    expect(withChatHighlights(base, [])).toBe(base);
-    expect(withChatHighlights(base, [rule("deploy", { enabled: false })])).toBe(base);
+  it("has none when no rule applies", () => {
+    expect(chatHighlighter([])).toBeUndefined();
+    expect(chatHighlighter([rule("deploy", { enabled: false })])).toBeUndefined();
   });
 });

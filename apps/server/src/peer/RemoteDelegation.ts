@@ -638,6 +638,7 @@ const make = Effect.gen(function* () {
     runId: RunId | null,
     status: "completed" | "failed" | "cancelled" | "interrupted" = "completed",
     stopHook?: NonNullable<OrchestratorMcpThreadWaitResult["stopHookReplies"]>[number],
+    probeSuccess = true,
   ): Effect.fn.Return<
     { text: string | undefined; executedModel: string | undefined; reportLength?: number },
     OrchestratorMcpFailure
@@ -686,16 +687,21 @@ const make = Effect.gen(function* () {
     const failed = status === "failed";
     let reply: OrchestratorMcpThreadTimelineItem | undefined;
     let error: OrchestratorMcpThreadTimelineItem | undefined;
-    let afterPosition: number | undefined;
+    // Linked peers read newest first without a cursor; this scan runs forward.
+    let afterPosition = -1;
     let run: OrchestratorMcpThreadRun | undefined;
+    let remainingItems = 0;
+    let tailProbed = false;
     while (true) {
       const read = yield* forwarding.readThread(scope, remote.environmentId, {
         threadId: remote.threadId,
         view: failed ? "activity" : "messages",
         limit: 100,
         runLimit: 50,
-        maxCharsPerItem: 20_000,
-        ...(afterPosition === undefined ? {} : { afterPosition }),
+        // Keep the first and expected final activity pages whole. A result on a
+        // middle page then needs an extra text read after the scan.
+        maxCharsPerItem: failed && remainingItems > 100 ? 1 : 20_000,
+        afterPosition,
       });
       run ??= read.recentRuns.find((candidate) => candidate.runId === runId);
       reply =
@@ -709,7 +715,28 @@ const make = Effect.gen(function* () {
           ) ?? error;
       }
       if (!read.hasMore || read.nextPosition === null) break;
+      if (!failed && probeSuccess && !tailProbed) {
+        tailProbed = true;
+        const tailPosition = Math.floor((read.thread.itemCount - 1) / 100) * 100 - 1;
+        if (tailPosition > read.nextPosition) {
+          const tail = yield* forwarding.readThread(scope, remote.environmentId, {
+            threadId: remote.threadId,
+            view: "messages",
+            limit: 100,
+            maxCharsPerItem: 20_000,
+            afterPosition: tailPosition,
+          });
+          const tailReply = tail.items.findLast(
+            (item) => item.type === "assistant_message" && (runId === null || item.runId === runId),
+          );
+          if (!tail.hasMore && tailReply !== undefined) {
+            reply = tailReply;
+            break;
+          }
+        }
+      }
       afterPosition = read.nextPosition;
+      remainingItems = read.thread.itemCount - afterPosition - 1;
     }
     reply = error ?? reply;
     const executedModel = run?.executedModel ?? undefined;
@@ -923,6 +950,7 @@ const make = Effect.gen(function* () {
       terminalStatus(resultRun.status),
       waited.delegatedResultParts?.find((reply) => reply.runId === resultRun.runId) ??
         waited.stopHookReplies?.find((reply) => reply.runId === resultRun.runId),
+      resultRun.status === "completed",
     );
     yield* complete(
       parentThreadId,
