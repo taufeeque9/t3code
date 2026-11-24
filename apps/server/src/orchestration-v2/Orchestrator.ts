@@ -138,7 +138,9 @@ import {
   delegatedTaskResultRun,
   delegatedTaskRuns,
   isRestartContinuationSource,
+  mergeRestartCancelledBackgroundWork,
   runOutcome,
+  sessionBackgroundWork,
 } from "./RestartBackgroundNote.ts";
 import {
   isBufferedProviderNotification,
@@ -1429,6 +1431,17 @@ function sessionsReleasedByFreshContext(
 
 const FRESH_CONTEXT_DETACH_REASON = "Started a fresh session.";
 
+// The switching command rebinds these rows before its detach effect runs.
+const boundProviderThreadIds = (
+  providerThreads: ReadonlyArray<OrchestrationV2ProviderThread>,
+  session: Pick<OrchestrationV2ProviderSession, "id">,
+) => {
+  const ids = providerThreads
+    .filter((thread) => thread.providerSessionId === session.id)
+    .map((thread) => thread.id);
+  return ids.length === 0 ? {} : { providerThreadIds: ids };
+};
+
 function uniqueSessions(
   sessions: ReadonlyArray<OrchestrationV2ProviderSession>,
 ): ReadonlyArray<OrchestrationV2ProviderSession> {
@@ -1685,6 +1698,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (yield* probe.pipe(Effect.catchCause(() => Effect.succeed(true)))) return true;
     }
     return false;
+  });
+
+  // An account switch ends the replaced session's background work instead of waiting on it.
+  const accountSwitchStoppedWork = Effect.fn("Orchestrator.accountSwitchStoppedWork")(function* (
+    threadId: ThreadId,
+    stopped: ReadonlyArray<OrchestrationV2ThreadProjection["providerSessions"][number]>,
+    projection: Pick<OrchestrationV2ThreadProjection, "providerThreads" | "runs">,
+  ) {
+    const { turnItems } = yield* projectionStore
+      .getThreadRecords(threadId, ["turnItems"], {
+        turnItemTypes: ["command_execution", "dynamic_tool", "subagent"],
+        turnItemStatuses: ["pending", "running", "waiting"],
+      })
+      .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
+    return sessionBackgroundWork({
+      providerSessionIds: new Set(stopped.map((session) => session.id)),
+      providerThreads: projection.providerThreads,
+      turnItems,
+      runs: projection.runs,
+    });
   });
 
   // Runs in every command transaction; avoid reading thousands of finished leaf nodes.
@@ -2661,12 +2694,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           busySessionIds.add(session.id);
         }
       }
+      const canResumeAcrossInstances =
+        !freshContext &&
+        switchPlan?.instanceChanged === true &&
+        switchPlan.transition.type === "restart_and_resume" &&
+        activeProviderThread !== undefined &&
+        activeProviderThread.nativeThreadRef !== null;
+      // A buffered notification keeps the account it was queued on; only the user's own
+      // message may end the current account's work to switch.
+      const stopsBusyWork = canResumeAcrossInstances && queuedMessage.createdBy === "user";
       // Nobody waits on a queued start to refuse it. A handoff runs in its own session, so a
-      // busy one stays up; a restart resumes the busy session's native thread, so wait instead.
-      // A fresh run resumes nothing, so it never waits.
+      // busy one stays up; a restart resumes the busy session's native thread, so wait instead,
+      // unless the user moved it to another account. A fresh run never waits.
       if (
         busySessionIds.size > 0 &&
         !freshContext &&
+        !stopsBusyWork &&
         switchPlan?.transition.type === "restart_and_resume"
       ) {
         yield* Effect.logInfo(
@@ -2687,15 +2730,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         );
         return;
       }
+      const stoppedSessions = stopsBusyWork
+        ? releasableSessions.filter((session) => busySessionIds.has(session.id))
+        : [];
       const sessionsToDetach = releasableSessions.filter(
-        (session) => !busySessionIds.has(session.id),
+        (session) => stopsBusyWork || !busySessionIds.has(session.id),
       );
-      const canResumeAcrossInstances =
-        !freshContext &&
-        switchPlan?.instanceChanged === true &&
-        switchPlan.transition.type === "restart_and_resume" &&
-        activeProviderThread !== undefined &&
-        activeProviderThread.nativeThreadRef !== null;
+      const accountSwitchStoppedBackgroundWork =
+        stoppedSessions.length === 0
+          ? undefined
+          : yield* accountSwitchStoppedWork(threadId, stoppedSessions, projection);
       const deliveryProviderThread = canResumeAcrossInstances
         ? {
             ...queuedProviderThread,
@@ -2934,6 +2978,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           },
           queueDelivery,
         ),
+        ...(accountSwitchStoppedBackgroundWork === undefined
+          ? {}
+          : {
+              accountSwitchStoppedBackgroundWork: mergeRestartCancelledBackgroundWork(
+                queuedRun.accountSwitchStoppedBackgroundWork ?? [],
+                accountSwitchStoppedBackgroundWork,
+              ),
+            }),
       };
       const userTurnItem: OrchestrationV2TurnItem = {
         ...(legacyQueuedTurnItem ?? {
@@ -3206,6 +3258,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               type: "provider-session.detach" as const,
               providerSessionId: session.id,
               detail: detachReason,
+              ...boundProviderThreadIds(projection.providerThreads, session),
             },
           })),
           {
@@ -8027,10 +8080,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ...(freshContext ? sessionsReleasedByFreshContext(projection, activeProviderThread) : []),
     ]);
     const sessionsToDetach: Array<OrchestrationV2ProviderSession> = [];
+    const busySessions: Array<OrchestrationV2ProviderSession> = [];
     for (const detaching of releasableSessions) {
       if (yield* sessionHasBackgroundWork(detaching, projection.providerThreads)) {
         // A schedule has nobody to wait or press Stop; like a queued fresh start, leave it running.
         if (freshContext && command.scheduledTaskId !== undefined) continue;
+        if (canResumeAcrossInstances && command.createdBy === "user") {
+          busySessions.push(detaching);
+          sessionsToDetach.push(detaching);
+          continue;
+        }
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
@@ -8041,6 +8100,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       sessionsToDetach.push(detaching);
     }
+    const accountSwitchStoppedBackgroundWork =
+      busySessions.length === 0
+        ? undefined
+        : yield* accountSwitchStoppedWork(command.threadId, busySessions, projection).pipe(
+            mapDispatchError(command),
+          );
 
     if (
       pendingForkTransfer === undefined &&
@@ -8975,6 +9040,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         : { usageLimitContinuationOfRunId: command.usageLimitContinuationOfRunId }),
       ...(continuedTaskId === undefined ? {} : { delegatedTaskId: continuedTaskId }),
       ...wakeWorkStartedAt(projection, command),
+      ...(accountSwitchStoppedBackgroundWork === undefined
+        ? {}
+        : { accountSwitchStoppedBackgroundWork }),
     };
     const attempt: OrchestrationV2RunAttempt = {
       id: attemptId,
@@ -9437,6 +9505,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             type: "provider-session.detach",
             providerSessionId: session.id,
             detail: detachDetail,
+            ...boundProviderThreadIds(projection.providerThreads, session),
           },
         } satisfies PendingOrchestrationEffectV2,
       ]);

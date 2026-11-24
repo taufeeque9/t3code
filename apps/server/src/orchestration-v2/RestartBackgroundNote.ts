@@ -11,7 +11,10 @@ import type {
   OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import { subagentHoldsCompletion } from "@t3tools/provider-core/server/subagentProjection";
-import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import {
+  backgroundWorkHoldsCompletion,
+  pendingBackgroundTurnItems,
+} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { latestRootProviderFailure, runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 
 type Work = OrchestrationV2RestartCancelledBackgroundWork;
@@ -130,13 +133,85 @@ export function cancelledRosterTaskWork(task: OrchestrationV2PendingBackgroundTa
 const MAX_NOTE_ENTRIES = 10;
 
 /** Bounds entries and labels to protect the context budget. */
-export function restartCancelledBackgroundWorkNote(work: ReadonlyArray<Work>): string {
+function workNoteEntries(work: ReadonlyArray<Work>): ReadonlyArray<string> {
   const omitted = work.length - MAX_NOTE_ENTRIES;
   return [
-    "Note: the T3 server restarted, and this background work was cancelled before it finished. It will not report back on its own, so resume or restart what you still need and wait for its result:",
     ...work.slice(0, MAX_NOTE_ENTRIES).map((entry) => `- ${entry.kind}: ${entry.label}`),
     ...(omitted > 0 ? [`- and ${omitted} more`] : []),
+  ];
+}
+
+export function restartCancelledBackgroundWorkNote(work: ReadonlyArray<Work>): string {
+  return [
+    "Note: the T3 server restarted, and this background work was cancelled before it finished. It will not report back on its own, so resume or restart what you still need and wait for its result:",
+    ...workNoteEntries(work),
   ].join("\n");
+}
+
+export function accountSwitchStoppedBackgroundWorkNote(work: ReadonlyArray<Work>): string {
+  return work.length === 0
+    ? "Note: the user switched this thread to another account, which ended the background work still running in the previous account's session. It will not report back on its own, so restart what you still need and wait for its result."
+    : [
+        "Note: the user switched this thread to another account, which ended this background work before it finished. It will not report back on its own, so resume or restart what you still need and wait for its result:",
+        ...workNoteEntries(work),
+      ].join("\n");
+}
+
+/** An earlier attempt of the run started a provider turn, so the provider already saw its prompt. */
+export function runPromptDelivered(
+  run: Pick<OrchestrationV2Run, "id" | "activeAttemptId">,
+  providerTurns: ReadonlyArray<Pick<ProviderTurnState, "runAttemptId">>,
+  attempts: ReadonlyArray<Attempt>,
+): boolean {
+  const delivered = new Set(providerTurns.map((turn) => turn.runAttemptId));
+  return attempts.some(
+    (attempt) =>
+      attempt.runId === run.id && attempt.id !== run.activeAttemptId && delivered.has(attempt.id),
+  );
+}
+
+/** The running background items and roster tasks of the provider threads bound to these sessions. */
+export function sessionBackgroundWork(input: {
+  readonly providerSessionIds: ReadonlySet<string>;
+  readonly providerThreads: ReadonlyArray<
+    Pick<OrchestrationV2ProviderThread, "id" | "providerSessionId" | "pendingBackgroundTasks">
+  >;
+  readonly turnItems: ReadonlyArray<OrchestrationV2TurnItem>;
+  readonly runs: ReadonlyArray<OrchestrationV2Run>;
+}): ReadonlyArray<Work> {
+  const providerThreads = input.providerThreads.filter(
+    (thread) =>
+      thread.providerSessionId != null && input.providerSessionIds.has(thread.providerSessionId),
+  );
+  const providerThreadIds = new Set<string | null | undefined>(
+    providerThreads.map((thread) => thread.id),
+  );
+  const work: Array<Work> = [];
+  const nativeIds = new Set<string>();
+  for (const item of pendingBackgroundTurnItems({ turnItems: input.turnItems, runs: input.runs })) {
+    if (
+      // App-owned delegates run in their own threads and outlive the session.
+      (item.type === "subagent" && item.origin !== "provider_native") ||
+      (!providerThreadIds.has(item.providerThreadId) &&
+        !providerThreadIds.has(awaitingProviderThreadId(item, input.runs)))
+    )
+      continue;
+    const entry = cancelledTurnItemWork(item);
+    if (entry === undefined) continue;
+    work.push(entry);
+    if (item.nativeItemRef?.nativeId != null) nativeIds.add(item.nativeItemRef.nativeId);
+  }
+  for (const task of providerThreads.flatMap((thread) => thread.pendingBackgroundTasks ?? [])) {
+    // A subagent already listed covers the shells it started.
+    if (
+      nativeIds.has(task.taskId) ||
+      (task.parentTaskId !== undefined && nativeIds.has(task.parentTaskId))
+    )
+      continue;
+    nativeIds.add(task.taskId);
+    work.push(cancelledRosterTaskWork(task));
+  }
+  return work;
 }
 
 type ProviderTurnState = Pick<

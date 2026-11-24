@@ -126,9 +126,18 @@ Upstream refuses `thread.model-selection.set` across instances while a run is
 active (#22755), so a switch made mid-run reaches the server only through the
 queued message's own selection; the fork's integration test sends it that way.
 
-A queued account switch is a `restart_and_resume`, so upstream's queue hold in
-`Orchestrator.ts` applies: it waits while the replaced session runs background work,
-even between separate transcript trees.
+A user's message that switches accounts (a `restart_and_resume` to another
+instance) ends the replaced session's background work instead of refusing the send
+or holding the queue as upstream does. `Orchestrator.ts` detaches the busy session
+and records what it ended on the new run (`accountSwitchStoppedBackgroundWork`,
+listed by `sessionBackgroundWork` in `RestartBackgroundNote.ts`).
+`ProviderTurnStartService.ts` prepends a note to that run's prompt so the agent
+restarts what it still needs. The send rebinds the provider-thread row before the
+detach runs, so the detach effect carries the rows bound at dispatch
+(`providerThreadIds`) and `ProviderSessionManager.ts` releases those too. Agent
+and provider messages, hand-offs to another provider, and fresh runs keep
+upstream's behavior. Drop this once upstream lets an instance switch end
+background work.
 
 Sharing a transcript tree through symlinks avoids copying. Distinct directories
 are supported without changing their links or account credentials. Claude ↔

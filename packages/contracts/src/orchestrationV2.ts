@@ -753,6 +753,10 @@ export const OrchestrationV2Run = Schema.Struct({
   restartCancelledBackgroundWork: Schema.optional(
     Schema.Array(OrchestrationV2RestartCancelledBackgroundWork),
   ),
+  /** Background work this run's account switch ended; empty when the provider named none. */
+  accountSwitchStoppedBackgroundWork: Schema.optional(
+    Schema.Array(OrchestrationV2RestartCancelledBackgroundWork),
+  ),
   sourcePlanRef: Schema.optional(
     Schema.Struct({
       threadId: ThreadId,

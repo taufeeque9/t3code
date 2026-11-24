@@ -256,6 +256,8 @@ export interface ProviderSessionManagerV2Shape {
     readonly threadId: ThreadId;
     readonly detail?: string;
     readonly revokeMcpCredential?: boolean;
+    /** Bound to the session when the detach was decided; the same command may rebind them. */
+    readonly providerThreadIds?: ReadonlyArray<ProviderThreadId>;
   }) => Effect.Effect<void, ProviderSessionManagerV2Error>;
   /**
    * Releases the session unless, at the moment of removal, a turn is busy on it other than one
@@ -914,6 +916,7 @@ export const layerWithOptions = (
           readonly entry: LiveSessionEntry;
           readonly reason: ProviderSessionReleaseReason;
           readonly detachedThreadId?: ThreadId;
+          readonly detachedProviderThreadIds?: ReadonlyArray<ProviderThreadId>;
         }) {
           if (
             input.reason === "server_shutdown" ||
@@ -928,7 +931,14 @@ export const layerWithOptions = (
               "providerThreads",
             ]);
             for (const providerThread of projection.providerThreads) {
-              if (providerThread.providerSessionId !== providerSessionId) continue;
+              if (
+                providerThread.providerSessionId !== providerSessionId &&
+                !(
+                  threadId === input.detachedThreadId &&
+                  input.detachedProviderThreadIds?.includes(providerThread.id) === true
+                )
+              )
+                continue;
               released.push({
                 threadId,
                 providerSessionId,
@@ -1339,6 +1349,7 @@ export const layerWithOptions = (
         readonly reason: ProviderSessionReleaseReason;
         readonly detail?: string;
         readonly detachedThreadId?: ThreadId;
+        readonly detachedProviderThreadIds?: ReadonlyArray<ProviderThreadId>;
         readonly cancelIdleFiber?: boolean;
         readonly onlyIfIdleGeneration?: number;
         readonly keepIfBusyOtherThan?: OwnBusyTurns;
@@ -1361,6 +1372,9 @@ export const layerWithOptions = (
                     entry,
                     reason: input.reason,
                     ...detachedThread,
+                    ...(input.detachedProviderThreadIds === undefined
+                      ? {}
+                      : { detachedProviderThreadIds: input.detachedProviderThreadIds }),
                   });
                   if (input.cancelIdleFiber !== false) {
                     yield* cancelIdleFiber(entry.idleFiber);
@@ -3288,7 +3302,11 @@ export const layerWithOptions = (
               if (Option.isSome(projection)) {
                 const providerThreads = new Map(
                   projection.value.providerThreads
-                    .filter((thread) => thread.providerSessionId === input.providerSessionId)
+                    .filter(
+                      (thread) =>
+                        thread.providerSessionId === input.providerSessionId ||
+                        input.providerThreadIds?.includes(thread.id) === true,
+                    )
                     .map((thread) => [thread.id, thread] as const),
                 );
                 detachedProviderThreads = [...providerThreads.values()];
@@ -3387,6 +3405,9 @@ export const layerWithOptions = (
                 reason: "manual_shutdown",
                 ...(input.detail === undefined ? {} : { detail: input.detail }),
                 detachedThreadId: input.threadId,
+                ...(input.providerThreadIds === undefined
+                  ? {}
+                  : { detachedProviderThreadIds: input.providerThreadIds }),
               });
               return;
             }

@@ -134,6 +134,8 @@ function makeTestAdapter(input: {
     readonly toolName: string;
   };
   readonly backgroundTasksEndWithProcess?: true;
+  /** A background shell the run starts and leaves running. */
+  readonly runningShell?: { readonly runOrdinal: number; readonly input: string };
   readonly backgroundWork?: Ref.Ref<boolean>;
   readonly closedSessions?: Ref.Ref<ReadonlyArray<string>>;
   // ACP cannot truncate, so its rollback answers with a fresh, empty native session.
@@ -435,6 +437,30 @@ function makeTestAdapter(input: {
                   threadDisposition: "reusable",
                 },
               ];
+              if (input.runningShell?.runOrdinal === turnInput.runOrdinal) {
+                yield* PubSub.publish(events, {
+                  type: "turn_item.updated",
+                  driver: input.driver,
+                  turnItem: {
+                    id: TurnItemId.make(`turn-item:${turnInput.threadId}:running-shell`),
+                    threadId: turnInput.threadId,
+                    runId: turnInput.runId,
+                    nodeId: turnInput.rootNodeId,
+                    providerThreadId: turnInput.providerThread.id,
+                    providerTurnId,
+                    nativeItemRef: null,
+                    parentItemId: null,
+                    ordinal: turnInput.runOrdinal * 100 + 3,
+                    status: "running",
+                    title: input.runningShell.input,
+                    startedAt: eventTime,
+                    completedAt: null,
+                    updatedAt: eventTime,
+                    type: "command_execution",
+                    input: input.runningShell.input,
+                  },
+                });
+              }
               const reportedUsage = input.tokenUsageByRunOrdinal?.[turnInput.runOrdinal];
               const turnEvent = providerEvents[0];
               if (reportedUsage && turnEvent?.type === "provider_turn.updated") {
@@ -3660,14 +3686,21 @@ describe("orchestration v2 provider switching", () => {
       { background: true, queued: true, sharedHistory: false },
     ],
     [
-      "holds a queued account switch while the replaced session still runs background work",
+      "ends the replaced session's background work when a queued account switch starts",
       { background: true, queued: true, sharedHistory: true },
+    ],
+    [
+      "ends the previous session's background work when a send switches accounts",
+      { background: true, queued: false, sharedHistory: true },
     ],
   ] as const)("%s", ([, { background, queued, sharedHistory }]) =>
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace("handoff-releases-session");
       const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
       const backgroundWork = yield* Ref.make(background);
+      // The second account's own work, which a wake queued on the first account must not end.
+      const secondBackgroundWork = yield* Ref.make(queued && sharedHistory);
+      const accountSwitchStopsShell = background && sharedHistory && !queued;
       const closedSessions = yield* Ref.make<ReadonlyArray<string>>([]);
       const firstStarted = yield* Deferred.make<void>();
       const releaseFirst = yield* Deferred.make<void>();
@@ -3684,6 +3717,12 @@ describe("orchestration v2 provider switching", () => {
           responseByRunOrdinal: { 1: "First account complete" },
           capturedTurns,
           backgroundWork,
+          ...(accountSwitchStopsShell
+            ? {
+                backgroundTasksEndWithProcess: true as const,
+                runningShell: { runOrdinal: 1, input: "sleep 500" },
+              }
+            : {}),
           closedSessions,
           ...(queued ? { holdFirstTurn: firstStarted, releaseFirstTurn: releaseFirst } : {}),
         }),
@@ -3694,6 +3733,8 @@ describe("orchestration v2 provider switching", () => {
           modelSelection: secondSelection,
           responseByRunOrdinal: { 2: "Second account complete" },
           capturedTurns,
+          backgroundWork: secondBackgroundWork,
+          closedSessions,
         }),
       ];
       // Without a shared continuation key, each Claude instance owns its own native history.
@@ -3758,8 +3799,28 @@ describe("orchestration v2 provider switching", () => {
         if (queued) {
           yield* Deferred.await(firstStarted);
           yield* send(2, secondSelection);
-          const queuedRunId = (yield* orchestrator.getThreadProjection(handoffThreadId)).runs[1]
-            ?.id;
+          if (sharedHistory) {
+            // A buffered notification keeps the first account's selection.
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "agent",
+              creationSource: "provider",
+              commandId: CommandId.make("command:handoff-releases-session:wake"),
+              threadId: handoffThreadId,
+              messageId: MessageId.make("message:handoff-releases-session:wake"),
+              text: "Monitor updated",
+              attachments: [],
+              notification: {
+                source: { kind: "monitor" },
+                outcome: "updated",
+                summary: "Monitor updated",
+              },
+              dispatchMode: { type: "queue_after_active" },
+            });
+          }
+          const queuedRunId = (yield* orchestrator.getThreadProjection(handoffThreadId)).runs.at(
+            -1,
+          )?.id;
           assert.isDefined(queuedRunId);
           yield* Deferred.succeed(releaseFirst, undefined);
           yield* orchestrator.streamStoredEvents.pipe(
@@ -3776,9 +3837,6 @@ describe("orchestration v2 provider switching", () => {
           const firstSession = afterQueue.providerSessions.find(
             (session) => session.providerInstanceId === CLAUDE_MODEL_SELECTION.instanceId,
           );
-          // Detaching would end the background agents, so the busy session must stay up.
-          assert.deepEqual(yield* Ref.get(closedSessions), []);
-          assert.equal(firstSession?.status, "ready");
           if (!sharedHistory) {
             assert.deepEqual(
               afterQueue.runs.map((run) => [run.providerInstanceId, run.status]),
@@ -3787,33 +3845,26 @@ describe("orchestration v2 provider switching", () => {
                 [secondSelection.instanceId, "completed"],
               ],
             );
+            // A hand-off runs in its own session, so the busy one keeps its background agents.
+            assert.deepEqual(yield* Ref.get(closedSessions), []);
+            assert.equal(firstSession?.status, "ready");
             return;
           }
-          // Resuming the native thread beside the busy session would fork its history.
+          // The user's switch ended the first account's work; the wake waits on the second's.
           assert.deepEqual(
-            afterQueue.runs.map((run) => [run.status, run.queueHeld === true]),
+            afterQueue.runs.map((run) => [run.providerInstanceId, run.status, run.queueHeld]),
             [
-              ["completed", false],
-              ["queued", true],
+              [CLAUDE_MODEL_SELECTION.instanceId, "completed", undefined],
+              [secondSelection.instanceId, "completed", undefined],
+              [CLAUDE_MODEL_SELECTION.instanceId, "queued", true],
             ],
           );
-          assert.lengthOf(yield* Ref.get(capturedTurns), 1);
-          yield* Ref.set(backgroundWork, false);
-          yield* orchestrator.dispatch({
-            type: "queue.resume",
-            commandId: CommandId.make("command:handoff-releases-session:resume"),
-            threadId: handoffThreadId,
-          });
-          yield* worker.drain();
-          const resumed = yield* waitForIdle(handoffThreadId);
-          assert.deepEqual(
-            resumed.runs.map((run) => [run.providerInstanceId, run.status]),
-            [
-              [CLAUDE_MODEL_SELECTION.instanceId, "completed"],
-              [secondSelection.instanceId, "completed"],
-            ],
+          assert.equal(firstSession, undefined);
+          assert.lengthOf(yield* Ref.get(closedSessions), 1);
+          assert.include(
+            (yield* Ref.get(capturedTurns))[1]?.text ?? "",
+            "switched this thread to another account",
           );
-          assert.deepEqual(yield* Ref.get(closedSessions), [firstSession!.id]);
           return;
         }
 
@@ -3824,7 +3875,7 @@ describe("orchestration v2 provider switching", () => {
         );
         assert.equal(firstSession?.status, "ready");
 
-        if (background) {
+        if (background && !sharedHistory) {
           // Native subagents live only in the adapter's roster, so the projection's
           // pendingBackgroundTasks stays empty while the probe still reports work.
           assert.deepEqual(afterFirst.providerThreads[0]?.pendingBackgroundTasks ?? [], []);
@@ -3854,13 +3905,24 @@ describe("orchestration v2 provider switching", () => {
             [secondSelection.instanceId, "completed"],
           ],
         );
-        assert.lengthOf(afterSecond.contextHandoffs, 1);
+        assert.lengthOf(afterSecond.contextHandoffs, sharedHistory ? 0 : 1);
         assert.deepEqual(
           projection.providerSessions.map((session) => session.providerInstanceId),
           [secondSelection.instanceId],
         );
         // The detached event alone hides the session; the runtime must also close.
         assert.deepEqual(yield* Ref.get(closedSessions), [firstSession!.id]);
+        const switchedTurnText = (yield* Ref.get(capturedTurns))[1]?.text ?? "";
+        if (accountSwitchStopsShell) {
+          assert.include(switchedTurnText, "switched this thread to another account");
+          assert.include(switchedTurnText, "shell: sleep 500");
+          assert.equal(
+            projection.turnItems.find((item) => item.type === "command_execution")?.status,
+            "interrupted",
+          );
+        } else {
+          assert.notInclude(switchedTurnText, "switched this thread to another account");
+        }
       }).pipe(
         Effect.provide(
           ProviderReplayHarness.layerWithRegistry(

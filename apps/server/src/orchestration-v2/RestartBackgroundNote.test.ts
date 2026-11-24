@@ -16,6 +16,7 @@ import {
   pendingRestartCancelledBackgroundWork,
   restartContinuationNote,
   mergeRestartCancelledBackgroundWork,
+  sessionBackgroundWork,
 } from "./RestartBackgroundNote.ts";
 
 const claudeThread = ProviderThreadId.make("provider-thread:claude");
@@ -142,6 +143,47 @@ it("names a lost subagent by the id the agent resumes it with", () => {
       nativeItemRef: { driver: "claudeAgent", nativeId: "agent-1", strength: "strong" },
     } as never)?.label,
     "Review (id agent-1)",
+  );
+});
+
+it("lists only the stopped session's work, once per native task", () => {
+  const session = "provider-session:first";
+  const item = (id: string, providerThreadId: ProviderThreadId, nativeId: string) =>
+    ({
+      id,
+      runId: null,
+      providerThreadId,
+      type: "command_execution",
+      status: "running",
+      input: `run ${id}`,
+      nativeItemRef: { driver: "claudeAgent", nativeId, strength: "strong" },
+    }) as never;
+  const work = sessionBackgroundWork({
+    providerSessionIds: new Set([session]),
+    providerThreads: [
+      {
+        id: claudeThread,
+        providerSessionId: session as never,
+        pendingBackgroundTasks: [
+          { kind: "command", taskId: "shell-1", description: "run item-1" },
+          { kind: "monitor", taskId: "watch-1", description: "tail log" },
+        ],
+      },
+      {
+        id: codexThread,
+        providerSessionId: "provider-session:other" as never,
+        pendingBackgroundTasks: [{ kind: "command", taskId: "shell-9" }],
+      },
+    ],
+    turnItems: [item("item-1", claudeThread, "shell-1"), item("item-9", codexThread, "shell-9")],
+    runs: [],
+  });
+  assert.deepEqual(
+    work.map((entry) => [entry.kind, entry.label]),
+    [
+      ["shell", "run item-1"],
+      ["monitor", "tail log (id watch-1)"],
+    ],
   );
 });
 
